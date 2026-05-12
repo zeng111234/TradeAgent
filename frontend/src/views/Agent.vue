@@ -5,8 +5,58 @@
       <p>AI-powered tools for smarter foreign trade decisions</p>
     </div>
 
-    <!-- Three Tools Tabs -->
+    <!-- Five Tools Tabs -->
     <el-tabs v-model="activeTab" type="border-card" style="margin-bottom: 20px">
+
+      <!-- Tab 0: Daily Intelligence -->
+      <el-tab-pane label="Daily Intelligence" name="daily">
+        <el-row :gutter="20">
+          <el-col :span="24">
+            <el-card shadow="never">
+              <template #header>
+                <div style="display: flex; justify-content: space-between; align-items: center">
+                  <span style="font-weight: 600">AI Daily Intelligence - Who to Follow Up Today</span>
+                  <el-button type="primary" @click="runDailyIntelligence" :loading="dailyLoading" size="large">
+                    <el-icon><MagicStick /></el-icon> Run Daily Scan
+                  </el-button>
+                </div>
+              </template>
+
+              <el-alert v-if="dailyResult" :title="`Found ${dailyResult.high_priority} high priority and ${dailyResult.medium_priority} medium priority follow-ups`"
+                :type="dailyResult.high_priority > 0 ? 'warning' : 'success'" :closable="false" show-icon style="margin-bottom: 16px" />
+
+              <div v-if="dailyResult && dailyResult.actions && dailyResult.actions.length">
+                <div v-for="a in dailyResult.actions" :key="a.customer_id"
+                  style="border: 1px solid #e4e7ed; border-radius: 8px; padding: 16px; margin-bottom: 12px"
+                  :style="{ borderColor: a.priority === 'high' ? '#f56c6c' : (a.priority === 'medium' ? '#e6a23c' : '#e4e7ed'), borderLeftWidth: '4px' }">
+                  <el-row :gutter="16">
+                    <el-col :span="16">
+                      <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px">
+                        <el-tag :type="a.priority === 'high' ? 'danger' : (a.priority === 'medium' ? 'warning' : 'info')" size="small">{{ a.priority }}</el-tag>
+                        <strong>{{ a.company_name }}</strong>
+                        <el-tag size="small" type="info">{{ a.stage }}</el-tag>
+                      </div>
+                      <p style="margin: 0 0 4px; color: #606266; font-size: 13px">Reason: {{ a.reason }}</p>
+                      <p style="margin: 0; color: #409eff; font-size: 13px">Action: {{ a.suggested_action }}</p>
+                      <p v-if="a.contact_email" style="margin: 4px 0 0; color: #909399; font-size: 12px">Contact: {{ a.contact_name }} ({{ a.contact_email }})</p>
+                    </el-col>
+                    <el-col :span="8" style="text-align: right">
+                      <el-button v-if="a.draft_email" size="small" type="success" @click="showDraftEmail(a)">View Draft Email</el-button>
+                      <el-button v-if="a.contact_email" size="small" type="primary" @click="sendQuickEmail(a)">Quick Send</el-button>
+                    </el-col>
+                  </el-row>
+                  <div v-if="a.showDraft" style="background: #f5f7fa; padding: 12px; border-radius: 6px; margin-top: 12px">
+                    <p style="margin: 0 0 4px; font-weight: 600; font-size: 13px">Subject: {{ a.draft_subject }}</p>
+                    <div v-html="a.draft_email" style="font-size: 13px; color: #303133"></div>
+                  </div>
+                </div>
+              </div>
+              <el-empty v-else-if="dailyResult && !dailyResult.actions?.length" description="No follow-ups needed today - all customers are on track!" />
+              <el-empty v-else description="Click 'Run Daily Scan' to let AI analyze all your customers" />
+            </el-card>
+          </el-col>
+        </el-row>
+      </el-tab-pane>
 
       <!-- Tab 1: Website Analysis -->
       <el-tab-pane label="Website Lead Analysis" name="website">
@@ -175,7 +225,55 @@
         </el-row>
       </el-tab-pane>
 
-      <!-- Tab 3: Negotiation Copilot -->
+      <!-- Tab 3: Batch Email Generator -->
+      <el-tab-pane label="Batch Email Generator" name="batch">
+        <el-row :gutter="20">
+          <el-col :span="10">
+            <el-card shadow="never">
+              <template #header><span style="font-weight: 600">Batch Personalized Emails</span></template>
+              <el-form label-width="120px">
+                <el-form-item label="Product" required>
+                  <el-input v-model="batchForm.product_name" placeholder="e.g. LED Panel Light 60x60cm" />
+                </el-form-item>
+                <el-form-item label="Your Company">
+                  <el-input v-model="batchForm.company_name" />
+                </el-form-item>
+                <el-form-item label="Selling Points">
+                  <el-input v-model="batchForm.selling_points" type="textarea" :rows="2" />
+                </el-form-item>
+                <el-form-item>
+                  <el-button type="primary" @click="generateBatchEmails" :loading="batchLoading" size="large">
+                    <el-icon><MagicStick /></el-icon> Generate for All Customers
+                  </el-button>
+                </el-form-item>
+              </el-form>
+            </el-card>
+          </el-col>
+          <el-col :span="14">
+            <el-card v-if="batchResult" shadow="never">
+              <template #header>
+                <div style="display: flex; justify-content: space-between; align-items: center">
+                  <span style="font-weight: 600">Generated Emails ({{ batchResult.generated }}/{{ batchResult.total }})</span>
+                </div>
+              </template>
+              <div v-for="e in (batchResult.emails || [])" :key="e.customer_id"
+                style="border: 1px solid #e4e7ed; border-radius: 8px; padding: 12px; margin-bottom: 12px">
+                <div style="display: flex; justify-content: space-between; margin-bottom: 8px">
+                  <strong>{{ e.company_name }}</strong>
+                  <el-tag size="small" type="info">{{ e.personalized_for || e.error }}</el-tag>
+                </div>
+                <p style="margin: 0 0 4px; font-weight: 600; font-size: 13px" v-if="e.subject">Subject: {{ e.subject }}</p>
+                <div v-if="e.body" v-html="e.body" style="background: #f5f7fa; padding: 12px; border-radius: 6px; font-size: 13px; color: #303133"></div>
+                <el-button v-if="e.body && e.to_email" size="small" type="success" style="margin-top: 8px"
+                  @click="sendBatchEmail(e)">Send to {{ e.to_email }}</el-button>
+              </div>
+            </el-card>
+            <el-empty v-else description="Enter your product info and click Generate" />
+          </el-col>
+        </el-row>
+      </el-tab-pane>
+
+      <!-- Tab 4: Negotiation Copilot -->
       <el-tab-pane label="Negotiation Copilot" name="negotiation">
         <el-row :gutter="20">
           <el-col :span="10">
@@ -273,7 +371,76 @@ import { ref, reactive } from 'vue'
 import { ElMessage } from 'element-plus'
 import { agentApi } from '../api'
 
-const activeTab = ref('website')
+const activeTab = ref('daily')
+
+// Daily Intelligence
+const dailyLoading = ref(false)
+const dailyResult = ref(null)
+
+const runDailyIntelligence = async () => {
+  dailyLoading.value = true
+  try {
+    dailyResult.value = await agentApi.dailyIntelligence()
+  } catch (e) {
+    ElMessage.error('Failed: ' + (e.response?.data?.detail || e.message))
+  } finally {
+    dailyLoading.value = false
+  }
+}
+
+const showDraftEmail = (action) => {
+  action.showDraft = !action.showDraft
+}
+
+const sendQuickEmail = async (action) => {
+  try {
+    const { emailApi } = await import('../api')
+    await emailApi.send({
+      to_email: action.contact_email,
+      to_name: action.contact_name,
+      subject: action.draft_subject || `Following up - ${action.company_name}`,
+      body: action.draft_email || 'Following up on our previous conversation.',
+      customer_id: action.customer_id,
+    })
+    ElMessage.success(`Email sent to ${action.contact_email}`)
+  } catch (e) {
+    ElMessage.error('Failed to send email')
+  }
+}
+
+// Batch Email
+const batchLoading = ref(false)
+const batchResult = ref(null)
+const batchForm = reactive({ product_name: '', company_name: '', selling_points: '' })
+
+const generateBatchEmails = async () => {
+  if (!batchForm.product_name.trim()) { ElMessage.warning('Product name is required'); return }
+  batchLoading.value = true
+  try {
+    batchResult.value = await agentApi.batchEmails(batchForm)
+  } catch (e) {
+    ElMessage.error('Failed: ' + (e.response?.data?.detail || e.message))
+  } finally {
+    batchLoading.value = false
+  }
+}
+
+const sendBatchEmail = async (e) => {
+  try {
+    const { emailApi } = await import('../api')
+    await emailApi.send({
+      to_email: e.to_email,
+      to_name: e.contact_name,
+      subject: e.subject,
+      body: e.body,
+      customer_id: e.customer_id,
+    })
+    ElMessage.success(`Email sent to ${e.to_email}`)
+  } catch (err) {
+    ElMessage.error('Failed to send email')
+  }
+}
+
 
 // Website Analysis
 const webLoading = ref(false)

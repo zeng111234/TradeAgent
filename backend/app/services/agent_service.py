@@ -19,7 +19,7 @@ async def analyze_customer_website(url: str, your_products: str = "") -> dict:
 
     # Step 1: Fetch website content
     try:
-        resp = requests.get(url, timeout=15, headers={
+        resp = requests.get(url, timeout=15, verify=False, headers={
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
         })
         soup = BeautifulSoup(resp.text, "lxml")
@@ -264,6 +264,221 @@ def _basic_reply_analysis(email_content: str) -> dict:
         "deal_stage_update": "warm" if intent in ("inquiry", "sample_request") else "prospect",
         "risks": [],
         "ai_powered": False,
+    }
+
+
+async def daily_follow_up_intelligence(db_session=None) -> dict:
+    """AI reviews ALL your customers and tells you exactly who to follow up today.
+    
+    This is the CORE differentiator - instead of you checking each customer,
+    AI analyzes everyone and gives you a prioritized action list.
+    """
+    if not db_session:
+        return {"error": "Database session required", "actions": []}
+
+    from sqlalchemy import select, or_, and_
+    from app.models.customer import Customer, CustomerContact
+    from app.models.email_log import EmailLog, EmailStatus
+    from datetime import datetime, timedelta
+
+    now = datetime.utcnow()
+    actions = []
+
+    # 1. Find customers that need follow-up (contacted but no reply in 3+ days)
+    result = await db_session.execute(
+        select(Customer).where(
+            Customer.stage.in_(["contacted", "interested", "quoting"])
+        )
+    )
+    customers = result.scalars().all()
+
+    for c in customers:
+        # Check last email
+        email_result = await db_session.execute(
+            select(EmailLog)
+            .where(EmailLog.customer_id == c.id)
+            .order_by(EmailLog.created_at.desc())
+            .limit(1)
+        )
+        last_email = email_result.scalar_one_or_none()
+
+        priority = "low"
+        reason = ""
+        suggested_action = ""
+
+        if c.stage == "quoting":
+            priority = "high"
+            reason = f"In quoting stage - follow up on quote for {c.company_name}"
+            suggested_action = "Follow up on quoted price, ask if they need samples"
+        elif c.stage == "interested":
+            priority = "medium"
+            reason = f"Customer showed interest - keep momentum"
+            suggested_action = "Send product details or case studies"
+        elif c.stage == "contacted":
+            if last_email and (now - last_email.created_at).days >= 3:
+                priority = "high"
+                reason = f"No reply in {(now - last_email.created_at).days} days"
+                suggested_action = "Send a follow-up email with different angle"
+            elif not last_email:
+                priority = "medium"
+                reason = f"Marked as contacted but no email record"
+                suggested_action = "Send initial outreach email"
+            else:
+                priority = "low"
+                reason = f"Recently contacted, wait for reply"
+                suggested_action = "Wait 2 more days before follow-up"
+
+        if reason:
+            # Get primary contact
+            contact_result = await db_session.execute(
+                select(CustomerContact)
+                .where(CustomerContact.customer_id == c.id, CustomerContact.is_primary == 1)
+                .limit(1)
+            )
+            contact = contact_result.scalar_one_or_none()
+
+            actions.append({
+                "customer_id": c.id,
+                "company_name": c.company_name,
+                "stage": c.stage,
+                "priority": priority,
+                "reason": reason,
+                "suggested_action": suggested_action,
+                "contact_email": contact.email if contact else None,
+                "contact_name": contact.name if contact else None,
+                "last_contacted": last_email.created_at.isoformat() if last_email else None,
+            })
+
+    # Sort by priority
+    priority_order = {"high": 0, "medium": 1, "low": 2}
+    actions.sort(key=lambda x: priority_order.get(x["priority"], 3))
+
+    # Generate one-click follow-up emails for high priority
+    if settings.OPENAI_API_KEY and actions:
+        for action in actions[:5]:  # Top 5 high priority
+            if action["priority"] == "high" and action["contact_email"]:
+                try:
+                    email_result = await db_session.execute(
+                        select(EmailLog)
+                        .where(EmailLog.customer_id == action["customer_id"])
+                        .order_by(EmailLog.created_at.desc())
+                        .limit(1)
+                    )
+                    last = email_result.scalar_one_or_none()
+                    last_subject = last.subject if last else "initial outreach"
+
+                    from openai import AsyncOpenAI
+                    client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY, base_url=settings.OPENAI_BASE_URL)
+
+                    prompt = f"""Write a short follow-up email (under 100 words) for a foreign trade business.
+Company: {action['company_name']}
+Contact: {action['contact_name'] or 'Sir/Madam'}
+Last email subject: {last_subject}
+Current stage: {action['stage']}
+Reason: {action['reason']}
+
+Write a warm, professional follow-up. Be specific to their situation. Return ONLY the email body (HTML)."""
+
+                    resp = await client.chat.completions.create(
+                        model=settings.OPENAI_MODEL,
+                        messages=[
+                            {"role": "system", "content": "You are a professional foreign trade email writer. Write concise, warm emails."},
+                            {"role": "user", "content": prompt},
+                        ],
+                        temperature=0.7,
+                        max_tokens=300,
+                    )
+                    action["draft_email"] = resp.choices[0].message.content.strip()
+                    action["draft_subject"] = f"Following up - {action['company_name']}"
+                except Exception as e:
+                    logger.error(f"Draft email error: {e}")
+
+    return {
+        "total_actions": len(actions),
+        "high_priority": len([a for a in actions if a["priority"] == "high"]),
+        "medium_priority": len([a for a in actions if a["priority"] == "medium"]),
+        "actions": actions,
+    }
+
+
+async def batch_personalize_emails(
+    customers: list[dict],
+    product_name: str,
+    company_name: str = "",
+    selling_points: str = "",
+) -> dict:
+    """Generate personalized emails for ALL customers at once.
+    
+    Instead of writing one email at a time, AI generates a unique email
+    for each customer based on their industry, country, and products.
+    This is the killer feature for batch outreach.
+    """
+    if not settings.OPENAI_API_KEY:
+        return {"error": "API key required for batch email generation", "emails": []}
+
+    from openai import AsyncOpenAI
+    client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY, base_url=settings.OPENAI_BASE_URL)
+
+    emails = []
+    for cust in customers:
+        try:
+            prompt = f"""Write a personalized cold outreach email for this buyer.
+Your company: {company_name or 'Our company'}
+Your product: {product_name}
+Selling points: {selling_points or 'High quality, competitive price'}
+
+Buyer info:
+- Company: {cust.get('company_name', 'Unknown')}
+- Country: {cust.get('country', 'Unknown')}
+- Industry: {cust.get('industry', 'Unknown')}
+- Products they sell: {cust.get('products', 'Unknown')}
+
+Requirements:
+- Reference their specific industry/country/products
+- Explain WHY your product is relevant to THEM specifically
+- Keep under 120 words
+- Professional but warm tone
+
+Return JSON: {{"subject": "email subject", "body": "email body in HTML"}}"""
+
+            resp = await client.chat.completions.create(
+                model=settings.OPENAI_MODEL,
+                messages=[
+                    {"role": "system", "content": "Write B2B cold outreach emails. Return valid JSON only."},
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=0.7,
+                max_tokens=400,
+            )
+
+            content = resp.choices[0].message.content.strip()
+            if content.startswith("```"):
+                content = content.split("```")[1]
+                if content.startswith("json"):
+                    content = content[4:]
+            result = json.loads(content)
+
+            emails.append({
+                "customer_id": cust.get("id"),
+                "company_name": cust.get("company_name"),
+                "to_email": cust.get("contact_email"),
+                "subject": result.get("subject", f"Inquiry about {product_name}"),
+                "body": result.get("body", ""),
+                "personalized_for": f"{cust.get('country', '')} / {cust.get('industry', '')}",
+            })
+        except Exception as e:
+            logger.error(f"Batch email error for {cust.get('company_name')}: {e}")
+            emails.append({
+                "customer_id": cust.get("id"),
+                "company_name": cust.get("company_name"),
+                "error": str(e),
+            })
+
+    return {
+        "total": len(customers),
+        "generated": len([e for e in emails if "error" not in e]),
+        "failed": len([e for e in emails if "error" in e]),
+        "emails": emails,
     }
 
 

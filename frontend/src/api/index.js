@@ -69,6 +69,8 @@ export const agentApi = {
   analyzeWebsite: (data) => api.post('/agent/analyze-website', data),
   analyzeEmail: (data) => api.post('/agent/analyze-email', data),
   negotiationAdvice: (data) => api.post('/agent/negotiation-advice', data),
+  dailyIntelligence: () => api.post('/agent/daily-intelligence'),
+  batchEmails: (data) => api.post('/agent/batch-emails', data),
 }
 
 export default api
