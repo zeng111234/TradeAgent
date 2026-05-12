@@ -64,4 +64,11 @@ export const analyticsApi = {
   trends: (months = 6) => api.get('/analytics/trends', { params: { months } }),
 }
 
+// --- AI Agent ---
+export const agentApi = {
+  analyzeWebsite: (data) => api.post('/agent/analyze-website', data),
+  analyzeEmail: (data) => api.post('/agent/analyze-email', data),
+  negotiationAdvice: (data) => api.post('/agent/negotiation-advice', data),
+}
+
 export default api

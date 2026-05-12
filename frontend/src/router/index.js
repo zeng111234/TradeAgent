@@ -41,6 +41,12 @@ const routes = [
     component: () => import('../views/Tasks.vue'),
     meta: { title: '待办事项', icon: 'Calendar' },
   },
+  {
+    path: '/agent',
+    name: 'Agent',
+    component: () => import('../views/Agent.vue'),
+    meta: { title: 'AI Agent', icon: 'MagicStick' },
+  },
 ]
 
 const router = createRouter({

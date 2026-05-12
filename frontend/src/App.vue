@@ -33,6 +33,10 @@
           <el-icon><Calendar /></el-icon>
           <span>待办事项</span>
         </el-menu-item>
+        <el-menu-item index="/agent">
+          <el-icon><MagicStick /></el-icon>
+          <span>AI Agent</span>
+        </el-menu-item>
       </el-menu>
       <div class="sidebar-footer">
         <p>TradeAgent v1.0</p>
