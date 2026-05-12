@@ -3,7 +3,7 @@
     <!-- Sidebar -->
     <aside class="sidebar">
       <div class="sidebar-header">
-        <h1>? TradeAgent</h1>
+        <h1>TradeAgent</h1>
         <p>AI外贸智能获客助手</p>
       </div>
       <el-menu

@@ -110,6 +110,36 @@
           </el-select>
         </el-card>
 
+        <!-- AI Follow-up Suggestion -->
+        <el-card shadow="never" style="margin-bottom: 16px">
+          <template #header>
+            <div style="display: flex; justify-content: space-between; align-items: center">
+              <span style="font-weight: 600">AI Follow-up Guide</span>
+              <el-button size="small" type="primary" @click="getFollowUpAdvice" :loading="followUpLoading">
+                <el-icon><MagicStick /></el-icon>
+              </el-button>
+            </div>
+          </template>
+          <div v-if="followUpAdvice">
+            <el-alert :title="followUpAdvice.urgency" :type="followUpAdvice.urgency_type" :closable="false" show-icon style="margin-bottom: 12px" />
+            <p style="margin: 0 0 8px; font-size: 13px; color: #303133">{{ followUpAdvice.advice }}</p>
+            <div v-if="followUpAdvice.next_steps && followUpAdvice.next_steps.length">
+              <p style="margin: 0 0 4px; font-size: 12px; color: #909399; font-weight: 600">Next Steps:</p>
+              <ul style="margin: 0; padding-left: 16px">
+                <li v-for="s in followUpAdvice.next_steps" :key="s" style="font-size: 12px; color: #606266; margin-bottom: 2px">{{ s }}</li>
+              </ul>
+            </div>
+            <el-button v-if="followUpAdvice.draft_email" size="small" type="success" style="margin-top: 8px" @click="showFollowUpDraft = !showFollowUpDraft">
+              {{ showFollowUpDraft ? 'Hide' : 'Show' }} Draft Email
+            </el-button>
+            <div v-if="showFollowUpDraft && followUpAdvice.draft_email" style="background: #f5f7fa; padding: 12px; border-radius: 6px; margin-top: 8px">
+              <div v-html="followUpAdvice.draft_email" style="font-size: 13px; color: #303133"></div>
+              <el-button size="small" type="primary" style="margin-top: 8px" @click="sendFollowUpDraft">Send This Email</el-button>
+            </div>
+          </div>
+          <el-empty v-else description="Click the magic wand for AI follow-up advice" :image-size="40" />
+        </el-card>
+
         <!-- Quick Email -->
         <el-card shadow="never" style="margin-bottom: 16px">
           <template #header><span style="font-weight: 600">Quick Actions</span></template>
@@ -118,6 +148,9 @@
           </el-button>
           <el-button style="width: 100%; margin-bottom: 8px" @click="$router.push('/tasks')">
             <el-icon><Calendar /></el-icon> Create Task
+          </el-button>
+          <el-button type="success" style="width: 100%; margin-bottom: 8px" @click="$router.push('/agent')">
+            <el-icon><MagicStick /></el-icon> AI Agent
           </el-button>
         </el-card>
 
@@ -265,6 +298,126 @@ const addNote = async () => {
     loadCustomer()
   } catch (e) {
     ElMessage.error('Failed to add note')
+  }
+}
+
+// AI Follow-up
+const followUpLoading = ref(false)
+const followUpAdvice = ref(null)
+const showFollowUpDraft = ref(false)
+
+const getFollowUpAdvice = async () => {
+  if (!customer.value || !customer.value.stage) return
+  followUpLoading.value = true
+  try {
+    const { agentApi, emailApi } = await import('../api')
+
+    // Build context from customer data
+    const notes = (customer.value.notes_list || []).map(n => n.content).join('; ')
+    const contacts = (customer.value.contacts || []).map(c => `${c.name} (${c.email || 'no email'})`).join(', ')
+
+    // Stage-based advice
+    const stage = customer.value.stage
+    let urgency = ''
+    let urgencyType = ''
+    let advice = ''
+    let nextSteps = []
+
+    if (stage === 'new') {
+      urgency = 'Not yet contacted'
+      urgencyType = 'info'
+      advice = `This customer hasn't been contacted yet. Send an initial outreach email introducing your products.`
+      nextSteps = [
+        'Send a personalized cold email',
+        'Reference their industry/products to show relevance',
+        'Include your catalog or key product photos',
+      ]
+    } else if (stage === 'contacted') {
+      urgency = 'Waiting for response'
+      urgencyType = 'warning'
+      advice = `You've reached out but haven't heard back. Wait a few days, then try a different angle.`
+      nextSteps = [
+        'Wait 3-5 days before follow-up',
+        'Try a different subject line or value proposition',
+        'Consider reaching out via a different channel (LinkedIn, WhatsApp)',
+      ]
+    } else if (stage === 'interested') {
+      urgency = 'High potential - keep momentum!'
+      urgencyType = 'success'
+      advice = `This customer showed interest. Send detailed product info and case studies to keep them engaged.`
+      nextSteps = [
+        'Send detailed product specifications',
+        'Share success stories from similar customers',
+        'Offer a sample or trial order',
+      ]
+    } else if (stage === 'quoting') {
+      urgency = 'In negotiations - follow up soon!'
+      urgencyType = 'danger'
+      advice = `You're in the quoting stage. Follow up on the quote, address any concerns about price or terms.`
+      nextSteps = [
+        'Follow up on the quoted price within 2-3 days',
+        'Ask if they need modifications to the quote',
+        'Offer volume discount or payment term flexibility',
+      ]
+    } else if (stage === 'sample') {
+      urgency = 'Sample stage - check progress'
+      urgencyType = 'warning'
+      advice = `Samples have been sent. Follow up on feedback and quality assessment.`
+      nextSteps = [
+        'Ask about sample receipt and quality feedback',
+        'Offer technical support for testing',
+        'Discuss MOQ and lead time for bulk order',
+      ]
+    } else {
+      urgency = 'Stage: ' + stage
+      urgencyType = 'info'
+      advice = `Current stage: ${stage}. Manage accordingly.`
+      nextSteps = ['Review customer status and take appropriate action']
+    }
+
+    // Generate draft email if customer has a contact
+    const primaryContact = (customer.value.contacts || []).find(c => c.is_primary) || (customer.value.contacts || [])[0]
+    if (primaryContact && primaryContact.email) {
+      try {
+        const emailResult = await agentApi.analyzeEmail({
+          email_content: `Customer: ${customer.value.company_name}\nIndustry: ${customer.value.industry || 'N/A'}\nStage: ${stage}\nNotes: ${notes}\nContact: ${primaryContact.name}`,
+        })
+        if (emailResult.suggested_reply_points) {
+          nextSteps = emailResult.suggested_reply_points
+        }
+      } catch (e) {
+        // Use stage-based advice
+      }
+    }
+
+    followUpAdvice.value = { urgency, urgency_type: urgencyType, advice, next_steps: nextSteps }
+  } catch (e) {
+    ElMessage.error('Failed to get advice')
+  } finally {
+    followUpLoading.value = false
+  }
+}
+
+const sendFollowUpDraft = async () => {
+  if (!followUpAdvice.value?.draft_email) return
+  const primaryContact = (customer.value.contacts || []).find(c => c.is_primary) || (customer.value.contacts || [])[0]
+  if (!primaryContact?.email) {
+    ElMessage.warning('No contact email available')
+    return
+  }
+  try {
+    const { emailApi } = await import('../api')
+    await emailApi.send({
+      to_email: primaryContact.email,
+      to_name: primaryContact.name,
+      subject: `Following up - ${customer.value.company_name}`,
+      body: followUpAdvice.value.draft_email,
+      customer_id: customer.value.id,
+    })
+    ElMessage.success('Email sent!')
+    showFollowUpDraft.value = false
+  } catch (e) {
+    ElMessage.error('Failed to send email')
   }
 }
 
