@@ -71,6 +71,11 @@ export const agentApi = {
   negotiationAdvice: (data) => api.post('/agent/negotiation-advice', data),
   dailyIntelligence: () => api.post('/agent/daily-intelligence'),
   batchEmails: (data) => api.post('/agent/batch-emails', data),
+  // New features
+  analyzeInquiry: (data) => api.post('/agent/analyze-inquiry', data),
+  churnAlerts: () => api.post('/agent/churn-alerts'),
+  getHolidays: () => api.get('/agent/holidays'),
+  generateHolidayEmails: (data) => api.post('/agent/holiday-emails', data),
 }
 
 export default api

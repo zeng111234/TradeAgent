@@ -9,6 +9,10 @@ from app.services.agent_service import (
     get_negotiation_advice,
     daily_follow_up_intelligence,
     batch_personalize_emails,
+    analyze_inquiry,
+    customer_churn_alerts,
+    generate_holiday_emails,
+    get_holiday_calendar,
 )
 from app.database import get_db
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -150,4 +154,78 @@ async def api_negotiation_advice(data: NegotiationRequest):
         your_cost=data.your_cost,
         your_quote=data.your_quote,
         context=data.context,
+    )
+
+
+# --- New Feature 1: Inquiry Analysis ---
+
+class InquiryAnalysisRequest(BaseModel):
+    email_content: str = Field(..., description="Customer inquiry email content")
+
+
+@router.post("/analyze-inquiry")
+async def api_analyze_inquiry(data: InquiryAnalysisRequest):
+    """AI inquiry analysis - parse customer inquiry into structured data.
+    
+    Replaces manual reading and note-taking:
+    - Extracts product names, specs, quantities
+    - Detects shipping terms (FOB/CIF/EXW)
+    - Scores customer intent (0-100)
+    - Generates a draft reply email
+    - Suggests follow-up strategy
+    """
+    return await analyze_inquiry(data.email_content)
+
+
+# --- New Feature 2: Customer Churn Alerts ---
+
+@router.post("/churn-alerts")
+async def api_churn_alerts(db: AsyncSession = Depends(get_db)):
+    """AI customer churn alert system - detect at-risk customers.
+    
+    Replaces the manual process of checking each customer:
+    - Scans ALL customers automatically
+    - Detects 5 types of risk (no contact, no reply, cold leads, stuck stages, unread quotes)
+    - Classifies risk as critical/high/medium
+    - Generates AI rescue emails for critical customers
+    - One-click send rescue emails
+    """
+    return await customer_churn_alerts(db)
+
+
+# --- New Feature 3: Holiday Emails ---
+
+class HolidayEmailRequest(BaseModel):
+    holiday_name: str = Field(..., description="Holiday name (e.g. Christmas, New Year)")
+    company_name: str = Field("", description="Your company name")
+    custom_message: str = Field("", description="Custom message to include")
+
+
+@router.get("/holidays")
+async def api_get_holidays():
+    """Get holiday calendar with upcoming holidays highlighted.
+    
+    Shows all major international trade holidays with:
+    - Days until the holiday
+    - Which markets it applies to
+    - Whether it's upcoming (within 30 days)
+    """
+    return get_holiday_calendar()
+
+
+@router.post("/holiday-emails")
+async def api_generate_holiday_emails(data: HolidayEmailRequest, db: AsyncSession = Depends(get_db)):
+    """AI generates personalized holiday greeting emails for all customers.
+    
+    Instead of manually sending holiday greetings one by one:
+    1. Select a holiday from the calendar
+    2. AI scans all active customers
+    3. Generates personalized greeting based on customer's country/industry
+    4. Preview all emails and one-click send
+    """
+    return await generate_holiday_emails(
+        holiday_name=data.holiday_name,
+        company_name=data.company_name,
+        custom_message=data.custom_message,
+        db_session=db,
     )
