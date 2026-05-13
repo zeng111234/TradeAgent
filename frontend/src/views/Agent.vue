@@ -55,7 +55,80 @@
         </el-row>
       </el-tab-pane>
 
-      <!-- Tab 1: Inquiry Analysis -->
+      <!-- Tab 1: Lead Scanner -->
+      <el-tab-pane label="Lead Scanner" name="leads">
+        <el-row :gutter="20">
+          <el-col :span="8">
+            <el-card shadow="never">
+              <template #header><span style="font-weight: 600">Auto Lead Scanner</span></template>
+              <el-alert title="Enter product + country. Agent searches Google, visits sites, extracts company info automatically." type="info" :closable="false" style="margin-bottom: 16px" />
+              <el-form label-width="100px">
+                <el-form-item label="Product" required>
+                  <el-input v-model="leadForm.product_keywords" placeholder="e.g. gold thread, metallic yarn" />
+                </el-form-item>
+                <el-form-item label="Country">
+                  <el-input v-model="leadForm.target_country" placeholder="e.g. Germany, USA" />
+                </el-form-item>
+                <el-form-item label="Max Results">
+                  <el-input-number v-model="leadForm.max_results" :min="1" :max="20" style="width: 100%" />
+                </el-form-item>
+                <el-form-item>
+                  <el-button type="primary" @click="scanLeads" :loading="leadLoading" size="large">
+                    <el-icon><Search /></el-icon> Scan for Leads
+                  </el-button>
+                </el-form-item>
+              </el-form>
+            </el-card>
+          </el-col>
+          <el-col :span="16">
+            <el-card v-if="leadResult" shadow="never">
+              <template #header>
+                <div style="display: flex; justify-content: space-between; align-items: center">
+                  <span style="font-weight: 600">Found {{ leadResult.total_found }} Leads</span>
+                  <div>
+                    <el-tag :type="leadResult.ai_powered ? 'success' : 'info'" size="small">
+                      {{ leadResult.ai_powered ? 'AI Enhanced' : 'Basic' }}
+                    </el-tag>
+                    <el-button v-if="leadResult.leads && leadResult.leads.length" size="small" type="success" style="margin-left: 8px" @click="importLeads">Import to CRM</el-button>
+                  </div>
+                </div>
+              </template>
+
+              <el-alert v-if="leadResult.market_insights" :title="leadResult.market_insights" type="info" :closable="false" show-icon style="margin-bottom: 12px" />
+
+              <div v-for="(lead, i) in (leadResult.leads || [])" :key="i"
+                style="border: 1px solid #e4e7ed; border-radius: 8px; padding: 12px; margin-bottom: 10px"
+                :style="{ borderColor: lead.relevance_score >= 70 ? '#67c23a' : (lead.relevance_score >= 50 ? '#e6a23c' : '#e4e7ed'), borderLeftWidth: '4px' }">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px">
+                  <div>
+                    <strong>{{ lead.company_name }}</strong>
+                    <el-tag size="small" type="info" style="margin-left: 8px">{{ lead.country }}</el-tag>
+                    <el-tag v-if="lead.ai_priority" :type="lead.ai_priority === 'high' ? 'danger' : (lead.ai_priority === 'medium' ? 'warning' : 'info')" size="small" style="margin-left: 4px">
+                      {{ lead.ai_priority }}
+                    </el-tag>
+                  </div>
+                  <el-progress :percentage="lead.relevance_score" :color="scoreColor(lead.relevance_score)" :stroke-width="8" style="width: 100px" />
+                </div>
+                <p style="margin: 0 0 4px; font-size: 12px; color: #909399">
+                  <a :href="lead.website" target="_blank" style="color: #409eff">{{ lead.website }}</a>
+                </p>
+                <div v-if="lead.emails && lead.emails.length" style="margin-top: 4px">
+                  <el-tag v-for="e in lead.emails" :key="e" type="success" size="small" style="margin-right: 4px">{{ e }}</el-tag>
+                </div>
+                <div v-if="lead.phones && lead.phones.length" style="margin-top: 2px">
+                  <el-tag v-for="p in lead.phones" :key="p" size="small" style="margin-right: 4px">{{ p }}</el-tag>
+                </div>
+                <p v-if="lead.ai_reason" style="margin: 6px 0 0; font-size: 12px; color: #67c23a">{{ lead.ai_reason }}</p>
+                <p v-if="lead.snippet" style="margin: 4px 0 0; font-size: 11px; color: #909399; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">{{ lead.snippet }}</p>
+              </div>
+              <el-empty v-if="!leadResult.leads?.length" description="No leads found. Try different keywords or country." />
+            </el-card>
+            <el-empty v-else description="Enter product keywords and target country, then click Scan" />
+          </el-col>
+        </el-row>
+      </el-tab-pane>
+
+      <!-- Tab 2: Inquiry Analysis -->
       <el-tab-pane label="Inquiry Analysis" name="inquiry">
         <el-row :gutter="20">
           <el-col :span="10">
@@ -546,6 +619,95 @@
         </el-row>
       </el-tab-pane>
 
+      <!-- Tab 8: PI Generator -->
+      <el-tab-pane label="PI Generator" name="pi">
+        <el-row :gutter="20">
+          <el-col :span="10">
+            <el-card shadow="never">
+              <template #header><span style="font-weight: 600">Proforma Invoice Generator</span></template>
+              <el-alert title="Fill in customer info and products. AI generates a professional PI instantly." type="info" :closable="false" style="margin-bottom: 16px" />
+              <el-form label-width="110px">
+                <el-divider content-position="left">Customer Info</el-divider>
+                <el-form-item label="Contact Name" required>
+                  <el-input v-model="piForm.customer_name" placeholder="John Smith" />
+                </el-form-item>
+                <el-form-item label="Company" required>
+                  <el-input v-model="piForm.customer_company" placeholder="ABC Trading Co." />
+                </el-form-item>
+                <el-form-item label="Address">
+                  <el-input v-model="piForm.customer_address" placeholder="123 Main St, Berlin, Germany" />
+                </el-form-item>
+                <el-form-item label="Email">
+                  <el-input v-model="piForm.customer_email" placeholder="john@abc-trading.com" />
+                </el-form-item>
+
+                <el-divider content-position="left">Products</el-divider>
+                <div v-for="(p, i) in piForm.products" :key="i" style="background: #f5f7fa; padding: 12px; border-radius: 6px; margin-bottom: 8px">
+                  <el-row :gutter="8">
+                    <el-col :span="12"><el-input v-model="p.name" placeholder="Product name" size="small" /></el-col>
+                    <el-col :span="12"><el-input v-model="p.spec" placeholder="Spec/Model" size="small" /></el-col>
+                  </el-row>
+                  <el-row :gutter="8" style="margin-top: 6px">
+                    <el-col :span="8"><el-input-number v-model="p.qty" :min="0" placeholder="Qty" size="small" style="width: 100%" /></el-col>
+                    <el-col :span="4"><el-input v-model="p.unit" placeholder="pcs" size="small" /></el-col>
+                    <el-col :span="8"><el-input-number v-model="p.unit_price" :min="0" :precision="2" placeholder="Price" size="small" style="width: 100%" /></el-col>
+                    <el-col :span="4"><el-button size="small" type="danger" @click="piForm.products.splice(i, 1)" circle>X</el-button></el-col>
+                  </el-row>
+                </div>
+                <el-button size="small" @click="piForm.products.push({name:'',spec:'',qty:0,unit:'pcs',unit_price:0})" style="margin-bottom: 12px">+ Add Product</el-button>
+
+                <el-divider content-position="left">Terms</el-divider>
+                <el-form-item label="Trade Terms">
+                  <el-select v-model="piForm.trade_terms" style="width: 100%">
+                    <el-option label="FOB" value="FOB" /><el-option label="CIF" value="CIF" />
+                    <el-option label="EXW" value="EXW" /><el-option label="DDP" value="DDP" />
+                  </el-select>
+                </el-form-item>
+                <el-form-item label="Payment">
+                  <el-input v-model="piForm.payment_terms" />
+                </el-form-item>
+                <el-form-item label="Your Company">
+                  <el-input v-model="piForm.your_company" placeholder="Your company name" />
+                </el-form-item>
+
+                <el-form-item>
+                  <el-button type="primary" @click="generatePI" :loading="piLoading" size="large" style="width: 100%">
+                    <el-icon><Document /></el-icon> Generate PI
+                  </el-button>
+                </el-form-item>
+              </el-form>
+            </el-card>
+          </el-col>
+          <el-col :span="14">
+            <el-card v-if="piResult" shadow="never">
+              <template #header>
+                <div style="display: flex; justify-content: space-between; align-items: center">
+                  <span style="font-weight: 600">PI {{ piResult.pi_number }}</span>
+                  <div>
+                    <el-button size="small" type="primary" @click="printPI">Print / Save PDF</el-button>
+                    <el-button size="small" type="success" @click="emailPI">Email to Customer</el-button>
+                  </div>
+                </div>
+              </template>
+              <div style="margin-bottom: 12px">
+                <el-descriptions :column="3" border size="small">
+                  <el-descriptions-item label="PI No">{{ piResult.pi_number }}</el-descriptions-item>
+                  <el-descriptions-item label="Date">{{ piResult.pi_date }}</el-descriptions-item>
+                  <el-descriptions-item label="Valid Until">{{ piResult.valid_until }}</el-descriptions-item>
+                  <el-descriptions-item label="Customer">{{ piResult.customer_company }}</el-descriptions-item>
+                  <el-descriptions-item label="Terms">{{ piResult.trade_terms }}</el-descriptions-item>
+                  <el-descriptions-item label="Total">
+                    <span style="font-size: 18px; font-weight: bold; color: #e74c3c">${{ piResult.total?.toLocaleString('en', {minimumFractionDigits: 2}) }}</span>
+                  </el-descriptions-item>
+                </el-descriptions>
+              </div>
+              <div ref="piPreview" v-html="piResult.pi_html" style="border: 1px solid #eee; border-radius: 4px; max-height: 600px; overflow-y: auto"></div>
+            </el-card>
+            <el-empty v-else description="Fill in customer info and products, then click Generate PI" />
+          </el-col>
+        </el-row>
+      </el-tab-pane>
+
     </el-tabs>
   </div>
 </template>
@@ -692,6 +854,76 @@ const getAdvice = async () => {
   try { negoResult.value = await agentApi.negotiationAdvice(negoForm) }
   catch (e) { ElMessage.error('Failed: ' + (e.response?.data?.detail || e.message)) }
   finally { negoLoading.value = false }
+}
+
+// Lead Scanner
+const leadLoading = ref(false)
+const leadResult = ref(null)
+const leadForm = reactive({ product_keywords: '', target_country: '', max_results: 10 })
+const scanLeads = async () => {
+  if (!leadForm.product_keywords.trim()) { ElMessage.warning('Product keywords required'); return }
+  leadLoading.value = true
+  try { leadResult.value = await agentApi.scanLeads(leadForm) }
+  catch (e) { ElMessage.error('Failed: ' + (e.response?.data?.detail || e.message)) }
+  finally { leadLoading.value = false }
+}
+const importLeads = async () => {
+  if (!leadResult.value?.leads) return
+  const { customerApi } = await import('../api')
+  let imported = 0
+  for (const lead of leadResult.value.leads) {
+    if (lead.emails && lead.emails.length) {
+      try {
+        await customerApi.create({
+          company_name: lead.company_name,
+          country: lead.country,
+          website: lead.website,
+          source: 'scraper',
+          stage: 'new',
+        })
+        imported++
+      } catch (e) { /* skip duplicates */ }
+    }
+  }
+  ElMessage.success(`Imported ${imported} leads to CRM!`)
+}
+
+// PI Generator
+const piLoading = ref(false)
+const piResult = ref(null)
+const piPreview = ref(null)
+const piForm = reactive({
+  customer_name: '', customer_company: '', customer_address: '', customer_email: '',
+  products: [{ name: '', spec: '', qty: 0, unit: 'pcs', unit_price: 0 }],
+  trade_terms: 'FOB', payment_terms: 'T/T 30% deposit, 70% before shipment',
+  your_company: '', your_address: '',
+})
+const generatePI = async () => {
+  if (!piForm.customer_name || !piForm.customer_company) { ElMessage.warning('Customer name and company required'); return }
+  if (!piForm.products.some(p => p.name && p.qty > 0)) { ElMessage.warning('Add at least one product'); return }
+  piLoading.value = true
+  try { piResult.value = await agentApi.generatePI(piForm) }
+  catch (e) { ElMessage.error('Failed: ' + (e.response?.data?.detail || e.message)) }
+  finally { piLoading.value = false }
+}
+const printPI = () => {
+  if (!piResult.value?.pi_html) return
+  const win = window.open('', '_blank')
+  win.document.write(piResult.value.pi_html)
+  win.document.close()
+  win.print()
+}
+const emailPI = async () => {
+  if (!piResult.value || !piForm.customer_email) { ElMessage.warning('Customer email required'); return }
+  try {
+    await emailApi.send({
+      to_email: piForm.customer_email,
+      to_name: piForm.customer_name,
+      subject: `Proforma Invoice ${piResult.value.pi_number}`,
+      body: piResult.value.pi_html,
+    })
+    ElMessage.success(`PI sent to ${piForm.customer_email}`)
+  } catch (e) { ElMessage.error('Failed to send PI') }
 }
 
 // Helpers

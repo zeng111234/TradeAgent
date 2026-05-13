@@ -1,6 +1,7 @@
 """AI Agent service - deep AI integration for foreign trade."""
 import logging
 import json
+import re
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -1040,3 +1041,418 @@ def get_holiday_calendar() -> list:
 
     result.sort(key=lambda x: x["days_until"])
     return result
+
+
+async def auto_lead_scanner(
+    product_keywords: str,
+    target_country: str = "",
+    target_region: str = "",
+    max_results: int = 10,
+) -> dict:
+    """Auto Lead Scanner - automatically find potential buyers from Google.
+    
+    Instead of manually Googling "gold thread buyer Germany" and visiting each site:
+    1. Search Google with product + country keywords
+    2. Visit each result page
+    3. Extract company info (name, email, phone, products)
+    4. Score relevance
+    5. Return structured lead list ready to import into CRM
+    
+    This is the CORE automation that saves hours of manual prospecting.
+    """
+    import requests
+    from bs4 import BeautifulSoup
+
+    leads = []
+
+    # Build search queries
+    queries = [
+        f"{product_keywords} buyer {target_country}",
+        f"{product_keywords} importer {target_country}",
+        f"{product_keywords} wholesale {target_country}",
+        f'"{product_keywords}" company {target_country} email',
+    ]
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+    }
+
+    seen_domains = set()
+    all_urls = []
+
+    # Step 1: Google search to find URLs
+    for query in queries[:2]:  # Limit to 2 queries to avoid rate limiting
+        try:
+            search_url = f"https://www.google.com/search?q={requests.utils.quote(query)}&num={max_results}"
+            resp = requests.get(search_url, headers=headers, timeout=15, verify=False)
+            soup = BeautifulSoup(resp.text, "lxml")
+
+            # Extract URLs from Google results
+            for a in soup.find_all("a"):
+                href = a.get("href", "")
+                if "/url?q=" in href:
+                    url = href.split("/url?q=")[1].split("&")[0]
+                    if url.startswith("http") and "google.com" not in url and "youtube.com" not in url:
+                        domain = url.split("/")[2] if len(url.split("/")) > 2 else url
+                        if domain not in seen_domains:
+                            seen_domains.add(domain)
+                            all_urls.append(url)
+
+        except Exception as e:
+            logger.error(f"Google search error for '{query}': {e}")
+
+    # Step 2: Visit each URL and extract company info
+    for url in all_urls[:max_results]:
+        try:
+            resp = requests.get(url, headers=headers, timeout=10, verify=False)
+            soup = BeautifulSoup(resp.text, "lxml")
+
+            # Remove noise
+            for tag in soup(["script", "style", "nav", "footer"]):
+                tag.decompose()
+
+            page_text = soup.get_text(separator="\n", strip=True)[:5000]
+            title = soup.title.string if soup.title else ""
+            text_lower = page_text.lower()
+
+            # Extract emails from page
+            email_pattern = r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
+            emails = list(set(re.findall(email_pattern, page_text)))
+            # Filter out common non-company emails
+            emails = [e for e in emails if not any(x in e.lower() for x in
+                ["noreply", "no-reply", "support@", "info@google", "example.com",
+                 "sentry.io", "wixpress", "wordpress", "@s.", ".png", ".jpg"])]
+
+            # Extract phone numbers
+            phone_pattern = r'[\+]?[\d\s\-\(\)]{7,15}'
+            phones = re.findall(phone_pattern, page_text)
+            phones = [p.strip() for p in phones if len(p.strip()) >= 8][:3]
+
+            # Detect company name from title
+            company_name = title.split("-")[0].strip() if title else ""
+            company_name = company_name.split("|")[0].strip()
+
+            # Detect country clues
+            detected_country = target_country or "Unknown"
+            country_keywords = {
+                "Germany": [".de", "gmbh", "german"],
+                "United States": [".com", "llc", "inc", "corp"],
+                "United Kingdom": [".co.uk", "ltd", "limited"],
+                "France": [".fr", "sarl", "sas"],
+                "Italy": [".it", "srl", "spa"],
+                "Spain": [".es", "sl", "sa"],
+                "Netherlands": [".nl", "bv"],
+                "India": [".in", "pvt"],
+                "Brazil": [".br", "ltda"],
+                "Australia": [".au", "pty"],
+            }
+            url_lower = url.lower()
+            if not target_country:
+                for country, clues in country_keywords.items():
+                    if any(c in url_lower for c in clues) or any(c in text_lower for c in clues):
+                        detected_country = country
+                        break
+
+            # Check if page is relevant (buyer/importer)
+            relevance_score = 30  # base
+            buyer_keywords = ["import", "buyer", "wholesale", "distributor", "retailer",
+                            "sourcing", "procurement", "supply chain", "trade"]
+            if any(kw in text_lower for kw in buyer_keywords):
+                relevance_score += 30
+            if product_keywords.lower() in text_lower:
+                relevance_score += 25
+            if emails:
+                relevance_score += 10
+            if "contact" in text_lower or "inquiry" in text_lower:
+                relevance_score += 5
+
+            # Only include if somewhat relevant
+            if relevance_score >= 40:
+                leads.append({
+                    "company_name": company_name or "Unknown",
+                    "website": url,
+                    "country": detected_country,
+                    "emails": emails[:3],
+                    "phones": phones[:2],
+                    "relevance_score": min(relevance_score, 100),
+                    "page_title": title[:200],
+                    "snippet": page_text[:300].replace("\n", " "),
+                    "has_contact": bool(emails),
+                })
+
+        except Exception as e:
+            logger.error(f"Error scraping {url}: {e}")
+
+    # Sort by relevance
+    leads.sort(key=lambda x: x["relevance_score"], reverse=True)
+
+    # AI enhancement: if API key available, use AI to score and enrich top leads
+    if settings.OPENAI_API_KEY and leads:
+        try:
+            from openai import AsyncOpenAI
+            client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY, base_url=settings.OPENAI_BASE_URL)
+
+            leads_summary = "\n".join([
+                f"- {l['company_name']} ({l['website']}) - {l['country']} - Score: {l['relevance_score']}"
+                for l in leads[:8]
+            ])
+
+            prompt = f"""You are a foreign trade lead analyst. Review these leads found by Google search for "{product_keywords}" in {target_country}.
+
+Leads:
+{leads_summary}
+
+For each lead, provide a brief assessment. Return JSON:
+{{
+    "recommendations": [
+        {{
+            "company_name": "name",
+            "priority": "high|medium|low",
+            "reason": "why this is a good/bad lead",
+            "approach_angle": "how to approach this customer",
+            "estimated_potential": "small/medium/large order"
+        }}
+    ],
+    "market_insights": "brief insights about this market for these products",
+    "search_tips": "suggestions for better search queries"
+}}
+
+Return ONLY valid JSON."""
+
+            resp = await client.chat.completions.create(
+                model=settings.OPENAI_MODEL,
+                messages=[
+                    {"role": "system", "content": "You are a B2B trade lead analyst. Return valid JSON."},
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=0.3,
+                max_tokens=1500,
+            )
+
+            content = resp.choices[0].message.content.strip()
+            if content.startswith("```"):
+                content = content.split("```")[1]
+                if content.startswith("json"):
+                    content = content[4:]
+            ai_analysis = json.loads(content)
+
+            # Merge AI analysis into leads
+            for rec in ai_analysis.get("recommendations", []):
+                for lead in leads:
+                    if lead["company_name"] == rec.get("company_name"):
+                        lead["ai_priority"] = rec.get("priority", "medium")
+                        lead["ai_reason"] = rec.get("reason", "")
+                        lead["approach_angle"] = rec.get("approach_angle", "")
+                        lead["estimated_potential"] = rec.get("estimated_potential", "unknown")
+                        break
+
+            return {
+                "total_found": len(leads),
+                "leads": leads,
+                "market_insights": ai_analysis.get("market_insights", ""),
+                "search_tips": ai_analysis.get("search_tips", ""),
+                "ai_powered": True,
+                "search_queries_used": queries[:2],
+            }
+
+        except Exception as e:
+            logger.error(f"AI enhancement error: {e}")
+
+    return {
+        "total_found": len(leads),
+        "leads": leads,
+        "market_insights": "",
+        "search_tips": "Try different keyword combinations for better results",
+        "ai_powered": False,
+        "search_queries_used": queries[:2],
+    }
+
+
+async def generate_pi(
+    customer_name: str,
+    customer_company: str,
+    customer_address: str,
+    customer_email: str,
+    products: list,
+    trade_terms: str = "FOB",
+    payment_terms: str = "T/T 30% deposit, 70% before shipment",
+    validity_days: int = 15,
+    your_company: str = "",
+    your_address: str = "",
+    notes: str = "",
+) -> dict:
+    """Generate a professional Proforma Invoice (PI).
+    
+    Instead of manually creating PI in Word/Excel:
+    1. Input customer info and product list
+    2. AI generates a professional PI with proper formatting
+    3. Auto-calculates totals
+    4. Returns HTML that can be printed as PDF or emailed
+    
+    products format: [{"name": "...", "spec": "...", "qty": 100, "unit": "pcs", "unit_price": 5.50}]
+    """
+    from datetime import datetime, timedelta
+
+    now = datetime.utcnow()
+    pi_number = f"PI-{now.strftime('%Y%m%d')}-{str(hash(customer_company))[-4:]}"
+    pi_date = now.strftime("%Y-%m-%d")
+    valid_until = (now + timedelta(days=validity_days)).strftime("%Y-%m-%d")
+
+    # Calculate totals
+    items = []
+    subtotal = 0
+    for i, p in enumerate(products, 1):
+        qty = float(p.get("qty", 0))
+        price = float(p.get("unit_price", 0))
+        amount = qty * price
+        subtotal += amount
+        items.append({
+            "no": i,
+            "name": p.get("name", ""),
+            "spec": p.get("spec", p.get("specification", "")),
+            "qty": qty,
+            "unit": p.get("unit", "pcs"),
+            "unit_price": price,
+            "amount": round(amount, 2),
+        })
+
+    # Build professional PI HTML
+    pi_html = f"""<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+body {{ font-family: Arial, sans-serif; margin: 0; padding: 20px; color: #333; font-size: 13px; }}
+.pi-container {{ max-width: 800px; margin: 0 auto; }}
+.header {{ display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 30px; border-bottom: 3px solid #2c3e50; padding-bottom: 15px; }}
+.company-info h1 {{ margin: 0; color: #2c3e50; font-size: 24px; }}
+.company-info p {{ margin: 2px 0; color: #666; }}
+.pi-title {{ text-align: right; }}
+.pi-title h2 {{ margin: 0; color: #e74c3c; font-size: 28px; letter-spacing: 2px; }}
+.pi-title p {{ margin: 4px 0; color: #666; }}
+.parties {{ display: flex; justify-content: space-between; margin-bottom: 25px; }}
+.buyer, .seller {{ width: 48%; }}
+.buyer h3, .seller h3 {{ margin: 0 0 8px; color: #2c3e50; font-size: 14px; border-bottom: 1px solid #eee; padding-bottom: 4px; }}
+.buyer p, .seller p {{ margin: 2px 0; color: #555; }}
+table {{ width: 100%; border-collapse: collapse; margin-bottom: 20px; }}
+th {{ background: #2c3e50; color: white; padding: 10px 8px; text-align: left; font-size: 12px; }}
+td {{ padding: 8px; border-bottom: 1px solid #eee; }}
+tr:nth-child(even) {{ background: #f9f9f9; }}
+.amount-col {{ text-align: right; }}
+.totals {{ float: right; width: 300px; }}
+.totals table {{ margin: 0; }}
+.totals td {{ padding: 6px 8px; }}
+.totals .grand-total {{ font-weight: bold; font-size: 16px; background: #2c3e50; color: white; }}
+.terms {{ clear: both; margin-top: 20px; padding: 15px; background: #f5f5f5; border-radius: 4px; }}
+.terms h3 {{ margin: 0 0 10px; color: #2c3e50; }}
+.terms p {{ margin: 4px 0; color: #555; }}
+.footer {{ margin-top: 30px; text-align: center; color: #999; font-size: 11px; border-top: 1px solid #eee; padding-top: 10px; }}
+.stamp {{ margin-top: 40px; display: flex; justify-content: space-between; }}
+.stamp-box {{ width: 200px; border-top: 1px solid #333; padding-top: 5px; text-align: center; color: #666; }}
+</style>
+</head>
+<body>
+<div class="pi-container">
+  <div class="header">
+    <div class="company-info">
+      <h1>{your_company or 'Your Company Name'}</h1>
+      <p>{your_address or 'Your Address, Ningbo, China'}</p>
+      <p>Email: sales@yourcompany.com | Tel: +86-xxx-xxxx-xxxx</p>
+    </div>
+    <div class="pi-title">
+      <h2>PROFORMA INVOICE</h2>
+      <p><strong>PI No:</strong> {pi_number}</p>
+      <p><strong>Date:</strong> {pi_date}</p>
+      <p><strong>Valid Until:</strong> {valid_until}</p>
+    </div>
+  </div>
+
+  <div class="parties">
+    <div class="buyer">
+      <h3>BUYER</h3>
+      <p><strong>{customer_company}</strong></p>
+      <p>Attn: {customer_name}</p>
+      <p>{customer_address}</p>
+      <p>Email: {customer_email}</p>
+    </div>
+    <div class="seller">
+      <h3>TERMS</h3>
+      <p><strong>Trade Terms:</strong> {trade_terms}</p>
+      <p><strong>Payment:</strong> {payment_terms}</p>
+      <p><strong>Delivery:</strong> 15-25 days after deposit</p>
+    </div>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>No.</th>
+        <th>Product</th>
+        <th>Specification</th>
+        <th>Quantity</th>
+        <th>Unit</th>
+        <th class="amount-col">Unit Price (USD)</th>
+        <th class="amount-col">Amount (USD)</th>
+      </tr>
+    </thead>
+    <tbody>"""
+
+    for item in items:
+        pi_html += f"""
+      <tr>
+        <td>{item['no']}</td>
+        <td>{item['name']}</td>
+        <td>{item['spec']}</td>
+        <td class="amount-col">{item['qty']:,.0f}</td>
+        <td>{item['unit']}</td>
+        <td class="amount-col">${item['unit_price']:,.2f}</td>
+        <td class="amount-col">${item['amount']:,.2f}</td>
+      </tr>"""
+
+    pi_html += f"""
+    </tbody>
+  </table>
+
+  <div class="totals">
+    <table>
+      <tr><td>Subtotal:</td><td class="amount-col">${subtotal:,.2f}</td></tr>
+      <tr class="grand-total"><td>TOTAL:</td><td class="amount-col">${subtotal:,.2f}</td></tr>
+    </table>
+  </div>
+
+  <div class="terms">
+    <h3>TERMS AND CONDITIONS</h3>
+    <p>1. Payment: {payment_terms}</p>
+    <p>2. Delivery: 15-25 working days after receiving deposit</p>
+    <p>3. This PI is valid until {valid_until}</p>
+    <p>4. Prices are in USD, {trade_terms} basis</p>
+    {f'<p>5. Notes: {notes}</p>' if notes else ''}
+  </div>
+
+  <div class="stamp">
+    <div class="stamp-box">Seller's Signature & Stamp</div>
+    <div class="stamp-box">Buyer's Confirmation</div>
+  </div>
+
+  <div class="footer">
+    <p>This is a Proforma Invoice, not a tax invoice. For business inquiries only.</p>
+  </div>
+</div>
+</body>
+</html>"""
+
+    return {
+        "pi_number": pi_number,
+        "pi_date": pi_date,
+        "valid_until": valid_until,
+        "customer_name": customer_name,
+        "customer_company": customer_company,
+        "items": items,
+        "subtotal": subtotal,
+        "total": subtotal,
+        "trade_terms": trade_terms,
+        "payment_terms": payment_terms,
+        "pi_html": pi_html,
+    }

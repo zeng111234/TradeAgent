@@ -76,6 +76,8 @@ export const agentApi = {
   churnAlerts: () => api.post('/agent/churn-alerts'),
   getHolidays: () => api.get('/agent/holidays'),
   generateHolidayEmails: (data) => api.post('/agent/holiday-emails', data),
+  scanLeads: (data) => api.post('/agent/scan-leads', data),
+  generatePI: (data) => api.post('/agent/generate-pi', data),
 }
 
 export default api

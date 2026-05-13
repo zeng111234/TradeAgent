@@ -13,6 +13,8 @@ from app.services.agent_service import (
     customer_churn_alerts,
     generate_holiday_emails,
     get_holiday_calendar,
+    auto_lead_scanner,
+    generate_pi,
 )
 from app.database import get_db
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -228,4 +230,83 @@ async def api_generate_holiday_emails(data: HolidayEmailRequest, db: AsyncSessio
         company_name=data.company_name,
         custom_message=data.custom_message,
         db_session=db,
+    )
+
+
+# --- New Feature 4: Auto Lead Scanner ---
+
+class LeadScanRequest(BaseModel):
+    product_keywords: str = Field(..., description="Product keywords (e.g. gold thread, metallic yarn)")
+    target_country: str = Field("", description="Target country (e.g. Germany, USA)")
+    target_region: str = Field("", description="Target region/state (optional)")
+    max_results: int = Field(10, description="Max number of results", ge=1, le=20)
+
+
+@router.post("/scan-leads")
+async def api_scan_leads(data: LeadScanRequest):
+    """Auto Lead Scanner - find potential buyers automatically.
+    
+    Instead of manually Googling and visiting sites:
+    1. Enter product keywords + target country
+    2. Agent searches Google, visits each result
+    3. Extracts company name, email, phone from each site
+    4. Scores relevance
+    5. AI enriches with priority and approach advice
+    6. One-click import to CRM
+    """
+    return await auto_lead_scanner(
+        product_keywords=data.product_keywords,
+        target_country=data.target_country,
+        target_region=data.target_region,
+        max_results=data.max_results,
+    )
+
+
+# --- New Feature 5: PI Generator ---
+
+class ProductItem(BaseModel):
+    name: str = Field(..., description="Product name")
+    spec: str = Field("", description="Specification")
+    qty: float = Field(..., description="Quantity")
+    unit: str = Field("pcs", description="Unit (pcs/rolls/meters/kg)")
+    unit_price: float = Field(..., description="Unit price in USD")
+
+
+class PIRequest(BaseModel):
+    customer_name: str = Field(..., description="Customer contact name")
+    customer_company: str = Field(..., description="Customer company name")
+    customer_address: str = Field("", description="Customer address")
+    customer_email: str = Field("", description="Customer email")
+    products: list[ProductItem] = Field(..., description="Product list")
+    trade_terms: str = Field("FOB", description="Trade terms (FOB/CIF/EXW)")
+    payment_terms: str = Field("T/T 30% deposit, 70% before shipment", description="Payment terms")
+    validity_days: int = Field(15, description="PI validity in days")
+    your_company: str = Field("", description="Your company name")
+    your_address: str = Field("", description="Your company address")
+    notes: str = Field("", description="Additional notes")
+
+
+@router.post("/generate-pi")
+async def api_generate_pi(data: PIRequest):
+    """PI (Proforma Invoice) Generator.
+    
+    Instead of manually creating PI in Word/Excel:
+    1. Enter customer info and product list
+    2. Auto-generates professional PI with proper formatting
+    3. Auto-calculates totals
+    4. Returns print-ready HTML
+    5. Can be emailed directly to customer
+    """
+    return await generate_pi(
+        customer_name=data.customer_name,
+        customer_company=data.customer_company,
+        customer_address=data.customer_address,
+        customer_email=data.customer_email,
+        products=[p.dict() for p in data.products],
+        trade_terms=data.trade_terms,
+        payment_terms=data.payment_terms,
+        validity_days=data.validity_days,
+        your_company=data.your_company,
+        your_address=data.your_address,
+        notes=data.notes,
     )
