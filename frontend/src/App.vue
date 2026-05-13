@@ -40,7 +40,7 @@
       </el-menu>
       <div class="sidebar-footer">
         <p>TradeAgent v1.0</p>
-        <p>Ningbo, China</p>
+        <p>Copyright (c) 2026 Zeng. All rights reserved.</p>
       </div>
     </aside>
 

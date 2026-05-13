@@ -1082,26 +1082,29 @@ async def auto_lead_scanner(
     seen_domains = set()
     all_urls = []
 
-    # Step 1: Google search to find URLs
-    for query in queries[:2]:  # Limit to 2 queries to avoid rate limiting
-        try:
-            search_url = f"https://www.google.com/search?q={requests.utils.quote(query)}&num={max_results}"
-            resp = requests.get(search_url, headers=headers, timeout=15, verify=False)
-            soup = BeautifulSoup(resp.text, "lxml")
-
-            # Extract URLs from Google results
-            for a in soup.find_all("a"):
-                href = a.get("href", "")
-                if "/url?q=" in href:
-                    url = href.split("/url?q=")[1].split("&")[0]
-                    if url.startswith("http") and "google.com" not in url and "youtube.com" not in url:
-                        domain = url.split("/")[2] if len(url.split("/")) > 2 else url
+    # Step 1: Search using ddgs library
+    try:
+        from ddgs import DDGS
+        ddgs = DDGS()
+        for query in queries[:2]:
+            try:
+                results = list(ddgs.text(query, max_results=max_results))
+                for r in results:
+                    href = r.get("href", "")
+                    if href and href.startswith("http"):
+                        domain = href.split("/")[2] if len(href.split("/")) > 2 else href
                         if domain not in seen_domains:
                             seen_domains.add(domain)
-                            all_urls.append(url)
+                            all_urls.append(href)
+                            logger.info(f"Found: {domain} - {r.get('title', '')[:50]}")
+            except Exception as e:
+                logger.error(f"DDGS search error for '{query}': {e}")
+    except ImportError:
+        logger.warning("ddgs not installed, falling back to basic scraping")
+    except Exception as e:
+        logger.error(f"DDGS error: {e}")
 
-        except Exception as e:
-            logger.error(f"Google search error for '{query}': {e}")
+    logger.info(f"Lead Scanner found {len(all_urls)} URLs from search")
 
     # Step 2: Visit each URL and extract company info
     for url in all_urls[:max_results]:
@@ -1156,20 +1159,34 @@ async def auto_lead_scanner(
                         break
 
             # Check if page is relevant (buyer/importer)
-            relevance_score = 30  # base
+            relevance_score = 20  # base
             buyer_keywords = ["import", "buyer", "wholesale", "distributor", "retailer",
-                            "sourcing", "procurement", "supply chain", "trade"]
-            if any(kw in text_lower for kw in buyer_keywords):
+                            "sourcing", "procurement", "supply chain", "trade",
+                            "importer", "importers", "buyer", "buyers", "purchasing"]
+            b2b_platforms = ["exporthub.com", "tradekey.com", "alibaba.com", "made-in-china.com",
+                           "globalsources.com", "indiamart.com", "volza.com", "importgenius.com",
+                           "panjiva.com", "tradedata.net", "kompass.com", "thomasnet.com"]
+            
+            # B2B platform boost
+            is_b2b = any(p in url_lower for p in b2b_platforms)
+            if is_b2b:
                 relevance_score += 30
+            
+            if any(kw in text_lower for kw in buyer_keywords):
+                relevance_score += 20
+            # Check for product keywords (fuzzy match - partial)
+            product_parts = product_keywords.lower().split()
+            if any(part in text_lower for part in product_parts if len(part) > 3):
+                relevance_score += 20
             if product_keywords.lower() in text_lower:
-                relevance_score += 25
+                relevance_score += 15
             if emails:
                 relevance_score += 10
             if "contact" in text_lower or "inquiry" in text_lower:
                 relevance_score += 5
 
             # Only include if somewhat relevant
-            if relevance_score >= 40:
+            if relevance_score >= 30:
                 leads.append({
                     "company_name": company_name or "Unknown",
                     "website": url,
