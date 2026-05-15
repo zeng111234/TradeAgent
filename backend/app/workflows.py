@@ -43,6 +43,14 @@ async def daily_morning_routine(search_keywords: str = "textile buyer", target_c
         logger.error(f"Lead scan failed: {e}")
         report["leads_count"] = 0
 
+    # Step 1.5: Auto-generate draft emails for new leads ("Write" capability)
+    logger.info("Step 1.5: Generating draft emails for new leads...")
+    report["draft_emails"] = []
+    for lead in report.get("new_leads", [])[:5]:
+        draft = await _generate_lead_draft_email(lead, search_keywords)
+        if draft:
+            report["draft_emails"].append(draft)
+
     # Step 2: Check churn alerts (needs db session)
     logger.info("Step 2: Checking customer churn alerts...")
     try:
@@ -139,3 +147,80 @@ def _compile_morning_report(report: dict) -> str:
         lines.append("All clear! No urgent actions needed today.")
 
     return "\n".join(lines)
+
+
+async def _generate_lead_draft_email(lead: dict, product_keywords: str) -> dict:
+    """Generate a personalized draft email for a lead using AI.
+    
+    This is the "Write" capability - instead of templates,
+    each email is crafted based on the lead's industry, country,
+    and what they do.
+    """
+    company_name = lead.get("company_name", "Unknown")
+    country = lead.get("country", "Unknown")
+    website = lead.get("website", "")
+    snippet = lead.get("snippet", "")
+    emails = lead.get("emails", [])
+
+    if not emails:
+        return None
+
+    try:
+        from app.config import settings
+        if settings.OPENAI_API_KEY:
+            from openai import AsyncOpenAI
+            client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY, base_url=settings.OPENAI_BASE_URL)
+
+            prompt = f"""Write a short, personalized cold outreach email for a foreign trade business.
+
+Target company: {company_name}
+Country: {country}
+Website: {website}
+Their business: {snippet[:200] if snippet else 'Unknown'}
+
+Your product: {product_keywords}
+
+Requirements:
+- Reference their specific business or industry (not generic)
+- Explain WHY your product is relevant to THEM
+- Keep under 80 words, warm and professional
+- Don't sound like a template
+
+Return JSON: {{"subject": "email subject", "body": "email body in plain text"}}"""
+
+            resp = await client.chat.completions.create(
+                model=settings.OPENAI_MODEL,
+                messages=[
+                    {"role": "system", "content": "Write B2B cold outreach emails. Return valid JSON only."},
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=0.7,
+                max_tokens=300,
+            )
+
+            import json
+            content = resp.choices[0].message.content.strip()
+            if content.startswith("```"):
+                content = content.split("```")[1]
+                if content.startswith("json"):
+                    content = content[4:]
+            result = json.loads(content)
+
+            return {
+                "company_name": company_name,
+                "to_email": emails[0],
+                "subject": result.get("subject", f"Business inquiry - {product_keywords}"),
+                "body": result.get("body", ""),
+                "body_preview": result.get("body", "")[:100] + "...",
+            }
+    except Exception as e:
+        logger.error(f"Draft email generation failed for {company_name}: {e}")
+
+    # Fallback: simple template
+    return {
+        "company_name": company_name,
+        "to_email": emails[0],
+        "subject": f"Quality {product_keywords} supplier - let's connect",
+        "body": f"Dear {company_name},\n\nI noticed your company in {country} and thought our {product_keywords} might be a good fit for your business.\n\nWould you be open to a quick chat about how we can work together?\n\nBest regards",
+        "body_preview": f"Dear {company_name}, I noticed your company in {country}...",
+    }

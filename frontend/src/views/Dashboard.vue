@@ -285,37 +285,47 @@ const runDailyReport = async () => {
     const result = await schedulerApi.runDaily({ search_keywords: 'textile buyer' })
     // Format the result as a readable report
     const lines = []
-    lines.append(`Good morning! Report for ${result.date || new Date().toISOString().split('T')[0]}:`)
-    lines.append('')
-    lines.append(`[New Leads] Found ${result.leads_count || 0} potential customers:`)
+    lines.push(`Good morning! Report for ${result.date || new Date().toISOString().split('T')[0]}:`)
+    lines.push('')
+    lines.push(`[New Leads] Found ${result.leads_count || 0} potential customers:`)
     if (result.new_leads && result.new_leads.length) {
       result.new_leads.slice(0, 5).forEach(l => {
         const emails = l.emails && l.emails.length ? ` | Email: ${l.emails[0]}` : ''
-        lines.append(`  - ${l.company_name} (${l.country}) Score: ${l.relevance_score}${emails}`)
+        lines.push(`  - ${l.company_name} (${l.country}) Score: ${l.relevance_score}${emails}`)
       })
     } else {
-      lines.append('  No new leads found today.')
+      lines.push('  No new leads found today.')
     }
-    lines.append('')
+    // Show draft emails if any
+    if (result.draft_emails && result.draft_emails.length) {
+      lines.push('')
+      lines.push('[Draft Emails] AI generated for new leads:')
+      result.draft_emails.forEach(d => {
+        lines.push(`  - ${d.company_name}:`)
+        lines.push(`    Subject: ${d.subject}`)
+        lines.push(`    Body: ${d.body_preview || '(click to view full draft)'}`)
+      })
+    }
+    lines.push('')
     const crit = result.critical_count || 0
     const high = result.high_count || 0
     if (crit > 0 || high > 0) {
-      lines.append(`[Alerts] ${crit} critical, ${high} high-risk customers:`)
+      lines.push(`[Alerts] ${crit} critical, ${high} high-risk customers:`)
       ;(result.churn_alerts || []).slice(0, 3).forEach(a => {
-        lines.append(`  - [${a.risk_level.toUpperCase()}] ${a.company_name}: ${a.risk_reasons?.[0] || 'Unknown'}`)
+        lines.push(`  - [${a.risk_level.toUpperCase()}] ${a.company_name}: ${a.risk_reasons?.[0] || 'Unknown'}`)
       })
     } else {
-      lines.append('[Alerts] No customer churn alerts.')
+      lines.push('[Alerts] No customer churn alerts.')
     }
-    lines.append('')
+    lines.push('')
     const fu = result.high_priority_followups || 0
     if (fu > 0) {
-      lines.append(`[Follow-ups] ${fu} customers need follow-up today:`)
+      lines.push(`[Follow-ups] ${fu} customers need follow-up today:`)
       ;(result.follow_ups || []).slice(0, 3).forEach(f => {
-        lines.append(`  - ${f.company_name}: ${f.suggested_action}`)
+        lines.push(`  - ${f.company_name}: ${f.suggested_action}`)
       })
     } else {
-      lines.append('[Follow-ups] No urgent follow-ups today.')
+      lines.push('[Follow-ups] No urgent follow-ups today.')
     }
     dailyReport.value = lines.join('\n')
   } catch (e) {
