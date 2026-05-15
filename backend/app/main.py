@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.database import init_db
 from app.routers import customers, emails, tasks, analytics, agent
+from app.scheduler import start_scheduler, stop_scheduler, get_job_status, trigger_daily_routine
 
 # Logging
 logging.basicConfig(level=logging.INFO)
@@ -23,8 +24,12 @@ async def lifespan(app: FastAPI):
     logger.info("Database initialized.")
     # Insert demo data if empty
     await _insert_demo_data()
+    # Start the scheduler
+    start_scheduler()
     logger.info("TradeAgent is ready!")
     yield
+    # Stop scheduler on shutdown
+    stop_scheduler()
     logger.info("Shutting down TradeAgent...")
 
 
@@ -67,6 +72,19 @@ async def root():
 async def health():
     """Health check endpoint."""
     return {"status": "ok"}
+
+
+@app.get("/api/v1/scheduler/jobs")
+async def api_scheduler_jobs():
+    """Get status of all scheduled jobs."""
+    return {"jobs": get_job_status()}
+
+
+@app.post("/api/v1/scheduler/run-daily")
+async def api_run_daily(search_keywords: str = "textile buyer", target_country: str = ""):
+    """Manually trigger the daily morning routine."""
+    result = await trigger_daily_routine(search_keywords=search_keywords, target_country=target_country)
+    return result
 
 
 async def _insert_demo_data():

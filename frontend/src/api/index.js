@@ -80,4 +80,10 @@ export const agentApi = {
   generatePI: (data) => api.post('/agent/generate-pi', data),
 }
 
+// --- Scheduler ---
+export const schedulerApi = {
+  getJobs: () => api.get('/scheduler/jobs'),
+  runDaily: (params) => api.post('/scheduler/run-daily', null, { params }),
+}
+
 export default api

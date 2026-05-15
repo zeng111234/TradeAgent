@@ -40,7 +40,8 @@
       </el-menu>
       <div class="sidebar-footer">
         <p>TradeAgent v1.0</p>
-        <p>Copyright (c) 2026 Zeng. All rights reserved.</p>
+        <p>Copyright (c) 2026 Zeng.</p>
+        <p> All rights reserved.</p>
       </div>
     </aside>
 

@@ -105,13 +105,45 @@
         </el-card>
       </el-col>
     </el-row>
+
+    <!-- Daily Report / Scheduler -->
+    <el-row :gutter="20" style="margin-top: 24px">
+      <el-col :span="16">
+        <el-card shadow="never">
+          <template #header>
+            <div style="display: flex; justify-content: space-between; align-items: center">
+              <span style="font-weight: 600">Daily Auto Report</span>
+              <el-button type="primary" @click="runDailyReport" :loading="dailyLoading" size="large">
+                <el-icon><MagicStick /></el-icon> Run Now
+              </el-button>
+            </div>
+          </template>
+          <div v-if="dailyReport" style="white-space: pre-wrap; font-family: monospace; font-size: 13px; color: #303133; background: #f5f7fa; padding: 16px; border-radius: 6px; line-height: 1.8">{{ dailyReport }}</div>
+          <el-empty v-else description="Click 'Run Now' to generate the daily report" />
+        </el-card>
+      </el-col>
+      <el-col :span="8">
+        <el-card shadow="never">
+          <template #header>
+            <span style="font-weight: 600">Scheduled Jobs</span>
+          </template>
+          <div v-for="job in schedulerJobs" :key="job.id" style="border-bottom: 1px solid #eee; padding: 8px 0;">
+            <div style="font-weight: 600; font-size: 13px">{{ job.name }}</div>
+            <div style="font-size: 11px; color: #909399">{{ job.trigger }}</div>
+            <div style="font-size: 11px; color: #67c23a">Next: {{ job.next_run }}</div>
+          </div>
+          <el-empty v-if="!schedulerJobs.length" description="No scheduled jobs" />
+        </el-card>
+      </el-col>
+    </el-row>
   </div>
 </template>
 
 <script setup>
 import { ref, reactive, onMounted, onUnmounted, nextTick } from 'vue'
+import { ElMessage } from 'element-plus'
 import * as echarts from 'echarts'
-import { analyticsApi } from '../api'
+import { analyticsApi, schedulerApi } from '../api'
 
 const stats = reactive({
   total_customers: 0,
@@ -242,6 +274,57 @@ const handleResize = () => {
   charts.forEach(c => c.resize())
 }
 
+// Scheduler
+const dailyLoading = ref(false)
+const dailyReport = ref(null)
+const schedulerJobs = ref([])
+
+const runDailyReport = async () => {
+  dailyLoading.value = true
+  try {
+    const result = await schedulerApi.runDaily({ search_keywords: 'textile buyer' })
+    // Format the result as a readable report
+    const lines = []
+    lines.append(`Good morning! Report for ${result.date || new Date().toISOString().split('T')[0]}:`)
+    lines.append('')
+    lines.append(`[New Leads] Found ${result.leads_count || 0} potential customers:`)
+    if (result.new_leads && result.new_leads.length) {
+      result.new_leads.slice(0, 5).forEach(l => {
+        const emails = l.emails && l.emails.length ? ` | Email: ${l.emails[0]}` : ''
+        lines.append(`  - ${l.company_name} (${l.country}) Score: ${l.relevance_score}${emails}`)
+      })
+    } else {
+      lines.append('  No new leads found today.')
+    }
+    lines.append('')
+    const crit = result.critical_count || 0
+    const high = result.high_count || 0
+    if (crit > 0 || high > 0) {
+      lines.append(`[Alerts] ${crit} critical, ${high} high-risk customers:`)
+      ;(result.churn_alerts || []).slice(0, 3).forEach(a => {
+        lines.append(`  - [${a.risk_level.toUpperCase()}] ${a.company_name}: ${a.risk_reasons?.[0] || 'Unknown'}`)
+      })
+    } else {
+      lines.append('[Alerts] No customer churn alerts.')
+    }
+    lines.append('')
+    const fu = result.high_priority_followups || 0
+    if (fu > 0) {
+      lines.append(`[Follow-ups] ${fu} customers need follow-up today:`)
+      ;(result.follow_ups || []).slice(0, 3).forEach(f => {
+        lines.append(`  - ${f.company_name}: ${f.suggested_action}`)
+      })
+    } else {
+      lines.append('[Follow-ups] No urgent follow-ups today.')
+    }
+    dailyReport.value = lines.join('\n')
+  } catch (e) {
+    ElMessage.error('Failed: ' + (e.response?.data?.detail || e.message))
+  } finally {
+    dailyLoading.value = false
+  }
+}
+
 onMounted(async () => {
   try {
     const data = await analyticsApi.dashboard()
@@ -249,6 +332,11 @@ onMounted(async () => {
   } catch (e) {
     console.error('Dashboard stats error:', e)
   }
+  // Load scheduler jobs
+  try {
+    const jobData = await schedulerApi.getJobs()
+    schedulerJobs.value = jobData.jobs || []
+  } catch (e) { /* ignore */ }
   await initCharts()
   window.addEventListener('resize', handleResize)
 })
