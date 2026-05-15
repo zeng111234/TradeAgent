@@ -16,10 +16,24 @@ if not exist "%ROOT%backend\.env" (
     echo [INFO] Please edit backend\.env to set your API key.
 )
 
+:: Use .venv if available
+set "PIP_CMD=pip"
+set "PYTHON_CMD=python"
+if exist "%ROOT%.venv\Scripts\python.exe" (
+    set "PIP_CMD=%ROOT%.venv\Scripts\pip.exe"
+    set "PYTHON_CMD=%ROOT%.venv\Scripts\python.exe"
+    echo [INFO] Using .venv Python
+) else (
+    echo [INFO] Creating .venv virtual environment...
+    python -m venv "%ROOT%.venv"
+    set "PIP_CMD=%ROOT%.venv\Scripts\pip.exe"
+    set "PYTHON_CMD=%ROOT%.venv\Scripts\python.exe"
+)
+
 :: Install Python backend dependencies
 echo [1/2] Installing Python dependencies...
 pushd "%ROOT%backend"
-pip install -r requirements.txt
+"%PIP_CMD%" install -r requirements.txt
 if %errorlevel% neq 0 (
     echo [ERROR] Failed to install Python dependencies!
     echo [INFO] Make sure Python and pip are installed and in PATH.

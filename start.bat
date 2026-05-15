@@ -16,10 +16,17 @@ if not exist "%ROOT%backend\.env" (
     echo [INFO] Please edit backend\.env to set your API key.
 )
 
+:: Use .venv if available
+set "PYTHON_CMD=python"
+if exist "%ROOT%.venv\Scripts\python.exe" (
+    set "PYTHON_CMD=%ROOT%.venv\Scripts\python.exe"
+    echo [INFO] Using .venv Python
+)
+
 :: Start backend
 echo [1/2] Starting Backend on http://localhost:8000 ...
 pushd "%ROOT%backend"
-start "TradeAgent-Backend" cmd /c "python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000"
+start "TradeAgent-Backend" cmd /c ""%PYTHON_CMD%" -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000"
 popd
 
 :: Wait for backend
