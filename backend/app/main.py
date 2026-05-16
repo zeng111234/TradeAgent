@@ -104,70 +104,70 @@ async def _insert_demo_data():
 
         logger.info("Inserting demo data...")
 
-        # Demo customers
+        # Demo customers (textile industry)
         customers_data = [
             Customer(
-                company_name="ABC Trading Co., Ltd",
+                company_name="ABC Fashion Imports LLC",
                 country="United States",
-                city="Los Angeles",
-                website="https://www.abctrading.com",
-                industry="Home & Garden",
-                products="furniture, home decor, kitchenware",
+                city="New York",
+                website="https://www.abcfashion.com",
+                industry="Textile & Apparel",
+                products="embroidery thread, metallic yarn, decorative fabric",
                 source="scraper",
                 stage="interested",
                 score=85.0,
-                tags="vip,home-garden",
+                tags="vip,textile,usa",
                 annual_import_value="$500,000+",
             ),
             Customer(
-                company_name="EuroGoods GmbH",
+                company_name="EuroTextil GmbH",
                 country="Germany",
                 city="Hamburg",
-                website="https://www.eurogoods.de",
-                industry="Consumer Electronics",
-                products="LED lights, smart devices, chargers",
+                website="https://www.eurotextil.de",
+                industry="Textile & Embroidery",
+                products="gold thread, embroidery supplies, metallic thread",
                 source="import",
                 stage="quoting",
                 score=72.0,
-                tags="europe,electronics",
+                tags="europe,textile,embroidery",
                 annual_import_value="$300,000+",
             ),
             Customer(
-                company_name="Mediterranean Imports S.L.",
+                company_name="Mediterranean Textile S.L.",
                 country="Spain",
                 city="Barcelona",
-                website="https://www.medimports.es",
-                industry="Food & Beverage",
-                products="packaged food, beverages, snacks",
+                website="https://www.medtextile.es",
+                industry="Fashion Accessories",
+                products="gold lace, metallic ribbon, decorative thread",
                 source="exhibition",
                 stage="new",
                 score=45.0,
-                tags="food,spain",
+                tags="textile,spain,fashion",
             ),
             Customer(
-                company_name="JapanTech Solutions",
+                company_name="Japan Embroidery Co., Ltd",
                 country="Japan",
                 city="Tokyo",
-                website="https://www.japantech.co.jp",
-                industry="Automotive Parts",
-                products="auto parts, rubber seals, bearings",
+                website="https://www.japanembroidery.co.jp",
+                industry="Embroidery & Textile",
+                products="embroidery thread, gold metallic yarn, sequins",
                 source="alibaba",
                 stage="contacted",
                 score=68.0,
-                tags="automotive,japan",
+                tags="textile,japan,embroidery",
                 annual_import_value="$1,200,000+",
             ),
             Customer(
-                company_name="Ningbo Sunshine Electronics",
-                company_name_cn="Ningbo Sunshine Electronics Co., Ltd",
+                company_name="Ningbo Sunshine Textile Co., Ltd",
+                company_name_cn="Ningbo Sunshine Textile Co., Ltd",
                 country="China",
                 city="Ningbo",
-                industry="Electronics Manufacturing",
-                products="circuit boards, connectors, cables",
+                industry="Textile Manufacturing",
+                products="gold thread, metallic yarn, embroidery supplies",
                 source="referral",
                 stage="completed",
                 score=95.0,
-                tags="local,nb,partner",
+                tags="local,nb,partner,textile",
                 annual_import_value="$2,000,000+",
             ),
         ]
@@ -178,18 +178,18 @@ async def _insert_demo_data():
 
         # Add contacts
         contacts_data = [
-            CustomerContact(customer_id=customers_data[0].id, name="John Smith", title="Purchasing Manager", email="john@abctrading.com", phone="+1-310-555-0100", is_primary=1),
-            CustomerContact(customer_id=customers_data[1].id, name="Hans Mueller", title="Import Director", email="hans@eurogoods.de", phone="+49-40-555-0200", is_primary=1),
-            CustomerContact(customer_id=customers_data[3].id, name="Yuki Tanaka", title="Sourcing Manager", email="yuki@japantech.co.jp", phone="+81-3-5555-0400", is_primary=1),
+            CustomerContact(customer_id=customers_data[0].id, name="John Smith", title="Purchasing Manager", email="john@abcfashion.com", phone="+1-212-555-0100", is_primary=1),
+            CustomerContact(customer_id=customers_data[1].id, name="Hans Mueller", title="Import Director", email="hans@eurotextil.de", phone="+49-40-555-0200", is_primary=1),
+            CustomerContact(customer_id=customers_data[3].id, name="Yuki Tanaka", title="Sourcing Manager", email="yuki@japanembroidery.co.jp", phone="+81-3-5555-0400", is_primary=1),
         ]
         for c in contacts_data:
             db.add(c)
 
         # Add notes
         notes_data = [
-            CustomerNote(customer_id=customers_data[0].id, content="Met at Canton Fair 2025, very interested in our new product line", note_type="meeting"),
-            CustomerNote(customer_id=customers_data[0].id, content="Sent product catalog via email, waiting for feedback", note_type="email"),
-            CustomerNote(customer_id=customers_data[1].id, content="Requested samples for LED panel lights, 3 variants", note_type="quotation"),
+            CustomerNote(customer_id=customers_data[0].id, content="Met at Canton Fair 2025, very interested in our gold metallic yarn", note_type="meeting"),
+            CustomerNote(customer_id=customers_data[0].id, content="Sent textile catalog and embroidery thread samples via email", note_type="email"),
+            CustomerNote(customer_id=customers_data[1].id, content="Requested samples for gold thread and metallic yarn, 3 variants", note_type="quotation"),
         ]
         for n in notes_data:
             db.add(n)
@@ -216,9 +216,9 @@ async def _insert_demo_data():
 
         # Demo tasks
         tasks_data = [
-            Task(title="Follow up with ABC Trading on LED panel samples", customer_id=customers_data[0].id, priority="high", task_type="follow_up"),
-            Task(title="Send updated price list to EuroGoods", customer_id=customers_data[1].id, priority="medium", task_type="quotation"),
-            Task(title="Prepare Canton Fair meeting notes", priority="low", task_type="meeting"),
+            Task(title="Follow up with ABC Fashion on embroidery thread samples", customer_id=customers_data[0].id, priority="high", task_type="follow_up"),
+            Task(title="Send updated price list for metallic yarn to EuroTextil", customer_id=customers_data[1].id, priority="medium", task_type="quotation"),
+            Task(title="Prepare Canton Fair booth for textile exhibition", priority="low", task_type="meeting"),
         ]
         for t in tasks_data:
             db.add(t)

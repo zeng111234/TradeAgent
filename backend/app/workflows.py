@@ -12,7 +12,7 @@ from app.notification import send_notification
 logger = logging.getLogger(__name__)
 
 
-async def daily_morning_routine(search_keywords: str = "textile buyer", target_country: str = "") -> dict:
+async def daily_morning_routine(search_keywords: str = None, target_country: str = "") -> dict:
     """Daily morning routine - the main automation workflow.
 
     Steps:
@@ -28,8 +28,13 @@ async def daily_morning_routine(search_keywords: str = "textile buyer", target_c
         "follow_ups": [],
     }
 
+    # Use config defaults if not specified
+    if not search_keywords:
+        from app.config import settings
+        search_keywords = settings.DEFAULT_PRODUCT_KEYWORDS.split(",")[0].strip()
+
     # Step 1: Scan for new leads
-    logger.info("Step 1: Scanning for new leads...")
+    logger.info(f"Step 1: Scanning for new leads: '{search_keywords}'...")
     try:
         from app.services.agent_service import auto_lead_scanner
         scan_result = await auto_lead_scanner(

@@ -11,6 +11,12 @@ class Settings(BaseSettings):
     APP_VERSION: str = "1.0.0"
     DEBUG: bool = True
 
+    # Your products (for lead scanning and email generation)
+    DEFAULT_PRODUCT_KEYWORDS: str = "embroidery thread, gold metallic yarn, gold thread, textile fabric"
+    DEFAULT_TARGET_COUNTRIES: str = "Germany, United States, United Kingdom, France, Italy, Spain"
+    COMPANY_NAME: str = "Your Company Name"
+    COMPANY_ADDRESS: str = "Ningbo, China"
+
     # Database
     DATABASE_URL: str = "sqlite+aiosqlite:///./tradeagent.db"
 
