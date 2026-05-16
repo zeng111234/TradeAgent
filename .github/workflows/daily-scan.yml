@@ -1,0 +1,42 @@
+# TradeAgent Daily Lead Scan
+# Runs every day at 9:00 AM Beijing time (01:00 UTC)
+# Searches for textile buyers and emails you a report
+# Works even when your computer is off!
+
+name: Daily Lead Scan
+
+on:
+  schedule:
+    # Every day at 01:00 UTC = 09:00 Beijing time
+    - cron: '0 1 * * *'
+  workflow_dispatch:  # Allow manual trigger from GitHub UI
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install ddgs requests beautifulsoup4 lxml
+
+      - name: Run daily scan
+        env:
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          REPORT_EMAIL: ${{ secrets.REPORT_EMAIL }}
+          SCAN_KEYWORDS: ${{ secrets.SCAN_KEYWORDS || 'embroidery thread, gold metallic yarn' }}
+          SCAN_COUNTRIES: ${{ secrets.SCAN_COUNTRIES || 'Germany, United States, United Kingdom' }}
+        run: |
+          python scripts/daily_scan.py
