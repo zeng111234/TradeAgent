@@ -15,6 +15,8 @@ jobs:
   scan:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout code
@@ -36,7 +38,7 @@ jobs:
           SMTP_USER: ${{ secrets.SMTP_USER }}
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
           REPORT_EMAIL: ${{ secrets.REPORT_EMAIL }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_API_KEY: sk-${{ secrets.OPENAI_API_KEY }}
           OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL || 'https://api.xiaomi.com/v1' }}
           OPENAI_MODEL: ${{ secrets.OPENAI_MODEL || 'mimo-v2.5' }}
           SCAN_KEYWORDS: ${{ secrets.SCAN_KEYWORDS || 'embroidery thread, gold metallic yarn' }}
@@ -47,16 +49,8 @@ jobs:
       - name: Upload leads JSON as artifact
         uses: actions/upload-artifact@v4
         with:
-          name: daily-leads
-          path: scripts/daily_leads.json
+          name: daily-leads-${{ github.run_id }}
+          path: |
+            scripts/daily_leads.json
+            scripts/scanned_domains.json
           if-no-files-found: ignore
-
-      - name: Commit scan results to repo
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          if [ -f scripts/daily_leads.json ]; then
-            git add scripts/daily_leads.json scripts/scanned_domains.json
-            git diff --staged --quiet || git commit -m "chore: update daily scan results [skip ci]"
-            git push
-          fi
