@@ -33,6 +33,63 @@
       </el-col>
     </el-row>
 
+    <!-- Pending Draft Review -->
+    <el-card shadow="never" style="margin-bottom: 20px">
+      <template #header>
+        <div style="display: flex; justify-content: space-between; align-items: center">
+          <div>
+            <span style="font-weight: 600">Pending Draft Review</span>
+            <el-tag v-if="pendingEmails.length" type="warning" size="small" style="margin-left: 8px">{{ pendingEmails.length }} drafts</el-tag>
+          </div>
+          <el-button size="small" @click="loadData" :loading="false">
+            <el-icon><Refresh /></el-icon> Refresh
+          </el-button>
+        </div>
+      </template>
+
+      <el-empty v-if="!pendingEmails.length" description="No pending drafts. Import leads from Dashboard first." />
+
+      <div v-for="email in pendingEmails" :key="email.id" style="border: 1px solid #ebeef5; border-radius: 8px; padding: 16px; margin-bottom: 12px; background: #fafafa">
+        <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px">
+          <div>
+            <strong>To:</strong> {{ email.to_email }}
+            <span v-if="email.to_name" style="color: #909399; margin-left: 8px">({{ email.to_name }})</span>
+          </div>
+          <div>
+            <el-tag type="warning" size="small">Pending</el-tag>
+          </div>
+        </div>
+        <div style="margin-bottom: 8px">
+          <strong>Subject:</strong>
+          <span v-if="editingId !== email.id">{{ email.subject }}</span>
+          <el-input v-else v-model="editSubject" size="small" style="width: 80%; margin-left: 4px" />
+        </div>
+        <div style="margin-bottom: 12px; color: #606266; font-size: 13px; line-height: 1.6">
+          <div v-if="editingId !== email.id" style="white-space: pre-wrap; background: #fff; padding: 12px; border-radius: 4px; border: 1px solid #eee">{{ email.body }}</div>
+          <el-input v-else v-model="editBody" type="textarea" :rows="5" />
+        </div>
+        <div style="display: flex; gap: 8px">
+          <template v-if="editingId !== email.id">
+            <el-button type="primary" size="small" @click="handleSendPending(email)" :loading="sendingId === email.id">
+              <el-icon><Promotion /></el-icon> Send
+            </el-button>
+            <el-button size="small" @click="startEdit(email)">
+              <el-icon><Edit /></el-icon> Edit
+            </el-button>
+            <el-button type="danger" size="small" @click="handleDeletePending(email)" plain>
+              <el-icon><Delete /></el-icon> Delete
+            </el-button>
+          </template>
+          <template v-else>
+            <el-button type="success" size="small" @click="saveEdit(email)">
+              <el-icon><Check /></el-icon> Save
+            </el-button>
+            <el-button size="small" @click="cancelEdit">Cancel</el-button>
+          </template>
+        </div>
+      </div>
+    </el-card>
+
     <el-row :gutter="20">
       <!-- Send Email Form -->
       <el-col :span="10">
@@ -157,6 +214,13 @@ const templates = ref([])
 const emailLogs = ref([])
 const aiResult = ref(null)
 
+// Pending drafts from daily scan import
+const pendingEmails = ref([])
+const editingId = ref(null)
+const editSubject = ref('')
+const editBody = ref('')
+const sendingId = ref(null)
+
 const emailStats = reactive({
   total_sent: 0,
   total_opened: 0,
@@ -201,6 +265,8 @@ const loadData = async () => {
     Object.assign(emailStats, stats)
     emailLogs.value = logs
     templates.value = tmpls
+    // Filter pending drafts (from daily scan import)
+    pendingEmails.value = logs.filter(l => l.status === 'pending')
   } catch (e) {
     console.error('Load error:', e)
   }
@@ -257,6 +323,56 @@ const useAiResult = () => {
 const handleGenerateAI = () => {
   // Scroll to AI section
   document.querySelector('.el-card')?.scrollIntoView({ behavior: 'smooth' })
+}
+
+// Pending draft actions
+const startEdit = (email) => {
+  editingId.value = email.id
+  editSubject.value = email.subject
+  editBody.value = email.body
+}
+
+const cancelEdit = () => {
+  editingId.value = null
+  editSubject.value = ''
+  editBody.value = ''
+}
+
+const saveEdit = (email) => {
+  // Update local data
+  email.subject = editSubject.value
+  email.body = editBody.value
+  editingId.value = null
+  ElMessage.success('Draft updated locally. Click Send to send it.')
+}
+
+const handleSendPending = async (email) => {
+  sendingId.value = email.id
+  try {
+    await emailApi.send({
+      to_email: email.to_email,
+      to_name: email.to_name || '',
+      subject: email.subject,
+      body: email.body,
+    })
+    ElMessage.success(`Email sent to ${email.to_email}!`)
+    // Remove from pending list and refresh
+    await loadData()
+  } catch (e) {
+    ElMessage.error('Failed to send: ' + (e.response?.data?.detail || e.message))
+  } finally {
+    sendingId.value = null
+  }
+}
+
+const handleDeletePending = async (email) => {
+  try {
+    // Remove from local list (the backend will keep the log as 'failed' or we just filter it out)
+    pendingEmails.value = pendingEmails.value.filter(e => e.id !== email.id)
+    ElMessage.success('Draft removed from review list.')
+  } catch (e) {
+    ElMessage.error('Failed to remove draft')
+  }
 }
 
 onMounted(loadData)

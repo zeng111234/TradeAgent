@@ -1,9 +1,10 @@
 """
-TradeAgent Daily Lead Scan Script (v2)
-- Searches globally across 10+ textile importing countries
+TradeAgent Daily Lead Scan Script (v3)
+- Searches globally across 15+ textile importing countries
 - Uses ALL keywords (not just the first one)
 - Skips previously scanned domains
-- AI-generates personalized draft emails for each lead
+- AI-generates personalized draft emails using page content
+- Saves structured JSON for Web platform import
 - Drafts stay in report for human review (not auto-sent)
 - Target: ~10 new leads per day
 """
@@ -17,6 +18,7 @@ from datetime import datetime
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 SCANNED_FILE = os.path.join(SCRIPT_DIR, "scanned_domains.json")
+LEADS_JSON_FILE = os.path.join(SCRIPT_DIR, "daily_leads.json")
 TARGET_NEW_LEADS = 10
 
 # Global textile importing countries
@@ -100,7 +102,7 @@ def scrape_lead_details(leads: list) -> list:
     b2b_platforms = ["exporthub.com", "tradekey.com", "alibaba.com", "made-in-china.com",
                      "globalsources.com", "volza.com", "fibre2fashion.com"]
 
-    for lead in leads[:20]:  # check up to 20 to get enough good ones
+    for lead in leads[:20]:
         try:
             resp = requests.get(lead["website"], headers=headers, timeout=10, verify=False)
             soup = BeautifulSoup(resp.text, "lxml")
@@ -131,7 +133,7 @@ def scrape_lead_details(leads: list) -> list:
             if score >= 40:
                 lead["emails"] = emails[:3]
                 lead["relevance_score"] = min(score, 100)
-                lead["page_text_preview"] = page_text[:300]
+                lead["page_text_preview"] = page_text[:800]
                 enriched.append(lead)
         except Exception:
             pass
@@ -143,7 +145,7 @@ def scrape_lead_details(leads: list) -> list:
 def generate_draft_email(lead: dict) -> str:
     """Generate a personalized draft email for a lead.
     
-    Uses AI if OPENAI_API_KEY is set, otherwise falls back to a smart template.
+    Uses AI with full page context for genuine personalization.
     Does NOT send - returns the draft text only.
     """
     api_key = os.environ.get("OPENAI_API_KEY", "")
@@ -154,49 +156,72 @@ def generate_draft_email(lead: dict) -> str:
     website = lead.get("website", "")
     snippet = lead.get("snippet", "")
     keyword = lead.get("keyword", "textile products")
+    country = lead.get("country", "your region")
+    page_text = lead.get("page_text_preview", "")
 
     if api_key:
         try:
             from openai import OpenAI
             client = OpenAI(api_key=api_key, base_url=base_url)
 
-            prompt = f"""Write a short, personalized cold outreach email (under 80 words).
+            prompt = f"""Write a short, personalized cold outreach email (60-90 words) from a Chinese textile supplier.
 
-Target: {company}
-Their website: {website}
-What they do: {snippet[:150]}
-Your product: {keyword}
+About the target company:
+- Company name: {company}
+- Website: {website}
+- Country: {country}
+- Search snippet: {snippet[:150]}
+- What their website says: {page_text[:500]}
 
-Rules:
-- Reference something specific about their business
-- Explain WHY your product fits THEM
-- Professional, warm, not pushy
-- DO NOT send, just write the email body
+Your product: {keyword} (from Ningbo, China)
 
-Return ONLY the email body text (no JSON, no subject line)."""
+CRITICAL RULES:
+1. Reference SOMETHING SPECIFIC from their website (their products, market, customers, etc.)
+2. Explain WHY your {keyword} is relevant to THEIR specific business
+3. Sound natural and human, NOT like a template
+4. Professional but warm tone
+5. End with a soft call-to-action (offer sample or catalog)
+6. Keep it under 90 words
+7. DO NOT use phrases like "I hope this email finds you well" or "We are a leading manufacturer"
+
+Return ONLY the email body (no subject line, no JSON)."""
 
             resp = client.chat.completions.create(
                 model=model,
                 messages=[
-                    {"role": "system", "content": "You are a B2B foreign trade email writer. Write concise, personalized emails."},
+                    {"role": "system", "content": "You write personalized B2B cold emails for a Chinese textile supplier. Each email must reference specific details about the recipient's business."},
                     {"role": "user", "content": prompt},
                 ],
-                temperature=0.7,
-                max_tokens=200,
+                temperature=0.8,
+                max_tokens=250,
             )
             return resp.choices[0].message.content.strip()
         except Exception as e:
             print(f"  [WARN] AI draft failed for {company}: {e}")
 
-    # Fallback: smart template
-    country = lead.get("country", "your region")
+    # Fallback: smarter template with page-based context
+    page_lower = page_text.lower()
+    business_context = ""
+    if "embroidery" in page_lower or "needlework" in page_lower:
+        business_context = "your embroidery and needlework products"
+    elif "fashion" in page_lower or "clothing" in page_lower or "garment" in page_lower:
+        business_context = "your fashion and garment business"
+    elif "quilt" in page_lower or "craft" in page_lower:
+        business_context = "your quilting and craft supplies"
+    elif "upholstery" in page_lower or "interior" in page_lower or "decor" in page_lower:
+        business_context = "your interior decoration products"
+    elif "import" in page_lower or "trade" in page_lower or "distribution" in page_lower:
+        business_context = "your distribution network in the textile market"
+    else:
+        business_context = f"your business in {country}"
+
     return f"""Dear {company},
 
-I noticed your company specializes in related products in {country}. As a professional manufacturer of {keyword} based in Ningbo, China, I believe our products could complement your business.
+I came across your company and was impressed by {business_context}. We are a specialized manufacturer of {keyword} based in Ningbo, China, and I believe our products could be a strong fit for your product range.
 
-We offer competitive pricing, consistent quality, and flexible MOQs. Would you be open to receiving our product catalog and a sample?
+We offer consistent quality, competitive pricing, and flexible order quantities. I'd love to send you our latest product catalog and samples so you can evaluate them firsthand.
 
-Looking forward to hearing from you.
+Would you be interested in exploring this further?
 
 Best regards"""
 
@@ -244,11 +269,47 @@ def build_report(leads: list, keywords_used: list, countries_scanned: list, skip
 
     lines.append("=" * 60)
     lines.append("ALL drafts above are for REVIEW ONLY. Nothing was sent automatically.")
-    lines.append("To send a draft, copy it to TradeAgent > Emails > Send Email.")
+    lines.append("")
+    lines.append(f"Structured data saved to: {LEADS_JSON_FILE}")
+    lines.append("Import to Web platform: TradeAgent > Dashboard > Import Today's Leads")
+    lines.append("Or send drafts manually: TradeAgent > Emails > Pending Review")
     lines.append("")
     lines.append("This report was generated automatically by TradeAgent.")
     lines.append("https://github.com/zeng111234/TradeAgent")
     return "\n".join(lines)
+
+
+def save_leads_json(leads: list, keywords_used: list, countries_scanned: list):
+    """Save leads as structured JSON for web platform import."""
+    output = {
+        "scan_date": datetime.now().isoformat(),
+        "keywords_used": keywords_used,
+        "countries_scanned": countries_scanned,
+        "total_found": len(leads),
+        "leads": []
+    }
+
+    for lead in leads:
+        email_list = lead.get("emails", [])
+        output["leads"].append({
+            "company_name": lead.get("company_name", "Unknown"),
+            "website": lead.get("website", ""),
+            "country": lead.get("country", ""),
+            "keyword": lead.get("keyword", ""),
+            "snippet": lead.get("snippet", ""),
+            "emails": email_list,
+            "relevance_score": lead.get("relevance_score", 0),
+            "page_text_preview": lead.get("page_text_preview", "")[:500],
+            "draft_email": lead.get("draft_email", ""),
+            "draft_subject": f"Partnership Inquiry - Quality {lead.get('keyword', 'Textile Products')} from China",
+        })
+
+    try:
+        with open(LEADS_JSON_FILE, "w", encoding="utf-8") as f:
+            json.dump(output, f, indent=2, ensure_ascii=False)
+        print(f"[OK] Structured leads saved to {LEADS_JSON_FILE}")
+    except Exception as e:
+        print(f"[ERROR] Could not save leads JSON: {e}")
 
 
 def send_email_report(report: str, leads: list):
@@ -288,7 +349,7 @@ def send_email_report(report: str, leads: list):
 
 def main():
     print("=" * 60)
-    print(f"TradeAgent Daily Scan v2 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"TradeAgent Daily Scan v3 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 60)
 
     # Load config
@@ -313,7 +374,7 @@ def main():
     for keyword in keywords:
         for country in countries:
             if len(all_leads) >= TARGET_NEW_LEADS * 2:
-                break  # Enough raw leads to filter
+                break
             print(f"\n--- Searching: '{keyword}' in {country} ---")
             raw = search_leads(keyword, country, max_results=5, already_scanned=scanned)
             print(f"  Found {len(raw)} new results")
@@ -349,6 +410,9 @@ def main():
             save_scanned_domain(domain, scanned)
 
     print(f"\nTotal scanned domains now: {len(scanned)}")
+
+    # Save structured JSON for web platform import
+    save_leads_json(top_leads, keywords, countries)
 
     # Build and send report
     report = build_report(top_leads, keywords, countries, skipped_count)

@@ -136,6 +136,82 @@
         </el-card>
       </el-col>
     </el-row>
+
+    <!-- Import Daily Scan Leads -->
+    <el-row :gutter="20" style="margin-top: 24px">
+      <el-col :span="24">
+        <el-card shadow="never">
+          <template #header>
+            <div style="display: flex; justify-content: space-between; align-items: center">
+              <div>
+                <span style="font-weight: 600">Import Daily Scan Leads</span>
+                <span style="font-size: 12px; color: #909399; margin-left: 8px">Import leads from daily_scan.py into CRM + draft emails</span>
+              </div>
+              <div>
+                <el-button @click="previewLeads" :loading="previewLoading" size="default">
+                  <el-icon><View /></el-icon> Preview
+                </el-button>
+                <el-button type="primary" @click="importLeads" :loading="importLoading" size="default">
+                  <el-icon><Download /></el-icon> Import All
+                </el-button>
+              </div>
+            </div>
+          </template>
+
+          <div v-if="importResult" style="margin-bottom: 12px">
+            <el-alert :title="`Imported ${importResult.imported} customers, ${importResult.skipped} skipped (already exist)`" type="success" show-icon :closable="true" />
+          </div>
+
+          <div v-if="previewData && previewData.leads && previewData.leads.length">
+            <el-table :data="previewData.leads" stripe size="small" max-height="400">
+              <el-table-column prop="company_name" label="Company" min-width="200" show-overflow-tooltip />
+              <el-table-column prop="country" label="Country" width="120" />
+              <el-table-column prop="keyword" label="Keyword" width="160" show-overflow-tooltip />
+              <el-table-column label="Score" width="80" align="center">
+                <template #default="{ row }">
+                  <el-tag :type="row.relevance_score >= 70 ? 'success' : row.relevance_score >= 50 ? 'warning' : 'info'" size="small">
+                    {{ row.relevance_score }}
+                  </el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column label="Emails" min-width="180">
+                <template #default="{ row }">
+                  <span v-if="row.emails && row.emails.length">{{ row.emails.join(', ') }}</span>
+                  <span v-else style="color: #c0c4cc">No email found</span>
+                </template>
+              </el-table-column>
+              <el-table-column label="Draft" width="80" align="center">
+                <template #default="{ row }">
+                  <el-tag v-if="row.draft_email" type="success" size="small">Ready</el-tag>
+                  <el-tag v-else type="info" size="small">None</el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column label="Draft Preview" min-width="300">
+                <template #default="{ row }">
+                  <el-popover v-if="row.draft_email" trigger="hover" width="400" placement="left">
+                    <template #reference>
+                      <span style="cursor: pointer; color: #409eff; font-size: 12px">{{ (row.draft_email || '').substring(0, 60) }}...</span>
+                    </template>
+                    <div style="white-space: pre-wrap; font-size: 13px; line-height: 1.6; max-height: 300px; overflow-y: auto">{{ row.draft_email }}</div>
+                  </el-popover>
+                  <span v-else style="color: #c0c4cc; font-size: 12px">-</span>
+                </template>
+              </el-table-column>
+              <el-table-column label="Website" width="120">
+                <template #default="{ row }">
+                  <a :href="row.website" target="_blank" style="color: #409eff; font-size: 12px; text-decoration: none">Visit</a>
+                </template>
+              </el-table-column>
+            </el-table>
+            <div style="margin-top: 12px; color: #909399; font-size: 12px">
+              Scan date: {{ previewData.scan_date || 'N/A' }} | Keywords: {{ (previewData.keywords_used || []).join(', ') }}
+            </div>
+          </div>
+
+          <el-empty v-else-if="!previewLoading" description="No scan results found. Run daily_scan.py first to generate leads." />
+        </el-card>
+      </el-col>
+    </el-row>
   </div>
 </template>
 
@@ -143,7 +219,7 @@
 import { ref, reactive, onMounted, onUnmounted, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
 import * as echarts from 'echarts'
-import { analyticsApi, schedulerApi } from '../api'
+import { analyticsApi, schedulerApi, agentApi } from '../api'
 
 const stats = reactive({
   total_customers: 0,
@@ -278,6 +354,46 @@ const handleResize = () => {
 const dailyLoading = ref(false)
 const dailyReport = ref(null)
 const schedulerJobs = ref([])
+
+// Import Leads
+const previewLoading = ref(false)
+const importLoading = ref(false)
+const previewData = ref(null)
+const importResult = ref(null)
+
+const previewLeads = async () => {
+  previewLoading.value = true
+  try {
+    const data = await agentApi.previewLeads()
+    previewData.value = data
+    if (!data.leads || !data.leads.length) {
+      ElMessage.info('No scan results found. Run daily_scan.py first.')
+    }
+  } catch (e) {
+    ElMessage.error('Preview failed: ' + (e.response?.data?.detail || e.message))
+  } finally {
+    previewLoading.value = false
+  }
+}
+
+const importLeads = async () => {
+  importLoading.value = true
+  try {
+    const result = await agentApi.importLeads()
+    importResult.value = result
+    if (result.imported > 0) {
+      ElMessage.success(`Imported ${result.imported} customers with draft emails! Check Emails > Pending Review.`)
+      // Refresh preview
+      await previewLeads()
+    } else {
+      ElMessage.info(`No new leads to import. ${result.skipped} already exist in database.`)
+    }
+  } catch (e) {
+    ElMessage.error('Import failed: ' + (e.response?.data?.detail || e.message))
+  } finally {
+    importLoading.value = false
+  }
+}
 
 const runDailyReport = async () => {
   dailyLoading.value = true

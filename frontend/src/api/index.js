@@ -78,6 +78,9 @@ export const agentApi = {
   generateHolidayEmails: (data) => api.post('/agent/holiday-emails', data),
   scanLeads: (data) => api.post('/agent/scan-leads', data),
   generatePI: (data) => api.post('/agent/generate-pi', data),
+  // Import daily scan leads
+  previewLeads: () => api.get('/agent/import-leads/preview'),
+  importLeads: () => api.post('/agent/import-leads'),
 }
 
 // --- Scheduler ---
