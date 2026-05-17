@@ -7,8 +7,8 @@ name: Daily Lead Scan
 
 on:
   schedule:
-    # Every day at 01:00 UTC = 09:00 Beijing time
-    - cron: '0 1 * * *'
+    # Every day at 21:00 UTC = 05:00 Beijing time (results ~09:00 Beijing)
+    - cron: '0 21 * * *'
   workflow_dispatch:  # Allow manual trigger from GitHub UI
 
 jobs:
