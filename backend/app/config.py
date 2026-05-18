@@ -29,7 +29,7 @@ class Settings(BaseSettings):
 
     # LLM (OpenAI-compatible API: MiMo, DeepSeek, OpenAI, etc.)
     OPENAI_API_KEY: str = ""
-    OPENAI_BASE_URL: str = "https://api.xiaomi.com/v1"
+    OPENAI_BASE_URL: str = "https://token-plan-cn.xiaomimimo.com/v1"
     OPENAI_MODEL: str = "mimo-v2.5"
 
     # CORS

@@ -159,6 +159,7 @@ def generate_draft_email(lead: dict) -> str:
     country = lead.get("country", "your region")
     page_text = lead.get("page_text_preview", "")
 
+    print(f"  [DEBUG] API key present: {bool(api_key)}, base_url: {base_url}, model: {model}")
     if api_key:
         try:
             from openai import OpenAI
@@ -195,9 +196,14 @@ Return ONLY the email body (no subject line, no JSON)."""
                 temperature=0.8,
                 max_tokens=250,
             )
-            return resp.choices[0].message.content.strip()
+            result = resp.choices[0].message.content.strip()
+            print(f"  [OK] AI draft generated ({len(result)} chars)")
+            return result
         except Exception as e:
-            print(f"  [WARN] AI draft failed for {company}: {e}")
+            print(f"  [ERROR] AI draft FAILED for {company}: {type(e).__name__}: {e}")
+            # Print more details for debugging
+            import traceback
+            traceback.print_exc()
 
     # Fallback: smarter template with page-based context
     page_lower = page_text.lower()
