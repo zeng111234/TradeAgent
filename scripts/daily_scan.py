@@ -149,7 +149,7 @@ def generate_draft_email(lead: dict) -> str:
     Does NOT send - returns the draft text only.
     """
     api_key = os.environ.get("OPENAI_API_KEY", "")
-    base_url = os.environ.get("OPENAI_BASE_URL", "https://api.xiaomi.com/v1")
+    base_url = os.environ.get("OPENAI_BASE_URL", "https://api.xiaomimimo.com/v1")
     model = os.environ.get("OPENAI_MODEL", "mimo-v2.5")
 
     company = lead.get("company_name", "your company")

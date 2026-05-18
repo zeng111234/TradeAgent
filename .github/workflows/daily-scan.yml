@@ -39,7 +39,7 @@ jobs:
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
           REPORT_EMAIL: ${{ secrets.REPORT_EMAIL }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL || 'https://token-plan-cn.xiaomimimo.com/v1' }}
+          OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL || 'https://api.xiaomimimo.com/v1' }}
           OPENAI_MODEL: ${{ secrets.OPENAI_MODEL || 'mimo-v2.5' }}
           SCAN_KEYWORDS: ${{ secrets.SCAN_KEYWORDS || 'embroidery thread, gold metallic yarn' }}
           SCAN_COUNTRIES: ${{ secrets.SCAN_COUNTRIES || 'Germany, United States, United Kingdom' }}
