@@ -41,9 +41,14 @@
             <span style="font-weight: 600">Pending Draft Review</span>
             <el-tag v-if="pendingEmails.length" type="warning" size="small" style="margin-left: 8px">{{ pendingEmails.length }} drafts</el-tag>
           </div>
-          <el-button size="small" @click="loadData" :loading="false">
-            <el-icon><Refresh /></el-icon> Refresh
-          </el-button>
+          <div>
+            <el-button size="small" @click="loadData" :loading="false">
+              <el-icon><Refresh /></el-icon> Refresh
+            </el-button>
+            <el-button type="success" size="small" @click="sendAllPending" :loading="sendingAll" :disabled="!pendingEmails.length">
+              <el-icon><Promotion /></el-icon> Send All ({{ pendingEmails.length }})
+            </el-button>
+          </div>
         </div>
       </template>
 
@@ -220,6 +225,7 @@ const editingId = ref(null)
 const editSubject = ref('')
 const editBody = ref('')
 const sendingId = ref(null)
+const sendingAll = ref(false)
 
 const emailStats = reactive({
   total_sent: 0,
@@ -338,25 +344,28 @@ const cancelEdit = () => {
   editBody.value = ''
 }
 
-const saveEdit = (email) => {
-  // Update local data
-  email.subject = editSubject.value
-  email.body = editBody.value
-  editingId.value = null
-  ElMessage.success('Draft updated locally. Click Send to send it.')
+const saveEdit = async (email) => {
+  // Save to backend
+  try {
+    await emailApi.updateLog(email.id, {
+      subject: editSubject.value,
+      body: editBody.value,
+    })
+    email.subject = editSubject.value
+    email.body = editBody.value
+    editingId.value = null
+    ElMessage.success('Draft updated. Click Send to send it.')
+  } catch (e) {
+    ElMessage.error('Failed to save: ' + (e.response?.data?.detail || e.message))
+  }
 }
 
 const handleSendPending = async (email) => {
   sendingId.value = email.id
   try {
-    await emailApi.send({
-      to_email: email.to_email,
-      to_name: email.to_name || '',
-      subject: email.subject,
-      body: email.body,
-    })
+    await emailApi.sendSinglePending(email.id)
     ElMessage.success(`Email sent to ${email.to_email}!`)
-    // Remove from pending list and refresh
+    // Refresh lists
     await loadData()
   } catch (e) {
     ElMessage.error('Failed to send: ' + (e.response?.data?.detail || e.message))
@@ -365,13 +374,30 @@ const handleSendPending = async (email) => {
   }
 }
 
+const sendAllPending = async () => {
+  sendingAll.value = true
+  try {
+    const result = await emailApi.sendPending()
+    if (result.sent > 0) {
+      ElMessage.success(`Sent ${result.sent} emails! ${result.failed > 0 ? result.failed + ' failed.' : ''}`)
+    } else {
+      ElMessage.info(`No emails sent. ${result.failed > 0 ? result.failed + ' failed.' : ''}`)
+    }
+    await loadData()
+  } catch (e) {
+    ElMessage.error('Batch send failed: ' + (e.response?.data?.detail || e.message))
+  } finally {
+    sendingAll.value = false
+  }
+}
+
 const handleDeletePending = async (email) => {
   try {
-    // Remove from local list (the backend will keep the log as 'failed' or we just filter it out)
+    await emailApi.deleteLog(email.id)
     pendingEmails.value = pendingEmails.value.filter(e => e.id !== email.id)
-    ElMessage.success('Draft removed from review list.')
+    ElMessage.success('Draft deleted.')
   } catch (e) {
-    ElMessage.error('Failed to remove draft')
+    ElMessage.error('Failed to delete draft')
   }
 }
 

@@ -430,14 +430,34 @@ async def api_preview_leads():
     """Preview leads from daily_leads.json before importing.
     
     Returns the raw JSON content so the user can review before committing.
+    Auto-pulls from git if file is missing or stale.
     """
     import pathlib
+    import asyncio
 
     script_dir = pathlib.Path(__file__).resolve().parent.parent.parent.parent / "scripts"
     json_path = script_dir / "daily_leads.json"
 
+    # Auto git pull to get latest leads from GitHub Actions
     if not json_path.exists():
-        return {"leads": [], "message": "No scan results found. Run daily_scan.py first."}
+        try:
+            repo_dir = pathlib.Path(__file__).resolve().parent.parent.parent.parent
+            proc = await asyncio.create_subprocess_exec(
+                "git", "pull", "--ff-only",
+                cwd=str(repo_dir),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=15)
+            if proc.returncode == 0:
+                print(f"[INFO] Auto git pull succeeded: {stdout.decode().strip()}")
+            else:
+                print(f"[WARN] Auto git pull failed: {stderr.decode().strip()}")
+        except Exception as e:
+            print(f"[WARN] Auto git pull error: {e}")
+
+    if not json_path.exists():
+        return {"leads": [], "message": "No scan results found. The daily scan workflow may not have run yet. Check GitHub Actions."}
 
     try:
         with open(json_path, "r", encoding="utf-8") as f:

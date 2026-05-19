@@ -231,6 +231,126 @@ async def get_email_stats(db: AsyncSession = Depends(get_db)):
     )
 
 
+# --- Batch Send Pending Drafts ---
+@router.post("/send-pending")
+async def api_send_pending(db: AsyncSession = Depends(get_db)):
+    """Send all pending draft emails to their recipients (the customers).
+    
+    This sends draft emails that were imported from daily_scan.py
+    to the actual customer email addresses.
+    """
+    result = await db.execute(
+        select(EmailLog).where(EmailLog.status == EmailStatus.PENDING)
+    )
+    pending = list(result.scalars().all())
+
+    if not pending:
+        return {"sent": 0, "failed": 0, "message": "No pending drafts to send."}
+
+    sent_count = 0
+    failed_count = 0
+    details = []
+
+    for email_log in pending:
+        send_result = await send_email(
+            to_email=email_log.to_email,
+            to_name=email_log.to_name or "",
+            subject=email_log.subject,
+            body=email_log.body,
+            tracking_id=email_log.tracking_id,
+        )
+
+        if send_result["success"]:
+            email_log.status = EmailStatus.SENT
+            email_log.sent_at = datetime.utcnow()
+            sent_count += 1
+        else:
+            email_log.status = EmailStatus.FAILED
+            email_log.error_message = send_result.get("error", "Unknown error")
+            failed_count += 1
+
+        details.append({
+            "to_email": email_log.to_email,
+            "subject": email_log.subject,
+            "success": send_result["success"],
+            "error": send_result.get("error"),
+        })
+
+    await db.commit()
+
+    return {
+        "sent": sent_count,
+        "failed": failed_count,
+        "total": len(pending),
+        "details": details,
+    }
+
+
+@router.post("/send-pending/{email_id}")
+async def api_send_single_pending(email_id: int, db: AsyncSession = Depends(get_db)):
+    """Send a single pending draft email by its ID."""
+    result = await db.execute(select(EmailLog).where(EmailLog.id == email_id))
+    email_log = result.scalar_one_or_none()
+
+    if not email_log:
+        raise HTTPException(status_code=404, detail="Email log not found")
+    if email_log.status != EmailStatus.PENDING:
+        raise HTTPException(status_code=400, detail=f"Email is not pending (status: {email_log.status})")
+
+    send_result = await send_email(
+        to_email=email_log.to_email,
+        to_name=email_log.to_name or "",
+        subject=email_log.subject,
+        body=email_log.body,
+        tracking_id=email_log.tracking_id,
+    )
+
+    if send_result["success"]:
+        email_log.status = EmailStatus.SENT
+        email_log.sent_at = datetime.utcnow()
+    else:
+        email_log.status = EmailStatus.FAILED
+        email_log.error_message = send_result.get("error", "Unknown error")
+
+    await db.commit()
+    await db.refresh(email_log)
+    return email_log
+
+
+@router.put("/logs/{email_id}")
+async def api_update_email_log(email_id: int, data: dict, db: AsyncSession = Depends(get_db)):
+    """Update a pending email log (edit subject/body before sending)."""
+    result = await db.execute(select(EmailLog).where(EmailLog.id == email_id))
+    email_log = result.scalar_one_or_none()
+
+    if not email_log:
+        raise HTTPException(status_code=404, detail="Email log not found")
+
+    if "subject" in data:
+        email_log.subject = data["subject"]
+    if "body" in data:
+        email_log.body = data["body"]
+    if "to_email" in data:
+        email_log.to_email = data["to_email"]
+
+    await db.commit()
+    await db.refresh(email_log)
+    return email_log
+
+
+@router.delete("/logs/{email_id}", status_code=204)
+async def api_delete_email_log(email_id: int, db: AsyncSession = Depends(get_db)):
+    """Delete an email log entry (remove a pending draft)."""
+    result = await db.execute(select(EmailLog).where(EmailLog.id == email_id))
+    email_log = result.scalar_one_or_none()
+
+    if not email_log:
+        raise HTTPException(status_code=404, detail="Email log not found")
+
+    await db.delete(email_log)
+    await db.flush()
+
+
 # --- Tracking Pixel ---
 @router.get("/track/{tracking_id}/pixel")
 async def track_email_open(tracking_id: str, db: AsyncSession = Depends(get_db)):

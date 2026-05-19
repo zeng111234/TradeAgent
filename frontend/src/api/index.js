@@ -2,7 +2,7 @@ import axios from 'axios'
 
 const api = axios.create({
   baseURL: '/api/v1',
-  timeout: 30000,
+  timeout: 120000,
   headers: {
     'Content-Type': 'application/json',
   },
@@ -43,6 +43,11 @@ export const emailApi = {
   send: (data) => api.post('/emails/send', data),
   getLogs: (params) => api.get('/emails/logs', { params }),
   getStats: () => api.get('/emails/stats'),
+  // Pending draft management
+  sendPending: () => api.post('/emails/send-pending'),
+  sendSinglePending: (id) => api.post(`/emails/send-pending/${id}`),
+  updateLog: (id, data) => api.put(`/emails/logs/${id}`, data),
+  deleteLog: (id) => api.delete(`/emails/logs/${id}`),
 }
 
 // --- Tasks ---

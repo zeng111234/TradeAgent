@@ -113,13 +113,22 @@
           <template #header>
             <div style="display: flex; justify-content: space-between; align-items: center">
               <span style="font-weight: 600">Daily Auto Report</span>
-              <el-button type="primary" @click="runDailyReport" :loading="dailyLoading" size="large">
-                <el-icon><MagicStick /></el-icon> Run Now
-              </el-button>
+              <div>
+                <el-button @click="runDailyReport" :loading="dailyLoading" size="default">
+                  <el-icon><DataAnalysis /></el-icon> Quick Report
+                </el-button>
+                <el-button type="primary" @click="runFullScan" :loading="fullScanLoading" size="default">
+                  <el-icon><MagicStick /></el-icon> Full Scan + Report
+                </el-button>
+              </div>
             </div>
           </template>
-          <div v-if="dailyReport" style="white-space: pre-wrap; font-family: monospace; font-size: 13px; color: #303133; background: #f5f7fa; padding: 16px; border-radius: 6px; line-height: 1.8">{{ dailyReport }}</div>
-          <el-empty v-else description="Click 'Run Now' to generate the daily report" />
+          <div v-if="dailyLoading || fullScanLoading" style="padding: 20px; text-align: center; color: #909399">
+            <el-icon class="is-loading" :size="24"><Loading /></el-icon>
+            <p style="margin-top: 8px">{{ fullScanLoading ? 'Scanning web + generating AI drafts... This may take 1-2 minutes.' : 'Analyzing your CRM data...' }}</p>
+          </div>
+          <div v-else-if="dailyReport" style="white-space: pre-wrap; font-family: monospace; font-size: 13px; color: #303133; background: #f5f7fa; padding: 16px; border-radius: 6px; line-height: 1.8">{{ dailyReport }}</div>
+          <el-empty v-else description="Click 'Quick Report' for CRM analysis or 'Full Scan' to search for new leads" />
         </el-card>
       </el-col>
       <el-col :span="8">
@@ -352,6 +361,7 @@ const handleResize = () => {
 
 // Scheduler
 const dailyLoading = ref(false)
+const fullScanLoading = ref(false)
 const dailyReport = ref(null)
 const schedulerJobs = ref([])
 
@@ -396,13 +406,82 @@ const importLeads = async () => {
 }
 
 const runDailyReport = async () => {
+  // Quick report: analyze existing CRM data only (no web scanning, fast)
   dailyLoading.value = true
+  dailyReport.value = null
+  try {
+    const [dashData, followUps, churnResult] = await Promise.all([
+      analyticsApi.dashboard(),
+      agentApi.dailyIntelligence(),
+      agentApi.churnAlerts(),
+    ])
+
+    const lines = []
+    const today = new Date().toISOString().split('T')[0]
+    lines.push(`Daily CRM Report - ${today}`)
+    lines.push('=' .repeat(50))
+    lines.push('')
+
+    // Customer overview
+    lines.push(`[Customer Overview]`)
+    lines.push(`  Total customers: ${dashData.total_customers || 0}`)
+    lines.push(`  New this month: ${dashData.new_customers_this_month || 0}`)
+    lines.push(`  Pending tasks: ${dashData.pending_tasks || 0}`)
+    lines.push(`  Overdue tasks: ${dashData.overdue_tasks || 0}`)
+    lines.push('')
+
+    // Email stats
+    lines.push(`[Email Stats]`)
+    lines.push(`  Total sent: ${dashData.total_emails_sent || 0}`)
+    lines.push(`  Open rate: ${dashData.open_rate || 0}%`)
+    lines.push(`  Reply rate: ${dashData.reply_rate || 0}%`)
+    lines.push('')
+
+    // Churn alerts
+    const crit = churnResult?.critical || 0
+    const high = churnResult?.high || 0
+    if (crit > 0 || high > 0) {
+      lines.push(`[Customer Alerts] ${crit} critical, ${high} high-risk:`)
+      ;(churnResult?.alerts || []).slice(0, 5).forEach(a => {
+        lines.push(`  - [${(a.risk_level || '').toUpperCase()}] ${a.company_name}: ${a.risk_reasons?.[0] || 'At risk'}`)
+      })
+    } else {
+      lines.push('[Customer Alerts] All customers look healthy.')
+    }
+    lines.push('')
+
+    // Follow-ups
+    const followActions = followUps?.actions || []
+    if (followActions.length > 0) {
+      lines.push(`[Follow-ups Needed] ${followUps?.high_priority || 0} high priority:`)
+      followActions.slice(0, 5).forEach(f => {
+        lines.push(`  - ${f.company_name}: ${f.suggested_action || 'Follow up'}`)
+      })
+    } else {
+      lines.push('[Follow-ups] No urgent follow-ups needed today.')
+    }
+    lines.push('')
+    lines.push('Tip: Use "Full Scan + Report" to search for new leads online.')
+
+    dailyReport.value = lines.join('\n')
+  } catch (e) {
+    ElMessage.error('Report failed: ' + (e.response?.data?.detail || e.message))
+  } finally {
+    dailyLoading.value = false
+  }
+}
+
+const runFullScan = async () => {
+  // Full scan: search web + generate AI drafts (slow, 1-2 min)
+  fullScanLoading.value = true
+  dailyReport.value = null
   try {
     const result = await schedulerApi.runDaily({ search_keywords: 'textile buyer' })
-    // Format the result as a readable report
     const lines = []
-    lines.push(`Good morning! Report for ${result.date || new Date().toISOString().split('T')[0]}:`)
+    lines.push(`Full Scan Report - ${result.date || new Date().toISOString().split('T')[0]}`)
+    lines.push('=' .repeat(50))
     lines.push('')
+
     lines.push(`[New Leads] Found ${result.leads_count || 0} potential customers:`)
     if (result.new_leads && result.new_leads.length) {
       result.new_leads.slice(0, 5).forEach(l => {
@@ -412,42 +491,35 @@ const runDailyReport = async () => {
     } else {
       lines.push('  No new leads found today.')
     }
-    // Show draft emails if any
+
     if (result.draft_emails && result.draft_emails.length) {
       lines.push('')
       lines.push('[Draft Emails] AI generated for new leads:')
       result.draft_emails.forEach(d => {
         lines.push(`  - ${d.company_name}:`)
         lines.push(`    Subject: ${d.subject}`)
-        lines.push(`    Body: ${d.body_preview || '(click to view full draft)'}`)
+        lines.push(`    Body: ${(d.body_preview || '').substring(0, 100)}...`)
       })
     }
     lines.push('')
+
     const crit = result.critical_count || 0
     const high = result.high_count || 0
     if (crit > 0 || high > 0) {
       lines.push(`[Alerts] ${crit} critical, ${high} high-risk customers:`)
       ;(result.churn_alerts || []).slice(0, 3).forEach(a => {
-        lines.push(`  - [${a.risk_level.toUpperCase()}] ${a.company_name}: ${a.risk_reasons?.[0] || 'Unknown'}`)
+        lines.push(`  - [${(a.risk_level || '').toUpperCase()}] ${a.company_name}: ${a.risk_reasons?.[0] || 'Unknown'}`)
       })
     } else {
       lines.push('[Alerts] No customer churn alerts.')
     }
-    lines.push('')
-    const fu = result.high_priority_followups || 0
-    if (fu > 0) {
-      lines.push(`[Follow-ups] ${fu} customers need follow-up today:`)
-      ;(result.follow_ups || []).slice(0, 3).forEach(f => {
-        lines.push(`  - ${f.company_name}: ${f.suggested_action}`)
-      })
-    } else {
-      lines.push('[Follow-ups] No urgent follow-ups today.')
-    }
+
     dailyReport.value = lines.join('\n')
+    ElMessage.success('Full scan completed! Leads with AI draft emails are ready.')
   } catch (e) {
-    ElMessage.error('Failed: ' + (e.response?.data?.detail || e.message))
+    ElMessage.error('Full scan failed: ' + (e.response?.data?.detail || e.message))
   } finally {
-    dailyLoading.value = false
+    fullScanLoading.value = false
   }
 }
 
