@@ -105,16 +105,33 @@ def scrape_lead_details(leads: list) -> list:
     for lead in leads[:20]:
         try:
             resp = requests.get(lead["website"], headers=headers, timeout=10, verify=False)
-            soup = BeautifulSoup(resp.text, "lxml")
-            for tag in soup(["script", "style", "nav", "footer"]):
+            raw_html = resp.text
+            soup = BeautifulSoup(raw_html, "lxml")
+
+            # Extract emails FIRST from raw HTML (before removing footer/header)
+            # Footer and header often contain contact info
+            all_emails = list(set(re.findall(
+                r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', raw_html)))
+            all_emails = [e for e in all_emails if not any(x in e.lower() for x in
+                ["noreply", "example.com", "sentry", "wixpress", "wordpress",
+                 ".png", ".jpg", ".gif", ".css", ".js"])]
+
+            # Also extract emails specifically from footer/header areas
+            for section in soup.find_all(["footer", "header"]):
+                section_emails = re.findall(
+                    r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}',
+                    section.get_text(separator=" "))
+                all_emails.extend(section_emails)
+            all_emails = list(set(all_emails))
+
+            # Now clean up the page for text extraction
+            for tag in soup(["script", "style", "nav"]):
                 tag.decompose()
-            page_text = soup.get_text(separator=" ", strip=True)[:5000]
+            # Keep footer/header text for page_text (contact info is valuable)
+            page_text = soup.get_text(separator=" ", strip=True)[:8000]
             text_lower = page_text.lower()
 
-            # Extract emails
-            emails = list(set(re.findall(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', page_text)))
-            emails = [e for e in emails if not any(x in e.lower() for x in
-                ["noreply", "example.com", "sentry", "wixpress", "wordpress", ".png", ".jpg"])]
+            emails = all_emails
 
             # Score relevance
             score = 20
@@ -133,7 +150,7 @@ def scrape_lead_details(leads: list) -> list:
             if score >= 40:
                 lead["emails"] = emails[:3]
                 lead["relevance_score"] = min(score, 100)
-                lead["page_text_preview"] = page_text[:800]
+                lead["page_text_preview"] = page_text[:3000]
                 enriched.append(lead)
         except Exception:
             pass
@@ -165,36 +182,37 @@ def generate_draft_email(lead: dict) -> str:
             from openai import OpenAI
             client = OpenAI(api_key=api_key, base_url=base_url)
 
-            prompt = f"""Write a short, personalized cold outreach email (60-90 words) from a Chinese textile supplier.
+            prompt = f"""Write a personalized cold outreach email (120-180 words) from a Chinese textile supplier.
 
 About the target company:
 - Company name: {company}
 - Website: {website}
 - Country: {country}
-- Search snippet: {snippet[:150]}
-- What their website says: {page_text[:500]}
+- Search snippet: {snippet[:200]}
+- What their website says: {page_text[:1500]}
 
 Your product: {keyword} (from Ningbo, China)
 
 CRITICAL RULES:
-1. Reference SOMETHING SPECIFIC from their website (their products, market, customers, etc.)
-2. Explain WHY your {keyword} is relevant to THEIR specific business
-3. Sound natural and human, NOT like a template
-4. Professional but warm tone
-5. End with a soft call-to-action (offer sample or catalog)
-6. Keep it under 90 words
+1. Reference SOMETHING SPECIFIC from their website (their products, market, customers, niche, etc.)
+2. Explain WHY your {keyword} is relevant to THEIR specific business and how it fits their product line
+3. Mention product advantages: quality consistency, competitive MOQ, fast delivery from Ningbo
+4. Offer a concrete next step: free samples, catalog with color card, or small trial order
+5. Sound natural and human, NOT like a template
+6. Professional but warm tone
 7. DO NOT use phrases like "I hope this email finds you well" or "We are a leading manufacturer"
+8. Include your company's flexibility on customization (colors, specs, packaging)
 
 Return ONLY the email body (no subject line, no JSON)."""
 
             resp = client.chat.completions.create(
                 model=model,
                 messages=[
-                    {"role": "system", "content": "You write personalized B2B cold emails for a Chinese textile supplier. Each email must reference specific details about the recipient's business."},
+                    {"role": "system", "content": "You write personalized B2B cold emails for a Chinese textile supplier based in Ningbo. Each email must be 120-180 words, reference specific details about the recipient's business, and include product benefits, customization options, and a concrete next step."},
                     {"role": "user", "content": prompt},
                 ],
                 temperature=0.8,
-                max_tokens=250,
+                max_tokens=500,
             )
             result = resp.choices[0].message.content.strip()
             print(f"  [OK] AI draft generated ({len(result)} chars)")

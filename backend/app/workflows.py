@@ -176,19 +176,22 @@ async def _generate_lead_draft_email(lead: dict, product_keywords: str) -> dict:
             from openai import AsyncOpenAI
             client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY, base_url=settings.OPENAI_BASE_URL)
 
-            prompt = f"""Write a short, personalized cold outreach email for a foreign trade business.
+            prompt = f"""Write a personalized cold outreach email (120-180 words) for a foreign trade business.
 
 Target company: {company_name}
 Country: {country}
 Website: {website}
-Their business: {snippet[:200] if snippet else 'Unknown'}
+Their business: {snippet[:300] if snippet else 'Unknown'}
 
-Your product: {product_keywords}
+Your product: {product_keywords} (from Ningbo, China)
 
 Requirements:
-- Reference their specific business or industry (not generic)
-- Explain WHY your product is relevant to THEM
-- Keep under 80 words, warm and professional
+- Reference their specific business, products, or industry (not generic)
+- Explain WHY your product is relevant to THEIR specific business
+- Mention product advantages: quality consistency, competitive MOQ, fast delivery
+- Offer a concrete next step: free samples, catalog with color card, or trial order
+- Include flexibility on customization (colors, specs, packaging)
+- Keep 120-180 words, warm and professional
 - Don't sound like a template
 
 Return JSON: {{"subject": "email subject", "body": "email body in plain text"}}"""
@@ -196,11 +199,11 @@ Return JSON: {{"subject": "email subject", "body": "email body in plain text"}}"
             resp = await client.chat.completions.create(
                 model=settings.OPENAI_MODEL,
                 messages=[
-                    {"role": "system", "content": "Write B2B cold outreach emails. Return valid JSON only."},
+                    {"role": "system", "content": "You write personalized B2B cold emails for a Chinese textile supplier. Each email must be 120-180 words, reference specific details, include product benefits, and a concrete next step. Return valid JSON only."},
                     {"role": "user", "content": prompt},
                 ],
                 temperature=0.7,
-                max_tokens=300,
+                max_tokens=500,
             )
 
             import json
