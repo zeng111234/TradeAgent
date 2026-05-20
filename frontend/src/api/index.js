@@ -86,6 +86,9 @@ export const agentApi = {
   // Import daily scan leads
   previewLeads: () => api.get('/agent/import-leads/preview'),
   importLeads: () => api.post('/agent/import-leads'),
+  // Two-step scan & send with review
+  scanLeadsDraft: (data) => api.post('/agent/scan-leads-draft', data),
+  sendDraftedEmails: (data) => api.post('/agent/send-drafted-emails', data),
 }
 
 // --- Scheduler ---

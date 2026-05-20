@@ -12,6 +12,237 @@ from app.notification import send_notification
 logger = logging.getLogger(__name__)
 
 
+async def scan_leads_draft_workflow(
+    product_keywords: str = "embroidery thread, gold metallic yarn",
+    target_country: str = "",
+    max_results: int = 10,
+) -> dict:
+    """Step 1: Search for new customers and generate draft emails (no sending).
+
+    Returns a list of leads with AI-generated email drafts for human review.
+    """
+    from app.services.agent_service import auto_lead_scanner
+    from app.config import settings
+
+    result_summary = {
+        "scan_time": datetime.now().isoformat(),
+        "keywords": product_keywords,
+        "country": target_country,
+        "total_found": 0,
+        "with_email": 0,
+        "leads": [],
+    }
+
+    # Step 1: Scan for leads
+    logger.info(f"Step 1: Scanning for leads with keywords '{product_keywords}' in '{target_country}'...")
+    scan_result = await auto_lead_scanner(
+        product_keywords=product_keywords,
+        target_country=target_country,
+        max_results=max_results,
+    )
+
+    leads = scan_result.get("leads", [])
+    result_summary["total_found"] = len(leads)
+    logger.info(f"Found {len(leads)} leads")
+
+    # Filter leads with emails
+    leads_with_email = [l for l in leads if l.get("emails")]
+    result_summary["with_email"] = len(leads_with_email)
+    logger.info(f"{len(leads_with_email)} leads have email addresses")
+
+    # Prepare leads with draft emails for review
+    reviewed_leads = []
+    async with _get_db_session() as db:
+        from app.models.customer import Customer
+        from sqlalchemy import select
+
+        for lead in leads_with_email:
+            to_email = lead["emails"][0]
+            company_name = lead.get("company_name", "Unknown")
+            country = lead.get("country", "")
+            website = lead.get("website", "")
+
+            # Check if customer already exists
+            exists = False
+            if website:
+                existing = await db.execute(
+                    select(Customer).where(Customer.website == website).limit(1)
+                )
+                if existing.scalar_one_or_none():
+                    exists = True
+
+            reviewed_leads.append({
+                "company_name": company_name,
+                "country": country,
+                "website": website,
+                "email": to_email,
+                "relevance_score": lead.get("relevance_score", 0),
+                "snippet": lead.get("snippet", "")[:200],
+                "draft_subject": f"Partnership Inquiry - {product_keywords.split(',')[0].strip()} from China",
+                "draft_body": lead.get("draft_email", "") or f"Dear {company_name},\n\nI noticed your company in {country} and thought our products might be a good fit.\n\nBest regards",
+                "already_exists": exists,
+            })
+
+    result_summary["leads"] = reviewed_leads
+    return result_summary
+
+
+async def send_drafted_emails_workflow(
+    selected_leads: list[dict],
+    product_keywords: str = "embroidery thread, gold metallic yarn",
+) -> dict:
+    """Step 2: Send selected draft emails and save to CRM.
+
+    selected_leads: list of dicts with company_name, country, website,
+                    email, draft_subject, draft_body
+    """
+    from app.config import settings
+
+    result_summary = {
+        "total_selected": len(selected_leads),
+        "emails_sent": 0,
+        "emails_failed": 0,
+        "crm_saved": 0,
+        "send_results": [],
+    }
+
+    if not selected_leads:
+        result_summary["message"] = "No leads selected"
+        return result_summary
+
+    async with _get_db_session() as db:
+        from app.models.customer import Customer, CustomerContact, CustomerSource, CustomerStage
+        from app.models.email_log import EmailLog, EmailStatus
+        from sqlalchemy import select
+
+        for lead in selected_leads:
+            to_email = lead.get("email", "")
+            company_name = lead.get("company_name", "Unknown")
+            country = lead.get("country", "")
+            website = lead.get("website", "")
+            subject = lead.get("draft_subject", "")
+            body = lead.get("draft_body", "")
+
+            if not to_email:
+                result_summary["send_results"].append({"company": company_name, "status": "skipped", "reason": "No email"})
+                continue
+
+            send_result = {"company": company_name, "email": to_email}
+
+            # Send email via SMTP
+            if settings.SMTP_USER and settings.SMTP_PASSWORD:
+                try:
+                    from app.utils.email_sender import send_email as smtp_send
+                    result = await smtp_send(
+                        to_email=to_email,
+                        to_name=company_name,
+                        subject=subject,
+                        body=body,
+                    )
+                    if result.get("success"):
+                        result_summary["emails_sent"] += 1
+                        send_result["status"] = "sent"
+                    else:
+                        result_summary["emails_failed"] += 1
+                        send_result["status"] = "failed"
+                        send_result["error"] = result.get("error", "Unknown error")
+                except Exception as e:
+                    result_summary["emails_failed"] += 1
+                    send_result["status"] = "failed"
+                    send_result["error"] = str(e)
+            else:
+                result_summary["emails_sent"] += 1
+                send_result["status"] = "simulated"
+
+            # Save to CRM
+            try:
+                if website:
+                    existing_customer = await db.execute(
+                        select(Customer).where(Customer.website == website).limit(1)
+                    )
+                    if existing_customer.scalar_one_or_none():
+                        send_result["crm"] = "already_exists"
+                        result_summary["send_results"].append(send_result)
+                        continue
+
+                new_customer = Customer(
+                    company_name=company_name,
+                    country=country,
+                    website=website,
+                    industry="Textile",
+                    products=product_keywords,
+                    source=CustomerSource.SCRAPER,
+                    stage=CustomerStage.CONTACTED,
+                    score=float(lead.get("relevance_score", 50)),
+                    tags="auto-scan-send",
+                    notes=lead.get("snippet", "")[:500],
+                )
+                db.add(new_customer)
+                await db.flush()
+
+                contact = CustomerContact(
+                    customer_id=new_customer.id,
+                    name=company_name[:100],
+                    email=to_email,
+                    is_primary=1,
+                )
+                db.add(contact)
+
+                email_log = EmailLog(
+                    customer_id=new_customer.id,
+                    to_email=to_email,
+                    to_name=company_name[:200],
+                    subject=subject,
+                    body=body,
+                    status=EmailStatus.SENT if send_result["status"] in ("sent", "simulated") else EmailStatus.FAILED,
+                )
+                db.add(email_log)
+
+                result_summary["crm_saved"] += 1
+                send_result["crm"] = "saved"
+                send_result["customer_id"] = new_customer.id
+
+            except Exception as e:
+                logger.error(f"CRM save error for {company_name}: {e}")
+                send_result["crm"] = "error"
+                send_result["crm_error"] = str(e)
+
+            result_summary["send_results"].append(send_result)
+
+        try:
+            await db.commit()
+        except Exception as e:
+            logger.error(f"DB commit error: {e}")
+            await db.rollback()
+
+    send_notification(
+        title=f"Scan & Send: {result_summary['emails_sent']} emails sent",
+        body=f"Sent {result_summary['emails_sent']} emails, saved {result_summary['crm_saved']} to CRM.",
+        level="info" if result_summary["emails_failed"] == 0 else "warning",
+    )
+
+    return result_summary
+
+
+def _get_db_session():
+    """Get a database session as an async context manager."""
+    from app.database import async_session
+
+    class _SessionCtx:
+        def __init__(self):
+            self._session = None
+
+        async def __aenter__(self):
+            self._session = async_session()
+            return self._session
+
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            if self._session:
+                await self._session.close()
+
+    return _SessionCtx()
+
+
 async def daily_morning_routine(search_keywords: str = None, target_country: str = "") -> dict:
     """Daily morning routine - the main automation workflow.
 

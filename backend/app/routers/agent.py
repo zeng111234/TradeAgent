@@ -316,7 +316,52 @@ async def api_generate_pi(data: PIRequest):
     )
 
 
-# --- New Feature 6: Import Daily Scan Leads ---
+# --- New Feature 6: Scan & Send (Two-Step with Review) ---
+
+
+class ScanLeadsDraftRequest(BaseModel):
+    product_keywords: str = Field("embroidery thread, gold metallic yarn", description="Product keywords to search")
+    target_country: str = Field("", description="Target country (empty for global)")
+    max_results: int = Field(10, description="Max leads to find", ge=1, le=20)
+
+
+@router.post("/scan-leads-draft")
+async def api_scan_leads_draft(data: ScanLeadsDraftRequest):
+    """Step 1: Search for new customers and generate draft emails (no sending).
+
+    Returns a list of leads with AI-generated email drafts for your review.
+    You can then select which ones to send using /send-drafted-emails.
+    """
+    from app.workflows import scan_leads_draft_workflow
+    result = await scan_leads_draft_workflow(
+        product_keywords=data.product_keywords,
+        target_country=data.target_country,
+        max_results=data.max_results,
+    )
+    return result
+
+
+class SendDraftedEmailsRequest(BaseModel):
+    selected_leads: list = Field(..., description="List of selected leads to send")
+    product_keywords: str = Field("embroidery thread, gold metallic yarn", description="Product keywords")
+
+
+@router.post("/send-drafted-emails")
+async def api_send_drafted_emails(data: SendDraftedEmailsRequest):
+    """Step 2: Send selected draft emails and save to CRM.
+
+    After reviewing the draft emails from /scan-leads-draft,
+    select which ones to send and call this endpoint.
+    """
+    from app.workflows import send_drafted_emails_workflow
+    result = await send_drafted_emails_workflow(
+        selected_leads=data.selected_leads,
+        product_keywords=data.product_keywords,
+    )
+    return result
+
+
+# --- New Feature 7: Import Daily Scan Leads ---
 
 @router.post("/import-leads")
 async def api_import_leads():

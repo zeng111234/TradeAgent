@@ -36,11 +36,11 @@ def start_scheduler():
 
     # Only add jobs if not already added
     if not scheduler.get_jobs():
-        # Daily morning routine at 9:00 AM (Asia/Shanghai = UTC+8, so 01:00 UTC)
+        # Daily morning routine at 6:00 AM (Asia/Shanghai = UTC+8, so 22:00 UTC previous day)
         scheduler.add_job(
             _run_daily_routine,
             "cron",
-            hour=1,
+            hour=22,
             minute=0,
             id="daily_morning_routine",
             name="Daily Morning Report",

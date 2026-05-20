@@ -1,5 +1,5 @@
 # TradeAgent Daily Lead Scan
-# Runs every day at 9:00 AM Beijing time (01:00 UTC)
+# Runs every day at 5:00 AM Beijing time (21:00 UTC previous day)
 # Searches for textile buyers and emails you a report
 # Works even when your computer is off!
 
@@ -7,8 +7,8 @@ name: Daily Lead Scan
 
 on:
   schedule:
-    # Every day at 00:00 UTC = 08:00 Beijing time
-    - cron: '0 0 * * *'
+    # Every day at 21:00 UTC = 05:00 Beijing time (next day)
+    - cron: '0 21 * * *'
   workflow_dispatch:  # Allow manual trigger from GitHub UI
 
 jobs:
@@ -42,7 +42,7 @@ jobs:
           OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL || 'https://api.xiaomimimo.com/v1' }}
           OPENAI_MODEL: ${{ secrets.OPENAI_MODEL || 'mimo-v2.5' }}
           SCAN_KEYWORDS: ${{ secrets.SCAN_KEYWORDS || 'embroidery thread, gold metallic yarn' }}
-          SCAN_COUNTRIES: ${{ secrets.SCAN_COUNTRIES || 'Germany, United States, United Kingdom' }}
+          SCAN_COUNTRIES: ${{ secrets.SCAN_COUNTRIES || 'Germany, United States, United Kingdom, France, Italy, Spain, Australia, India' }}
         run: |
           python scripts/daily_scan.py
 

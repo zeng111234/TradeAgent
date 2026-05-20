@@ -28,38 +28,90 @@ GLOBAL_COUNTRIES = [
     "Brazil", "Turkey", "Netherlands", "Canada", "Mexico",
 ]
 
+# Domain scan expiration: re-scan after 7 days
+SCAN_EXPIRE_DAYS = 7
 
-def load_scanned_domains() -> set:
-    """Load previously scanned domains from file."""
+
+def load_scanned_domains() -> dict:
+    """Load previously scanned domains with timestamps from file.
+    
+    Returns a dict: {domain: iso_timestamp}
+    Domains older than SCAN_EXPIRE_DAYS are automatically pruned.
+    """
+    from datetime import timedelta
+    now = datetime.now()
+    expire_cutoff = now - timedelta(days=SCAN_EXPIRE_DAYS)
+
     if os.path.exists(SCANNED_FILE):
         try:
             with open(SCANNED_FILE, "r") as f:
                 data = json.load(f)
-                return set(data.get("domains", []))
+                raw_domains = data.get("domains", [])
+
+                # Handle old format (list of strings) -> convert to dict with timestamps
+                if raw_domains and isinstance(raw_domains[0], str):
+                    scanned = {d: data.get("updated", now.isoformat()) for d in raw_domains}
+                else:
+                    scanned = {d.get("domain", ""): d.get("scanned_at", now.isoformat()) for d in raw_domains if d.get("domain")}
+
+                # Prune expired domains
+                pruned = {}
+                expired_count = 0
+                for domain, ts in scanned.items():
+                    try:
+                        scan_date = datetime.fromisoformat(ts)
+                        if scan_date > expire_cutoff:
+                            pruned[domain] = ts
+                        else:
+                            expired_count += 1
+                    except (ValueError, TypeError):
+                        # Keep if can't parse date
+                        pruned[domain] = ts
+
+                if expired_count > 0:
+                    print(f"  [INFO] Pruned {expired_count} expired domains (>{SCAN_EXPIRE_DAYS} days old)")
+                    # Save pruned list immediately
+                    save_scanned_domains(pruned)
+
+                return pruned
         except Exception:
-            return set()
-    return set()
+            return {}
+    return {}
 
 
-def save_scanned_domain(domain: str, scanned: set):
-    """Add a domain to the scanned list and save."""
-    scanned.add(domain)
+def save_scanned_domains(scanned: dict):
+    """Save the full scanned domains dict to file."""
     try:
+        domain_list = [{"domain": d, "scanned_at": ts} for d, ts in scanned.items()]
         with open(SCANNED_FILE, "w") as f:
-            json.dump({"domains": list(scanned), "updated": datetime.now().isoformat()}, f, indent=2)
+            json.dump({
+                "domains": domain_list,
+                "updated": datetime.now().isoformat(),
+                "total": len(domain_list),
+            }, f, indent=2)
     except Exception as e:
         print(f"  [WARN] Could not save scanned domains: {e}")
 
 
-def search_leads(product_keyword: str, target_country: str, max_results: int = 5, already_scanned: set = None) -> list:
+def save_scanned_domain(domain: str, scanned: dict):
+    """Add a domain to the scanned dict and save."""
+    scanned[domain] = datetime.now().isoformat()
+    save_scanned_domains(scanned)
+
+
+def search_leads(product_keyword: str, target_country: str, max_results: int = 5, already_scanned: dict = None) -> list:
     """Search for potential buyers using ddgs for one keyword + one country."""
     from ddgs import DDGS
 
-    already_scanned = already_scanned or set()
+    already_scanned = already_scanned or {}
 
     queries = [
         f"{product_keyword} buyer {target_country}",
         f"{product_keyword} importer {target_country}",
+        f"{product_keyword} wholesaler {target_country}",
+        f"{product_keyword} distributor {target_country}",
+        f"{product_keyword} retailer {target_country}",
+        f'"{product_keyword}" company {target_country}',
     ]
 
     seen_domains = set()

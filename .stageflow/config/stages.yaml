@@ -1,0 +1,305 @@
+# Declarative Stage Definition for StageFlow State Machine
+# ===========================================================
+# To add a stage: add an entry under "stages" list.
+# To add a transition: add an entry under "transitions" list.
+# To add a condition: use any registered condition type (see stageflow/core/conditions.py).
+#
+# Built-in condition types:
+#   file_exists, file_not_exists, file_contains, file_not_contains,
+#   json_field, yaml_field, shell_test, python_expr, env_var,
+#   all_of, any_of, not, always, never
+
+stages:
+  # ── Stage 1: Pick ───────────────────────────────────────────────────
+  - name: pick
+    tools:
+      - Read
+      - Grep
+      - Glob
+      - WebSearch
+      - WebFetch
+      - Bash(git *)
+      - Bash(gh issue *)
+      - Bash(ls *)
+      - TaskCreate
+      - TaskUpdate
+      - AskUserQuestion
+    meta:
+      description: "从 Backlog 中选择 Issue，获取上下文、环境信息和相关日志"
+
+  # ── Stage 2: Analyze ────────────────────────────────────────────────
+  - name: analyze
+    tools:
+      - Read
+      - Grep
+      - Glob
+      - WebSearch
+      - WebFetch
+      - Bash(git *)
+      - Bash(python *)
+      - Bash(find *)
+      - Bash(ls *)
+      - TaskCreate
+      - TaskUpdate
+    meta:
+      description: "分析 Issue 根因、影响范围、涉及代码路径"
+
+  # ── Stage 3: Plan ───────────────────────────────────────────────────
+  - name: plan
+    tools:
+      - Read
+      - Grep
+      - Glob
+      - Write
+      - Edit
+      - Bash(python *)
+      - Bash(git *)
+      - PowerShell(python *)
+      - PowerShell(git *)
+      - PowerShell
+      - TaskCreate
+      - TaskUpdate
+      - AskUserQuestion
+      - EnterPlanMode
+    meta:
+      description: "设计方案，编写 task_plan.md，确认修改范围和回滚策略"
+
+  # ── Stage 4: Implement ──────────────────────────────────────────────
+  - name: implement
+    tools:
+      - Read
+      - Edit
+      - Write
+      - Grep
+      - Glob
+      - Bash(git *)
+      - Bash(python *)
+      - Bash(npm *)
+      - Bash(cargo *)
+      - Bash(go *)
+      - Bash(make *)
+      - TaskCreate
+      - TaskUpdate
+    meta:
+      description: "按 task_plan.md 实施代码修改，提交 commit"
+    on_enter:
+      - python: "print(f'[StageFlow] Entering implement stage')"
+    on_exit:
+      - python: "print(f'[StageFlow] Exiting implement stage')"
+
+  # ── Stage 5: Test ───────────────────────────────────────────────────
+  - name: test
+    tools:
+      - Read
+      - Grep
+      - Glob
+      - Bash(git *)
+      - Bash(python *)
+      - Bash(pytest *)
+      - Bash(npm test*)
+      - Bash(cargo test*)
+      - Bash(go test*)
+      - Bash(make test*)
+      - Bash(ls *)
+      - TaskCreate
+      - TaskUpdate
+    meta:
+      description: "执行自动化测试，记录测试结果到 test_results.md"
+
+  # ── Stage 6: Human Review (硬性人工验证关卡) ─────────────────────────
+  - name: human_review
+    tools:
+      - Read
+      - Grep
+      - Glob
+      - Bash(ls *)
+      - Bash(dir *)
+    meta:
+      description: "人工验证关卡：你必须检查结果（打开网页、查看效果等），手动创建 approved 文件后才能继续"
+
+  # ── Stage 7: Document ───────────────────────────────────────────────
+  - name: document
+    tools:
+      - Read
+      - Write
+      - Edit
+      - Grep
+      - Glob
+      - Bash(git *)
+      - Bash(python *)
+      - Bash(ls *)
+      - TaskCreate
+      - TaskUpdate
+    meta:
+      description: "编写变更文档、更新 CHANGELOG、补充注释"
+
+  # ── Stage 8: MR ─────────────────────────────────────────────────────
+  - name: mr
+    tools:
+      - Read
+      - Bash(git *)
+      - Bash(gh *)
+      - Bash(python *)
+      - Write
+      - Edit
+      - Grep
+      - TaskCreate
+      - TaskUpdate
+    meta:
+      description: "创建 MR/PR，填写描述，关联 Issue"
+
+  # ── Stage 9: Review ─────────────────────────────────────────────────
+  - name: review
+    tools:
+      - Read
+      - Grep
+      - Glob
+      - Bash(git *)
+      - Bash(gh *)
+      - Bash(python *)
+      - WebFetch
+      - TaskCreate
+      - TaskUpdate
+    meta:
+      description: "响应 Review 意见，修改代码，直到 LGTM"
+
+  # ── Stage 10: Wrap Up ───────────────────────────────────────────────
+  - name: wrap_up
+    tools:
+      - Read
+      - Write
+      - Edit
+      - Bash(git *)
+      - Bash(python *)
+      - Bash(ls *)
+      - TaskCreate
+      - TaskUpdate
+      - TaskList
+    meta:
+      description: "收尾：清理分支、更新状态、归档产物"
+
+  # ── Terminal Stage ──────────────────────────────────────────────────
+  - name: done
+    tools: []
+    meta:
+      description: "流程终点，所有工具可用"
+
+transitions:
+  # ── Pick → Analyze ──────────────────────────────────────────────────
+  - from: pick
+    to: analyze
+    description: "Issue 上下文已就绪，开始分析"
+    conditions:
+      - file_exists: artifacts/runs/{{var.run_id}}/pick/issue_context.md
+
+  # ── Analyze → Plan ──────────────────────────────────────────────────
+  - from: analyze
+    to: plan
+    description: "分析完成，产出 findings.md"
+    conditions:
+      - file_exists: artifacts/runs/{{var.run_id}}/analyze/findings.md
+      - file_contains:
+          path: artifacts/runs/{{var.run_id}}/analyze/findings.md
+          pattern: "## (根因|Root Cause|Analysis|分析)"
+    on_fail: analyze
+
+  # ── Plan → Implement ────────────────────────────────────────────────
+  - from: plan
+    to: implement
+    description: "方案就绪，任务清单完备"
+    conditions:
+      - file_exists: artifacts/runs/{{var.run_id}}/plan/task_plan.md
+      - file_contains:
+          path: artifacts/runs/{{var.run_id}}/plan/task_plan.md
+          pattern: "## (Task|任务|Plan|方案)"
+    on_fail: plan
+
+  # ── Implement → Test ────────────────────────────────────────────────
+  - from: implement
+    to: test
+    description: "代码修改已完成，进入自动测试"
+    conditions:
+      - shell_test:
+          command: "git diff --name-only HEAD 2>/dev/null | wc -l"
+          op: gt
+          value: 0
+    on_fail: implement
+
+  # ── Test → Human Review (测试通过，进入人工验证) ──────────────────────
+  - from: test
+    to: human_review
+    description: "自动测试通过，等待人工验证"
+    conditions:
+      - file_exists: artifacts/runs/{{var.run_id}}/test/test_results.md
+      - file_contains:
+          path: artifacts/runs/{{var.run_id}}/test/test_results.md
+          pattern: "(PASS|通过|All tests passed)"
+      - shell_test:
+          command: "python -m pytest --tb=short"
+          op: exit_zero
+    on_fail: implement
+
+  # ── Test → Implement (测试失败，回退重试) ─────────────────────────────
+  - from: test
+    to: implement
+    description: "自动测试失败，回退 implement 重试"
+    conditions:
+      - file_exists: artifacts/runs/{{var.run_id}}/test/test_results.md
+      - file_contains:
+          path: artifacts/runs/{{var.run_id}}/test/test_results.md
+          pattern: "(FAIL|失败|Error)"
+
+  # ── Human Review → Document (人工批准后才能继续) ─────────────────────
+  - from: human_review
+    to: document
+    description: "人工验证通过（需手动创建 approved 文件）"
+    conditions:
+      - file_exists: artifacts/runs/{{var.run_id}}/human_review/approved
+
+  # ── Human Review → Implement (人工拒绝，打回重做) ────────────────────
+  - from: human_review
+    to: implement
+    description: "人工验证不通过，打回重新实现"
+    conditions:
+      - file_exists: artifacts/runs/{{var.run_id}}/human_review/rejected
+
+  # ── Document → MR ───────────────────────────────────────────────────
+  - from: document
+    to: mr
+    description: "文档齐备，创建 MR"
+    conditions:
+      - file_exists: artifacts/runs/{{var.run_id}}/document/changelog.md
+
+  # ── MR → Review ─────────────────────────────────────────────────────
+  - from: mr
+    to: review
+    description: "MR 已创建，等待 Review"
+    conditions:
+      - shell_test:
+          command: "gh pr list --state open --limit 1 2>/dev/null | wc -l"
+          op: gt
+          value: 0
+
+  # ── Review → Wrap Up ────────────────────────────────────────────────
+  - from: review
+    to: wrap_up
+    description: "Review 通过，收尾归档"
+    conditions:
+      - shell_test:
+          command: "gh pr view --json state 2>/dev/null | python -c \"import sys,json; d=json.load(sys.stdin); print(d.get('state',''))\""
+          op: stdout_contains
+          value: "MERGED"
+
+  # ── Review → Implement (revise after review) ────────────────────────
+  - from: review
+    to: implement
+    description: "Review 要求修改，回退实施"
+    conditions:
+      - file_exists: artifacts/runs/{{var.run_id}}/review/changes_requested.md
+
+  # ── Wrap Up → terminal (done) ───────────────────────────────────────
+  - from: wrap_up
+    to: done
+    description: "全部完成"
+    conditions:
+      - always: true

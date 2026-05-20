@@ -113,7 +113,10 @@
           <template #header>
             <div style="display: flex; justify-content: space-between; align-items: center">
               <span style="font-weight: 600">Daily Auto Report</span>
-              <div>
+            <div>
+                <el-button type="danger" @click="runSearchNewLeads" :loading="scanAndSendLoading" size="large" style="margin-right: 8px">
+                  <el-icon><Search /></el-icon> 搜索新客户
+                </el-button>
                 <el-button @click="runDailyReport" :loading="dailyLoading" size="default">
                   <el-icon><DataAnalysis /></el-icon> Quick Report
                 </el-button>
@@ -123,9 +126,9 @@
               </div>
             </div>
           </template>
-          <div v-if="dailyLoading || fullScanLoading" style="padding: 20px; text-align: center; color: #909399">
+          <div v-if="dailyLoading || fullScanLoading || scanAndSendLoading" style="padding: 20px; text-align: center; color: #909399">
             <el-icon class="is-loading" :size="24"><Loading /></el-icon>
-            <p style="margin-top: 8px">{{ fullScanLoading ? 'Scanning web + generating AI drafts... This may take 1-2 minutes.' : 'Analyzing your CRM data...' }}</p>
+            <p style="margin-top: 8px">{{ scanAndSendLoading ? 'Searching web + generating AI emails + sending... This may take 2-3 minutes.' : fullScanLoading ? 'Scanning web + generating AI drafts... This may take 1-2 minutes.' : 'Analyzing your CRM data...' }}</p>
           </div>
           <div v-else-if="dailyReport" style="white-space: pre-wrap; font-family: monospace; font-size: 13px; color: #303133; background: #f5f7fa; padding: 16px; border-radius: 6px; line-height: 1.8">{{ dailyReport }}</div>
           <el-empty v-else description="Click 'Quick Report' for CRM analysis or 'Full Scan' to search for new leads" />
@@ -142,6 +145,86 @@
             <div style="font-size: 11px; color: #67c23a">Next: {{ job.next_run }}</div>
           </div>
           <el-empty v-if="!schedulerJobs.length" description="No scheduled jobs" />
+        </el-card>
+      </el-col>
+    </el-row>
+
+    <!-- New Leads Search Results & Review -->
+    <el-row :gutter="20" style="margin-top: 24px" v-if="searchedLeads.length > 0">
+      <el-col :span="24">
+        <el-card shadow="never">
+          <template #header>
+            <div style="display: flex; justify-content: space-between; align-items: center">
+              <div>
+                <span style="font-weight: 600">New Leads Found</span>
+                <span style="font-size: 12px; color: #909399; margin-left: 8px">Review AI-generated emails and select which to send</span>
+              </div>
+              <div>
+                <el-button @click="toggleSelectAllLeads" size="default">
+                  {{ selectedLeadIndices.size > 0 ? 'Deselect All' : 'Select All' }}
+                </el-button>
+                <el-button type="success" @click="sendSelectedDrafts" :loading="sendDraftsLoading" size="large">
+                  <el-icon><Promotion /></el-icon> Send Selected ({{ selectedLeadsCount }})
+                </el-button>
+              </div>
+            </div>
+          </template>
+
+          <div v-if="sendDraftsResult" style="margin-bottom: 12px">
+            <el-alert :title="`Sent ${sendDraftsResult.emails_sent} emails, saved ${sendDraftsResult.crm_saved} to CRM`" type="success" show-icon :closable="true" />
+          </div>
+
+          <el-table :data="searchedLeads" stripe size="small" max-height="500">
+            <el-table-column label="Send" width="60" align="center">
+              <template #default="{ row, $index }">
+                <el-checkbox
+                  :model-value="selectedLeadIndices.has($index)"
+                  :disabled="!row.email || row.already_exists"
+                  @change="toggleLeadSelection($index)"
+                />
+              </template>
+            </el-table-column>
+            <el-table-column prop="company_name" label="Company" min-width="200" show-overflow-tooltip />
+            <el-table-column prop="country" label="Country" width="120" />
+            <el-table-column label="Score" width="80" align="center">
+              <template #default="{ row }">
+                <el-tag :type="row.relevance_score >= 70 ? 'success' : row.relevance_score >= 50 ? 'warning' : 'info'" size="small">
+                  {{ row.relevance_score }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="Email" min-width="180">
+              <template #default="{ row }">
+                <span v-if="row.email">{{ row.email }}</span>
+                <span v-else style="color: #c0c4cc">No email</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="Status" width="100" align="center">
+              <template #default="{ row }">
+                <el-tag v-if="row.already_exists" type="warning" size="small">Exists</el-tag>
+                <el-tag v-else-if="!row.email" type="info" size="small">No email</el-tag>
+                <el-tag v-else type="success" size="small">Ready</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="AI Draft Email" min-width="350">
+              <template #default="{ row }">
+                <el-popover trigger="hover" width="450" placement="left">
+                  <template #reference>
+                    <span style="cursor: pointer; color: #409eff; font-size: 12px">{{ (row.draft_body || '').substring(0, 80) }}...</span>
+                  </template>
+                  <div style="white-space: pre-wrap; font-size: 13px; line-height: 1.6; max-height: 350px; overflow-y: auto">
+                    <div style="font-weight: 600; margin-bottom: 4px">Subject: {{ row.draft_subject }}</div>
+                    {{ row.draft_body }}
+                  </div>
+                </el-popover>
+              </template>
+            </el-table-column>
+            <el-table-column label="Website" width="100">
+              <template #default="{ row }">
+                <a v-if="row.website" :href="row.website" target="_blank" style="color: #409eff; font-size: 12px; text-decoration: none">Visit</a>
+              </template>
+            </el-table-column>
+          </el-table>
         </el-card>
       </el-col>
     </el-row>
@@ -225,7 +308,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
 import * as echarts from 'echarts'
 import { analyticsApi, schedulerApi, agentApi } from '../api'
@@ -362,6 +445,7 @@ const handleResize = () => {
 // Scheduler
 const dailyLoading = ref(false)
 const fullScanLoading = ref(false)
+const scanAndSendLoading = ref(false)
 const dailyReport = ref(null)
 const schedulerJobs = ref([])
 
@@ -520,6 +604,108 @@ const runFullScan = async () => {
     ElMessage.error('Full scan failed: ' + (e.response?.data?.detail || e.message))
   } finally {
     fullScanLoading.value = false
+  }
+}
+
+// New Leads Search & Review
+const searchedLeads = ref([])
+const selectedLeadIndices = ref(new Set())
+const sendDraftsLoading = ref(false)
+const sendDraftsResult = ref(null)
+
+const runSearchNewLeads = async () => {
+  scanAndSendLoading.value = true
+  searchedLeads.value = []
+  selectedLeadIndices.value = new Set()
+  sendDraftsResult.value = null
+  dailyReport.value = null
+  try {
+    const result = await agentApi.scanLeadsDraft({
+      product_keywords: 'embroidery thread, gold metallic yarn',
+      target_country: '',
+      max_results: 10,
+    })
+
+    const leads = result.leads || []
+    searchedLeads.value = leads
+
+    // Auto-select all leads that have email and don't already exist
+    leads.forEach((l, i) => {
+      if (l.email && !l.already_exists) {
+        selectedLeadIndices.value.add(i)
+      }
+    })
+    selectedLeadIndices.value = new Set(selectedLeadIndices.value)
+
+    if (leads.length > 0) {
+      ElMessage.success(`Found ${result.total_found} leads, ${result.with_email} with email. Review below and select which to send.`)
+    } else {
+      ElMessage.info(`Found ${result.total_found} leads but none have email addresses.`)
+    }
+  } catch (e) {
+    ElMessage.error('Search failed: ' + (e.response?.data?.detail || e.message))
+  } finally {
+    scanAndSendLoading.value = false
+  }
+}
+
+const toggleLeadSelection = (index) => {
+  if (selectedLeadIndices.value.has(index)) {
+    selectedLeadIndices.value.delete(index)
+  } else {
+    selectedLeadIndices.value.add(index)
+  }
+  selectedLeadIndices.value = new Set(selectedLeadIndices.value)
+}
+
+const toggleSelectAllLeads = () => {
+  const eligible = searchedLeads.value
+    .map((l, i) => ({ lead: l, index: i }))
+    .filter(({ lead }) => lead.email && !lead.already_exists)
+
+  if (eligible.length === selectedLeadIndices.value.size) {
+    selectedLeadIndices.value = new Set()
+  } else {
+    selectedLeadIndices.value = new Set(eligible.map(({ index }) => index))
+  }
+}
+
+const selectedLeadsCount = computed(() => {
+  return Array.from(selectedLeadIndices.value).filter(i => {
+    const l = searchedLeads.value[i]
+    return l && l.email && !l.already_exists
+  }).length
+})
+
+const sendSelectedDrafts = async () => {
+  const selected = Array.from(selectedLeadIndices.value)
+    .map(i => searchedLeads.value[i])
+    .filter(l => l && l.email && !l.already_exists)
+
+  if (selected.length === 0) {
+    ElMessage.warning('No leads selected for sending')
+    return
+  }
+
+  sendDraftsLoading.value = true
+  sendDraftsResult.value = null
+  try {
+    const result = await agentApi.sendDraftedEmails({
+      selected_leads: selected,
+      product_keywords: 'embroidery thread, gold metallic yarn',
+    })
+
+    sendDraftsResult.value = result
+
+    if (result.emails_sent > 0) {
+      ElMessage.success(`Sent ${result.emails_sent} emails, saved ${result.crm_saved} to CRM!`)
+    } else {
+      ElMessage.info('No emails were sent. Check the result for details.')
+    }
+  } catch (e) {
+    ElMessage.error('Send failed: ' + (e.response?.data?.detail || e.message))
+  } finally {
+    sendDraftsLoading.value = false
   }
 }
 

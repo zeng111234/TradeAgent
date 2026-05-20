@@ -1,0 +1,1 @@
+{"tool": "Write", "stage": "pick", "reason": "Tool 'Write' is NOT allowed in stage 'pick'. Allowed tools: ['Read', 'Grep', 'Glob', 'WebSearch', 'WebFetch', 'Bash(git *)', 'Bash(gh issue *)', 'Bash(ls *)', 'TaskCreate', 'TaskUpdate', 'AskUserQuestion']", "at": "2026-05-20T15:24:18.720937+00:00"}
