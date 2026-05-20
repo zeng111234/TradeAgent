@@ -1,53 +1,238 @@
 {
   "domains": [
-    "m.made-in-china.com",
-    "shop.gunold.de",
-    "isacordthread.com",
-    "www.maggieframes.com",
-    "www.madeirausa.com",
-    "loopknitting.com",
-    "www.europages.co.uk",
-    "www.katani-global.de",
-    "embroiderysource.com",
-    "textile-hub.blogspot.com",
-    "www.lovecrafts.com",
-    "tradedata.pro",
-    "textileusa.net",
-    "www.embroideryyarn.com",
-    "www.houseofembroidery.com",
-    "www.leohobby.com",
-    "www.fibre2fashion.com",
-    "www.williamgee.co.uk",
-    "www.amann.com",
-    "www.volza.com",
-    "www.swingdesign.com",
-    "candlethreadusa.com",
-    "www.metallicyarnfactory.com",
-    "www.accio.com",
-    "www.marathonthreads.co.uk",
-    "www.tradewheel.com",
-    "eqsuk.com",
-    "www.stocks.co.uk",
-    "shopbeyondmeasure.co.uk",
-    "kanayamags.com",
-    "importer.tradekey.com",
-    "meriwoolart.com",
-    "melocadesigns.com",
-    "www.alibaba.com",
-    "www.madeira.com",
-    "dir.indiamart.com",
-    "www.fashiondex.com",
-    "www.tradeimex.in",
-    "www.simthreads.com",
-    "www.wawak.com",
-    "www.exporthub.com",
-    "redrockthreads.com",
-    "allthreads.com",
-    "www.madeinamericayarns.com",
-    "garne.madeira.de",
-    "goldtexyarns.com",
-    "www.yarn-paradise.com",
-    "www.superiorthreads.com"
+    {
+      "domain": "m.made-in-china.com",
+      "scanned_at": "2026-05-20T03:36:48.978223"
+    },
+    {
+      "domain": "shop.gunold.de",
+      "scanned_at": "2026-05-20T03:36:48.978223"
+    },
+    {
+      "domain": "isacordthread.com",
+      "scanned_at": "2026-05-20T03:36:48.978223"
+    },
+    {
+      "domain": "www.maggieframes.com",
+      "scanned_at": "2026-05-20T03:36:48.978223"
+    },
+    {
+      "domain": "www.madeirausa.com",
+      "scanned_at": "2026-05-20T03:36:48.978223"
+    },
+    {
+      "domain": "loopknitting.com",
+      "scanned_at": "2026-05-20T03:36:48.978223"
+    },
+    {
+      "domain": "www.europages.co.uk",
+      "scanned_at": "2026-05-20T03:36:48.978223"
+    },
+    {
+      "domain": "www.katani-global.de",
+      "scanned_at": "2026-05-20T03:36:48.978223"
+    },
+    {
+      "domain": "embroiderysource.com",
+      "scanned_at": "2026-05-20T03:36:48.978223"
+    },
+    {
+      "domain": "textile-hub.blogspot.com",
+      "scanned_at": "2026-05-20T03:36:48.978223"
+    },
+    {
+      "domain": "www.lovecrafts.com",
+      "scanned_at": "2026-05-20T03:36:48.978223"
+    },
+    {
+      "domain": "tradedata.pro",
+      "scanned_at": "2026-05-20T03:36:48.978223"
+    },
+    {
+      "domain": "textileusa.net",
+      "scanned_at": "2026-05-20T03:36:48.978223"
+    },
+    {
+      "domain": "www.embroideryyarn.com",
+      "scanned_at": "2026-05-20T03:36:48.978223"
+    },
+    {
+      "domain": "www.houseofembroidery.com",
+      "scanned_at": "2026-05-20T03:36:48.978223"
+    },
+    {
+      "domain": "www.leohobby.com",
+      "scanned_at": "2026-05-20T03:36:48.978223"
+    },
+    {
+      "domain": "www.fibre2fashion.com",
+      "scanned_at": "2026-05-20T03:36:48.978223"
+    },
+    {
+      "domain": "www.williamgee.co.uk",
+      "scanned_at": "2026-05-20T03:36:48.978223"
+    },
+    {
+      "domain": "www.amann.com",
+      "scanned_at": "2026-05-20T03:36:48.978223"
+    },
+    {
+      "domain": "www.volza.com",
+      "scanned_at": "2026-05-20T03:36:48.978223"
+    },
+    {
+      "domain": "www.swingdesign.com",
+      "scanned_at": "2026-05-20T03:36:48.978223"
+    },
+    {
+      "domain": "candlethreadusa.com",
+      "scanned_at": "2026-05-20T03:36:48.978223"
+    },
+    {
+      "domain": "www.metallicyarnfactory.com",
+      "scanned_at": "2026-05-20T03:36:48.978223"
+    },
+    {
+      "domain": "www.accio.com",
+      "scanned_at": "2026-05-20T03:36:48.978223"
+    },
+    {
+      "domain": "www.marathonthreads.co.uk",
+      "scanned_at": "2026-05-20T03:36:48.978223"
+    },
+    {
+      "domain": "www.tradewheel.com",
+      "scanned_at": "2026-05-20T03:36:48.978223"
+    },
+    {
+      "domain": "eqsuk.com",
+      "scanned_at": "2026-05-20T03:36:48.978223"
+    },
+    {
+      "domain": "www.stocks.co.uk",
+      "scanned_at": "2026-05-20T03:36:48.978223"
+    },
+    {
+      "domain": "shopbeyondmeasure.co.uk",
+      "scanned_at": "2026-05-20T03:36:48.978223"
+    },
+    {
+      "domain": "kanayamags.com",
+      "scanned_at": "2026-05-20T03:36:48.978223"
+    },
+    {
+      "domain": "importer.tradekey.com",
+      "scanned_at": "2026-05-20T03:36:48.978223"
+    },
+    {
+      "domain": "meriwoolart.com",
+      "scanned_at": "2026-05-20T03:36:48.978223"
+    },
+    {
+      "domain": "melocadesigns.com",
+      "scanned_at": "2026-05-20T03:36:48.978223"
+    },
+    {
+      "domain": "www.alibaba.com",
+      "scanned_at": "2026-05-20T03:36:48.978223"
+    },
+    {
+      "domain": "www.madeira.com",
+      "scanned_at": "2026-05-20T03:36:48.978223"
+    },
+    {
+      "domain": "dir.indiamart.com",
+      "scanned_at": "2026-05-20T03:36:48.978223"
+    },
+    {
+      "domain": "www.fashiondex.com",
+      "scanned_at": "2026-05-20T03:36:48.978223"
+    },
+    {
+      "domain": "www.tradeimex.in",
+      "scanned_at": "2026-05-20T03:36:48.978223"
+    },
+    {
+      "domain": "www.simthreads.com",
+      "scanned_at": "2026-05-20T03:36:48.978223"
+    },
+    {
+      "domain": "www.wawak.com",
+      "scanned_at": "2026-05-20T03:36:48.978223"
+    },
+    {
+      "domain": "www.exporthub.com",
+      "scanned_at": "2026-05-20T03:36:48.978223"
+    },
+    {
+      "domain": "redrockthreads.com",
+      "scanned_at": "2026-05-20T03:36:48.978223"
+    },
+    {
+      "domain": "allthreads.com",
+      "scanned_at": "2026-05-20T03:36:48.978223"
+    },
+    {
+      "domain": "www.madeinamericayarns.com",
+      "scanned_at": "2026-05-20T03:36:48.978223"
+    },
+    {
+      "domain": "garne.madeira.de",
+      "scanned_at": "2026-05-20T03:36:48.978223"
+    },
+    {
+      "domain": "goldtexyarns.com",
+      "scanned_at": "2026-05-20T03:36:48.978223"
+    },
+    {
+      "domain": "www.yarn-paradise.com",
+      "scanned_at": "2026-05-20T03:36:48.978223"
+    },
+    {
+      "domain": "www.superiorthreads.com",
+      "scanned_at": "2026-05-20T03:36:48.978223"
+    },
+    {
+      "domain": "m.ec21.com",
+      "scanned_at": "2026-05-20T22:23:39.903156"
+    },
+    {
+      "domain": "www.threadart.com",
+      "scanned_at": "2026-05-20T22:23:39.903634"
+    },
+    {
+      "domain": "www.vmasewing.com",
+      "scanned_at": "2026-05-20T22:23:39.904256"
+    },
+    {
+      "domain": "www.somac-shop.co.uk",
+      "scanned_at": "2026-05-20T22:23:39.904884"
+    },
+    {
+      "domain": "www.brooklynhaberdashery.com",
+      "scanned_at": "2026-05-20T22:23:39.905412"
+    },
+    {
+      "domain": "www.amann-mettler.com",
+      "scanned_at": "2026-05-20T22:23:39.905955"
+    },
+    {
+      "domain": "www.bossgoo.com",
+      "scanned_at": "2026-05-20T22:23:39.906474"
+    },
+    {
+      "domain": "nscbdstall.com",
+      "scanned_at": "2026-05-20T22:23:39.906899"
+    },
+    {
+      "domain": "bootybaybroker.com",
+      "scanned_at": "2026-05-20T22:23:39.907298"
+    },
+    {
+      "domain": "www.madeira.co.uk",
+      "scanned_at": "2026-05-20T22:23:39.907692"
+    }
   ],
-  "updated": "2026-05-20T03:36:48.978223"
+  "updated": "2026-05-20T22:23:39.907857",
+  "total": 58
 }
