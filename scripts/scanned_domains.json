@@ -351,8 +351,48 @@
     {
       "domain": "www.mrvacandmrssew.com",
       "scanned_at": "2026-05-23T21:51:27.143879"
+    },
+    {
+      "domain": "www.apparelviews.com",
+      "scanned_at": "2026-05-24T21:54:04.859003"
+    },
+    {
+      "domain": "www.barnyarns.co.uk",
+      "scanned_at": "2026-05-24T21:54:04.859619"
+    },
+    {
+      "domain": "www.ispigment.com",
+      "scanned_at": "2026-05-24T21:54:04.860341"
+    },
+    {
+      "domain": "orafabulousfibres.com",
+      "scanned_at": "2026-05-24T21:54:04.860850"
+    },
+    {
+      "domain": "www.wlw.com",
+      "scanned_at": "2026-05-24T21:54:04.861360"
+    },
+    {
+      "domain": "www.morningeagleyarn.com",
+      "scanned_at": "2026-05-24T21:54:04.861846"
+    },
+    {
+      "domain": "consumer.guetermann.com",
+      "scanned_at": "2026-05-24T21:54:04.862333"
+    },
+    {
+      "domain": "hanging-by-a-thread.com",
+      "scanned_at": "2026-05-24T21:54:04.862797"
+    },
+    {
+      "domain": "www.globalsources.com",
+      "scanned_at": "2026-05-24T21:54:04.863282"
+    },
+    {
+      "domain": "en.m.wikipedia.org",
+      "scanned_at": "2026-05-24T21:54:04.863754"
     }
   ],
-  "updated": "2026-05-23T21:51:27.144003",
-  "total": 88
+  "updated": "2026-05-24T21:54:04.863991",
+  "total": 98
 }
