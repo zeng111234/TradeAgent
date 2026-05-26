@@ -431,8 +431,48 @@
     {
       "domain": "www.moodfabrics.com",
       "scanned_at": "2026-05-25T22:07:13.549160"
+    },
+    {
+      "domain": "hobinisyarns.com",
+      "scanned_at": "2026-05-26T22:19:28.152270"
+    },
+    {
+      "domain": "angelking.co.jp",
+      "scanned_at": "2026-05-26T22:19:28.152941"
+    },
+    {
+      "domain": "sulky.com",
+      "scanned_at": "2026-05-26T22:19:28.153687"
+    },
+    {
+      "domain": "www.empresswholesale.co.uk",
+      "scanned_at": "2026-05-26T22:19:28.154344"
+    },
+    {
+      "domain": "midoriribbon.com",
+      "scanned_at": "2026-05-26T22:19:28.154919"
+    },
+    {
+      "domain": "www.ra-embroidery.com",
+      "scanned_at": "2026-05-26T22:19:28.155622"
+    },
+    {
+      "domain": "handembroidery.com",
+      "scanned_at": "2026-05-26T22:19:28.156234"
+    },
+    {
+      "domain": "www.bing.com",
+      "scanned_at": "2026-05-26T22:19:28.156829"
+    },
+    {
+      "domain": "www.temu.com",
+      "scanned_at": "2026-05-26T22:19:28.157461"
+    },
+    {
+      "domain": "www.vilrita.com",
+      "scanned_at": "2026-05-26T22:19:28.158088"
     }
   ],
-  "updated": "2026-05-25T22:07:13.549304",
-  "total": 108
+  "updated": "2026-05-26T22:19:28.158368",
+  "total": 118
 }
