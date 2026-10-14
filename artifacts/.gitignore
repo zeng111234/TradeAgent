@@ -1,2 +1,6 @@
-# Generated smoke-test output (scripts/smoke_real_model.py)
-artifacts/smoke/
+# Generated smoke-test output from scripts/smoke_real_model.py.
+#
+# Patterns here are relative to this directory, not to the repository root — an
+# earlier version of this file said "artifacts/smoke/" and therefore matched
+# nothing.
+smoke/
