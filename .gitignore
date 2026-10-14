@@ -6,9 +6,25 @@ dist/
 *.db
 *.sqlite3
 
+# Virtualenvs (all common names/spellings)
+.venv/
+venv/
+env/
+ENV/
+.python-version
+
+# Test / tooling caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
 # Environment
 .env
 *.env.local
+.env.*
+!.env.example
 
 # Node
 node_modules/

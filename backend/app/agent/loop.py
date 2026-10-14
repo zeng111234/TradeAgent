@@ -1,0 +1,361 @@
+"""Bounded ReAct loop — the thing that makes this an agent.
+
+The model sees a goal plus a list of tools. It chooses which tools to call,
+reads the observations, and decides what to do next. Nothing about the order
+is hardcoded here; that is the whole point.
+
+Design commitments
+------------------
+* **Bounded.** Rounds, tool calls, tokens and wall-clock are all capped. An
+  agent that can run forever is an outage waiting to happen.
+* **Recoverable.** A tool that throws, a name that does not exist, or
+  arguments that are not valid JSON all become observations the model can
+  react to — never a crash. "It can only observe and propose" is enforced by
+  which tools are registered, not by trusting the prompt.
+* **Observable.** Every round, call, argument, observation and latency lands
+  in a :class:`TraceStep` so the run can be replayed, audited and rendered.
+"""
+from __future__ import annotations
+
+import asyncio
+import logging
+import time
+import uuid
+from dataclasses import dataclass, field
+from typing import Any, Callable, Optional
+
+from .protocol import LLMClient, Message, ToolCall, parse_arguments
+from .tools import ToolRegistry
+
+logger = logging.getLogger(__name__)
+
+DEFAULT_SYSTEM_PROMPT = """You are an autonomous foreign-trade assistant.
+
+You are given a goal and a set of tools. Work towards the goal by calling
+tools and reading their results. You decide what to do next — there is no
+fixed sequence.
+
+How to work:
+1. Start by finding out what you need. Do not guess values you could look up.
+2. Call one or a few tools at a time, and read each result before deciding.
+3. If a tool fails or returns something unusable, adapt: try different
+   arguments, a different tool, or a different approach. Do not repeat the
+   same failing call unchanged.
+4. Stop as soon as you can answer. Do not call tools you do not need.
+
+Rules you must not break:
+- You can investigate, read, and prepare drafts. You cannot send anything to
+  a customer. Drafts are created for human review; a person sends them.
+- Never invent customer data. If a lookup returns nothing, say so.
+- Cite concrete evidence (names, scores, dates) in your final answer, and
+  flag anything you could not verify instead of assuming it is fine.
+
+Finishing:
+When you have enough information, reply with your conclusion as plain text
+and make no tool call. Your text reply ends the run."""
+
+
+class AgentError(Exception):
+    """Unrecoverable loop failure (as opposed to a tool failure)."""
+
+
+@dataclass
+class AgentBudget:
+    """Hard caps. Any one of them being hit ends the run cleanly."""
+
+    max_rounds: int = 12
+    max_tool_calls: int = 25
+    max_tokens: int = 60_000
+    max_seconds: float = 180.0
+    max_calls_per_round: int = 5
+    # How many consecutive rounds with no tool call before we give up. One is
+    # normal (that is how a run ends); more than one means the model is stuck.
+    max_idle_rounds: int = 3
+    tool_timeout_seconds: float = 60.0
+
+
+@dataclass
+class ToolInvocation:
+    """One tool call and what came back."""
+
+    name: str
+    arguments_raw: str
+    arguments: dict
+    ok: bool
+    observation: str
+    elapsed: float
+    call_id: str = ""
+
+
+@dataclass
+class TraceStep:
+    """One loop iteration: what the model said, what we did about it."""
+
+    round: int
+    thought: str = ""
+    tool_calls: list[ToolInvocation] = field(default_factory=list)
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    latency: float = 0.0
+    note: str = ""
+
+    def as_dict(self) -> dict:
+        return {
+            "round": self.round,
+            "thought": self.thought,
+            "latency": round(self.latency, 3),
+            "note": self.note,
+            "tool_calls": [
+                {
+                    "name": c.name,
+                    "arguments": c.arguments,
+                    "ok": c.ok,
+                    "observation": c.observation,
+                    "elapsed": round(c.elapsed, 3),
+                    "call_id": c.call_id,
+                }
+                for c in self.tool_calls
+            ],
+        }
+
+
+@dataclass
+class AgentRun:
+    """Complete record of one agent execution."""
+
+    goal: str
+    run_id: str = field(default_factory=lambda: uuid.uuid4().hex)
+    status: str = "running"      # running | succeeded | truncated | error | stalled
+    final_output: str = ""
+    stop_reason: str = ""
+    steps: list[TraceStep] = field(default_factory=list)
+    messages: list[Message] = field(default_factory=list)
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    elapsed: float = 0.0
+    error: Optional[str] = None
+
+    @property
+    def tool_call_count(self) -> int:
+        return sum(len(s.tool_calls) for s in self.steps)
+
+    @property
+    def tool_sequence(self) -> list[str]:
+        """Flattened ordered list of tool names actually called.
+
+        This is the value the acceptance criterion checks: two different goals
+        must produce two different sequences.
+        """
+        return [c.name for s in self.steps for c in s.tool_calls]
+
+    def as_dict(self) -> dict:
+        return {
+            "run_id": self.run_id,
+            "goal": self.goal,
+            "status": self.status,
+            "stop_reason": self.stop_reason,
+            "final_output": self.final_output,
+            "error": self.error,
+            "rounds": len(self.steps),
+            "tool_calls": self.tool_call_count,
+            "tool_sequence": self.tool_sequence,
+            "did_investigate": self.did_investigate,
+            "prompt_tokens": self.prompt_tokens,
+            "completion_tokens": self.completion_tokens,
+            "elapsed": round(self.elapsed, 3),
+            "steps": [s.as_dict() for s in self.steps],
+        }
+
+    @property
+    def did_investigate(self) -> bool:
+        """True once at least one tool has actually been called.
+
+        Distinguishes "the agent researched and concluded" from "the model
+        wrote prose without looking anything up".
+        """
+        return self.tool_call_count > 0
+
+
+class AgentLoop:
+    """Runs a goal to completion against a tool registry."""
+
+    def __init__(
+        self,
+        llm: LLMClient,
+        registry: ToolRegistry,
+        *,
+        budget: Optional[AgentBudget] = None,
+        system_prompt: str = DEFAULT_SYSTEM_PROMPT,
+        on_step: Optional[Callable[[TraceStep], None]] = None,
+    ) -> None:
+        self.llm = llm
+        self.registry = registry
+        self.budget = budget or AgentBudget()
+        self.system_prompt = system_prompt
+        self.on_step = on_step
+
+    async def run(self, goal: str, *, context: str = "") -> AgentRun:
+        run = AgentRun(goal=goal)
+        started = time.monotonic()
+
+        run.messages = [Message.system(self.system_prompt)]
+        if context:
+            run.messages.append(Message.system(context))
+        run.messages.append(Message.user(goal))
+
+        schemas = self.registry.schemas()
+        idle_rounds = 0
+
+        for round_index in range(1, self.budget.max_rounds + 1):
+            remaining = self.budget.max_seconds - (time.monotonic() - started)
+            if remaining <= 0:
+                return self._finish(run, started, "truncated", "time budget exceeded")
+
+            # Check the round budget *before* spending a model call on it.
+            if round_index > self.budget.max_rounds:
+                return self._finish(run, started, "truncated", "round budget exhausted")
+
+            reply = await self._ask(run, schemas, round_index)
+            step = TraceStep(
+                round=round_index,
+                thought=reply.content,
+                prompt_tokens=reply.prompt_tokens,
+                completion_tokens=reply.completion_tokens,
+            )
+            run.steps.append(step)
+            run.prompt_tokens += reply.prompt_tokens
+            run.completion_tokens += reply.completion_tokens
+
+            if not reply.tool_calls:
+                idle_rounds += 1
+                text = reply.content.strip()
+                substantive = text and (run.did_investigate or len(text) >= 200)
+
+                if substantive:
+                    # A text answer ends the run.
+                    return self._finish(run, started, "succeeded", "final answer", text)
+
+                # Not substantive enough to be an answer. Nudge, and give up
+                # if the model keeps producing nothing usable.
+                step.note = (
+                    "empty reply, no tool calls" if not text
+                    else "prose without investigation; asked to use tools"
+                )
+                if idle_rounds >= self.budget.max_idle_rounds:
+                    return self._finish(
+                        run, started, "stalled",
+                        "model produced no usable tool calls and no substantive answer",
+                    )
+                run.messages.append(
+                    Message.user(
+                        "That reply does not answer the goal — you have not "
+                        "looked anything up yet. Call a tool to gather evidence, "
+                        "then answer."
+                        if not run.did_investigate
+                        else "Your last reply was empty. Either call a tool to "
+                             "make progress, or give your final answer as text."
+                    )
+                )
+                continue
+
+            idle_rounds = 0
+            run.messages.append(Message.assistant(reply.content, reply.tool_calls))
+
+            calls = reply.tool_calls[: self.budget.max_calls_per_round]
+            overflow = reply.tool_calls[self.budget.max_calls_per_round:]
+            if overflow:
+                step.note = f"{len(overflow)} extra call(s) dropped (per-round cap)"
+
+            for call in calls:
+                if run.tool_call_count >= self.budget.max_tool_calls:
+                    return self._finish(run, started, "truncated", "tool-call budget exhausted")
+
+                invocation = await self._execute(call)
+                step.tool_calls.append(invocation)
+                run.messages.append(Message.tool_result(call, invocation.observation))
+                logger.info(
+                    "run %s round %s -> %s (%s, %.2fs)",
+                    run.run_id[:8], round_index, call.name,
+                    "ok" if invocation.ok else "failed", invocation.elapsed,
+                )
+
+            if run.prompt_tokens + run.completion_tokens > self.budget.max_tokens:
+                return self._finish(run, started, "truncated", "token budget exhausted")
+
+            if self.on_step:
+                self.on_step(step)
+
+        return self._finish(run, started, "truncated", "round budget exhausted")
+
+    # -- internals ---------------------------------------------------------
+
+    async def _ask(self, run: AgentRun, schemas: list[dict], round_index: int):
+        try:
+            return await self.llm.chat(
+                list(run.messages),
+                schemas,
+                temperature=0.2,
+                max_tokens=1500,
+            )
+        except Exception as exc:  # noqa: BLE001 - surfaced as a run error
+            logger.error("LLM call failed in run %s: %s", run.run_id, exc, exc_info=True)
+            raise AgentError(f"LLM call failed in round {round_index}: {exc}") from exc
+
+    async def _execute(self, call: ToolCall) -> ToolInvocation:
+        started = time.monotonic()
+        try:
+            result, _ = await asyncio.wait_for(
+                self.registry.call(call.name, call.arguments),
+                timeout=self.budget.tool_timeout_seconds,
+            )
+        except asyncio.TimeoutError:
+            from .tools import ToolResult
+
+            result = ToolResult.failure(
+                f"tool '{call.name}' timed out after {self.budget.tool_timeout_seconds}s"
+            )
+        elapsed = time.monotonic() - started
+        return ToolInvocation(
+            name=call.name,
+            arguments_raw=call.arguments,
+            arguments=parse_arguments(call.arguments),
+            ok=result.ok,
+            observation=result.observation,
+            elapsed=elapsed,
+            call_id=call.id,
+        )
+
+    @staticmethod
+    def _finish(
+        run: AgentRun,
+        started: float,
+        status: str,
+        stop_reason: str,
+        final_output: str = "",
+    ) -> AgentRun:
+        run.status = status
+        run.stop_reason = stop_reason
+        if final_output:
+            run.final_output = final_output
+        elif status == "succeeded":
+            run.final_output = ""
+        run.elapsed = time.monotonic() - started
+        return run
+
+
+async def run_agent(
+    goal: str,
+    llm: LLMClient,
+    registry: ToolRegistry,
+    *,
+    budget: Optional[AgentBudget] = None,
+    context: str = "",
+    system_prompt: str = DEFAULT_SYSTEM_PROMPT,
+) -> AgentRun:
+    """Convenience wrapper. ``AgentError`` is converted into a failed run."""
+    loop = AgentLoop(llm, registry, budget=budget, system_prompt=system_prompt)
+    try:
+        return await loop.run(goal, context=context)
+    except AgentError as exc:
+        run = AgentRun(goal=goal, status="error", stop_reason=str(exc), error=str(exc))
+        return run
