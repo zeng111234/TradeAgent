@@ -98,11 +98,17 @@ def render_mermaid_sequence(run: Any, *, title: Optional[str] = None) -> str:
 
     if not steps:
         lines.append("    Note over A: stopped before any round ran")
+    # The final round's text is the conclusion. Putting 3,000 characters into a
+    # diagram label makes the diagram unreadable and repeats the whole answer, so
+    # a long final thought is abbreviated with a pointer to the rendered section.
+    conclusion_text = (meta.get("final_output") or "").strip()
     for step in steps:
         round_no = step.get("round", "?")
-        thought = step.get("thought")
+        thought = (step.get("thought") or "").strip()
+        if conclusion_text and thought == conclusion_text and len(thought) > 400:
+            thought = thought[:90].rstrip() + "… (full answer in the conclusion)"
         if thought:
-            lines.append(f"    Note over A: round {round_no}: {mermaid_label(thought, limit=64)}")
+            lines.append(f"    Note over A: round {round_no}: {mermaid_label(thought, limit=110)}")
         calls = step.get("tool_calls", [])
         if not calls:
             lines.append(f"    A-->>U: round {round_no}: no tool call")
@@ -214,21 +220,322 @@ def render_mermaid_sequence_comparison(
 
 # --- HTML -----------------------------------------------------------------
 
+BLOCK_BULLET = re.compile(r"[-*+][ \t]+(?=[A-Za-z\u4e00-\u9fff])")
+BLOCK_NUMBER = re.compile(r"\d{1,2}[.)][ \t]+(?=[A-Za-z\u4e00-\u9fff])")
+BLOCK_HEADING = re.compile(r"#{1,6}(?=\s)")
+BLOCK_RULE = re.compile(r"-{3,}(?=\s|$)")
+# A block marker that is immediately preceded by one of these is mid-sentence
+# punctuation, not the start of a block.
+NOT_A_BOUNDARY = "(["
+
+
+def normalise_markdown(text: str) -> str:
+    """Put block-level markdown back on its own lines.
+
+    Models frequently return an entire answer as one long line, with the block
+    structure implied by markers rather than by newlines::
+
+        ## Answer **Reasoning:** ... **Numbers used:** - euro: 1 - abc: 2
+
+    A block parser cannot see any of that, so the answer renders as one dense
+    paragraph and markers meant as formatting show up literally.
+
+    Written as a left-to-right scanner rather than a set of regex substitutions.
+    Three substitution-based attempts each fixed the target case and broke
+    something else — an inline table shredded into one cell per line, the "2" in
+    "(id 2)" read as an ordered-list marker, and well-formed tables and lists
+    damaged by boundaries matching at position zero. A scanner makes the rule
+    explicit and the failures visible.
+
+    The rule: a block marker becomes a line of its own when the preceding
+    character is beyond doubt a sentence boundary — whitespace (or the start of
+    the text) immediately after ``. ! ? : ;`` — and anything else is left alone.
+    """
+    if not text:
+        return text
+
+    # Protect fenced blocks: their contents must never be reflowed.
+    fences: list[str] = []
+
+    def _stash(match: re.Match) -> str:
+        fences.append(match.group(0))
+        return f"\x00FENCE{len(fences) - 1}\x00"
+
+    text = re.sub(r"```.*?```", _stash, text, flags=re.DOTALL)
+
+    out: list[str] = []
+    for line in text.split("\n"):
+        if "\x00FENCE" in line:
+            out.append(line)
+            continue
+        out.extend(_split_inline_blocks(line))
+
+    text = "\n".join(out)
+    for index, fence in enumerate(fences):
+        text = text.replace(f"\x00FENCE{index}\x00", fence)
+
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text
+
+
+def _at_sentence_boundary(line: str, position: int) -> bool:
+    """True when a marker starting at ``position`` begins a new block.
+
+    Position 0 always qualifies: the line already starts there, so splitting is
+    a no-op and well-formed input is returned unchanged.
+    """
+    if position == 0:
+        return True
+    if line[position - 1] not in " \t":
+        return False
+
+    back = position - 2
+    while back >= 0 and line[back] in " \t":
+        back -= 1
+    # Closing markdown punctuation belongs to the previous run, not to the
+    # boundary: in "**Numbers used:** - item" the character before the bullet is
+    # the closing '*', and the sentence boundary is the ':' behind it.
+    while back >= 0 and line[back] in "*_`":
+        back -= 1
+        while back >= 0 and line[back] in " \t":
+            back -= 1
+
+    if back < 0:
+        return True                      # only indentation before it
+    if line[back] in "([":
+        return False                     # "(id 2)" and "[1. x]" are not blocks
+    if line[back] == "." and back + 1 < len(line) and line[back + 1].isdigit():
+        # A dot inside a number is not a sentence ending, so "score 72.0 - ABC"
+        # keeps its hyphen. Decimal points are common in this domain — scores,
+        # prices, percentages — and the false split was visible.
+        return False
+    return line[back] in ".!?:;"
+
+
+def _split_inline_blocks(line: str) -> list[str]:
+    """Split one line at every inline block marker that starts a block."""
+    markers = list(BLOCK_HEADING.finditer(line))
+    markers += list(BLOCK_BULLET.finditer(line))
+    markers += list(BLOCK_NUMBER.finditer(line))
+    markers += list(BLOCK_RULE.finditer(line))
+
+    starts = sorted(
+        {match.start() for match in markers if _at_sentence_boundary(line, match.start())}
+    )
+    if not starts:
+        return [line]
+
+    pieces: list[str] = []
+    cursor = 0
+    for start in starts:
+        piece = line[cursor:start].strip()
+        if piece:
+            pieces.append(piece)
+        cursor = start
+    tail = line[cursor:].strip()
+    if tail:
+        pieces.append(tail)
+    return pieces or [line]
+
+
+def render_markdown(text: str) -> str:
+    """Render the model's markdown to HTML, safely.
+
+    The whole string is escaped **first**, then a small subset of markdown is
+    converted. Escaping first is what makes this safe: any HTML the model emits
+    is already inert by the time structure is added, so there is no sanitiser to
+    get wrong and no dependency to keep patched.
+
+    The subset is what agents actually produce: headings, bold, inline code,
+    fenced blocks, bullet and numbered lists, tables, and horizontal rules.
+    Anything unrecognised passes through as escaped text, which is the honest
+    failure mode — the conclusion is the part a human reads, and showing it with
+    literal `**` is worse than showing it plainly.
+    """
+    if not text:
+        return ""
+
+    escaped = html.escape(normalise_markdown(text))
+
+    # Fenced blocks first, so their contents are not processed as markdown.
+    blocks: list[str] = []
+
+    def _stash(match: re.Match) -> str:
+        blocks.append(match.group(1))
+        return f"\x00BLOCK{len(blocks) - 1}\x00"
+
+    escaped = re.sub(r"```[a-zA-Z0-9]*\n(.*?)```", _stash, escaped, flags=re.DOTALL)
+
+    lines = escaped.split("\n")
+    out: list[str] = []
+    list_stack: list[str] = []       # "ul" or "ol"
+    in_table = False
+    table_rows: list[list[str]] = []
+
+    def close_list() -> None:
+        while list_stack:
+            out.append(f"</{list_stack.pop()}>")
+
+    def flush_table() -> None:
+        nonlocal in_table, table_rows
+        if not in_table:
+            return
+        if table_rows:
+            head, *body = table_rows
+            out.append("<table><thead><tr>")
+            out.extend(f"<th>{cell}</th>" for cell in head)
+            out.append("</tr></thead><tbody>")
+            for row in body:
+                out.append("<tr>")
+                out.extend(f"<td>{cell}</td>" for cell in row)
+                out.append("</tr>")
+            out.append("</tbody></table>")
+        in_table = False
+        table_rows = []
+
+    for line in lines:
+        stripped = line.strip()
+
+        # Tables: a row of pipes, with the separator row dropped.
+        if stripped.startswith("|") and stripped.endswith("|"):
+            cells = [c.strip() for c in stripped.strip("|").split("|")]
+            if all(set(c) <= set("-: ") for c in cells):
+                continue                       # the |---|---| separator
+            close_list()
+            in_table = True
+            table_rows.append(cells)
+            continue
+        flush_table()
+
+        # Headings.
+        heading = re.match(r"^(#{1,6})\s+(.*)$", stripped)
+        if heading:
+            close_list()
+            level = min(len(heading.group(1)) + 1, 6)   # h1 stays the page title
+            out.append(f"<h{level}>{heading.group(2)}</h{level}>")
+            continue
+
+        # Horizontal rule.
+        if re.fullmatch(r"(-{3,}|\*{3,}|_{3,})", stripped):
+            close_list()
+            out.append("<hr/>")
+            continue
+
+        # Bullet list.
+        bullet = re.match(r"^[-*+]\s+(.*)$", stripped)
+        if bullet:
+            if not list_stack or list_stack[-1] != "ul":
+                close_list()
+                list_stack.append("ul")
+                out.append("<ul>")
+            out.append(f"<li>{bullet.group(1)}</li>")
+            continue
+
+        # Numbered list.
+        numbered = re.match(r"^\d+[.)]\s+(.*)$", stripped)
+        if numbered:
+            if not list_stack or list_stack[-1] != "ol":
+                close_list()
+                list_stack.append("ol")
+                out.append("<ol>")
+            out.append(f"<li>{numbered.group(1)}</li>")
+            continue
+
+        close_list()
+
+        if not stripped:
+            continue
+        # A stashed code block is already a block element and must not be wrapped
+        # in a paragraph — <p><pre> is invalid and browsers reparent it.
+        if stripped.startswith("\x00BLOCK"):
+            out.append(stripped)
+            continue
+
+        out.append(f"<p>{stripped}</p>")
+
+    close_list()
+    flush_table()
+
+    result = "\n".join(out)
+
+    # Inline formatting, applied after block structure.
+    result = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", result)
+    result = re.sub(r"(?<![\w*])\*([^*\n]+)\*(?![\w*])", r"<em>\1</em>", result)
+    result = re.sub(r"`([^`\n]+)`", r"<code>\1</code>", result)
+
+    for index, block in enumerate(blocks):
+        result = result.replace(f"\x00BLOCK{index}\x00", f'<pre class="md-block">{block}</pre>')
+
+    return result
+
+
+def derive_stats(steps: list[dict], meta: Optional[dict] = None) -> dict:
+    """Compute the summary numbers from the trace itself.
+
+    The standalone trace page is rendered from a stored run's trace, which
+    carries only the steps — not the counts. Defaulting those to zero produced a
+    header that read "rounds 0, tool calls 0" while the diagram beneath it drew
+    ten tool calls. Deriving them from the steps is both correct and impossible
+    to get out of step with what is displayed.
+
+    Refused calls are excluded from the tool path, matching AgentRun.tool_sequence:
+    a call that never ran did not shape the run.
+    """
+    meta = meta or {}
+    executed = [
+        call.get("name")
+        for step in steps
+        for call in step.get("tool_calls", [])
+        if not call.get("refused_reason")
+    ]
+    refused = sum(
+        1 for step in steps for call in step.get("tool_calls", []) if call.get("refused_reason")
+    )
+    return {
+        "rounds": meta.get("rounds") or len(steps),
+        "tool_calls": meta.get("tool_calls") or len(executed),
+        "refused_calls": meta.get("refused_calls") or refused,
+        "tool_sequence": meta.get("tool_sequence") or executed,
+        "prompt_tokens": meta.get("prompt_tokens", 0),
+        "completion_tokens": meta.get("completion_tokens", 0),
+        "elapsed": meta.get("elapsed", 0),
+    }
+
+
 def render_html(run: Any, *, title: Optional[str] = None) -> str:
     """Standalone page: sequence diagram plus a per-round timeline."""
     meta = _meta(run)
     steps = _steps(run)
+    stats_data = derive_stats(steps, meta)
     heading = html.escape(title or meta.get("goal") or "Agent run")
     diagram = html.escape(render_mermaid_sequence(run, title=title))
 
     rows = []
+    # The final round's text is the conclusion, already rendered in full above.
+    # Echoing 3,000 characters of prose verbatim in the timeline is noise, so a
+    # long final thought is trimmed to its opening and the reader is pointed up.
+    conclusion_text = (meta.get("final_output") or "").strip()
     for step in steps:
+        thought = (step.get("thought") or "").strip()
+        if conclusion_text and thought == conclusion_text and len(thought) > 400:
+            shown = html.escape(thought[:400].rstrip()) + "…"
+            thought_html = (
+                f'<div class="thought">{shown}</div>'
+                '<div class="thought-note">The full answer is the conclusion above.</div>'
+            )
+        else:
+            thought_html = (
+                f'<div class="thought">{html.escape(thought)}</div>' if thought
+                else '<div class="thought muted"><em>no text</em></div>'
+            )
+
         calls = step.get("tool_calls", [])
         if calls:
             call_html = "".join(
                 f"""<div class="call {'ok' if c.get('ok') else 'bad'}">
                       <div class="call-head">
                         <span class="tool">{html.escape(str(c.get('name', '?')))}</span>
+                        {f'<span class="refused">refused: {html.escape(str(c.get("refused_reason")))}</span>' if c.get("refused_reason") else ''}
                         <span class="elapsed">{c.get('elapsed', 0)}s</span>
                       </div>
                       <pre class="args">{html.escape(str(c.get('arguments', {})))}</pre>
@@ -242,23 +549,48 @@ def render_html(run: Any, *, title: Optional[str] = None) -> str:
         rows.append(
             f"""<li>
                   <div class="round">Round {html.escape(str(step.get('round', '?')))}</div>
-                  <div class="thought">{html.escape(str(step.get('thought') or '')) or '<em>no text</em>'}</div>
+                  {thought_html}
                   {call_html}
                 </li>"""
         )
 
-    tool_sequence = " → ".join(mermaid_label(x, limit=30) for x in meta.get("tool_sequence", [])) or "(none)"
+    tool_sequence = " → ".join(
+        mermaid_label(x, limit=30) for x in stats_data["tool_sequence"]
+    ) or "(none)"
     stats = [
         ("status", meta.get("status", "?")),
         ("stop reason", meta.get("stop_reason", "")),
-        ("rounds", meta.get("rounds", 0)),
-        ("tool calls", meta.get("tool_calls", 0)),
-        ("tokens", f"{meta.get('prompt_tokens', 0)} in / {meta.get('completion_tokens', 0)} out"),
-        ("elapsed", f"{meta.get('elapsed', 0)}s"),
+        ("rounds", stats_data["rounds"]),
+        ("tool calls", stats_data["tool_calls"]),
+        (
+            "tokens",
+            f"{stats_data['prompt_tokens']} in / {stats_data['completion_tokens']} out",
+        ),
+        ("elapsed", f"{stats_data['elapsed']}s"),
     ]
+    if stats_data["refused_calls"]:
+        stats.insert(4, ("refused", stats_data["refused_calls"]))
     stats_html = "".join(
         f"<div><dt>{html.escape(str(k))}</dt><dd>{html.escape(str(v))}</dd></div>" for k, v in stats
     )
+
+    # The conclusion is what a human actually reads. Rendering it as escaped text
+    # left literal '##' and '**' on the page, which reads as an error rather than
+    # as a result.
+    conclusion = (meta.get("final_output") or "").strip()
+    if conclusion:
+        conclusion_html = (
+            '<section class="conclusion"><h2>Conclusion</h2>'
+            f'<div class="md">{render_markdown(conclusion)}</div></section>'
+        )
+    elif meta.get("status") and meta.get("status") != "succeeded":
+        conclusion_html = (
+            f'<section class="conclusion empty">No conclusion: the run ended '
+            f'{html.escape(str(meta.get("status")))} '
+            f'({html.escape(str(meta.get("stop_reason") or "no reason recorded"))}).</section>'
+        )
+    else:
+        conclusion_html = ""
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -286,6 +618,8 @@ def render_html(run: Any, *, title: Optional[str] = None) -> str:
         padding: 0 0 1.1rem 1.1rem; margin: 0 0 1.1rem; }}
   .round {{ font-weight: 700; font-size: .8rem; letter-spacing: .06em; text-transform: uppercase; opacity: .6; }}
   .thought {{ margin: .35rem 0 .6rem; }}
+  .thought-note {{ font-size: .85rem; opacity: .6; font-style: italic; margin: -.3rem 0 .6rem; }}
+  .refused {{ font-size: .75rem; color: #d33; font-weight: 600; }}
   .call {{ border-radius: 8px; padding: .55rem .75rem; margin: .4rem 0;
            background: color-mix(in srgb, currentColor 5%, transparent); }}
   .call.bad {{ background: color-mix(in srgb, #d33 14%, transparent); }}
@@ -297,6 +631,30 @@ def render_html(run: Any, *, title: Optional[str] = None) -> str:
         margin: .3rem 0 0; max-height: 16rem; overflow: auto; }}
   .args {{ opacity: .72; }}
   code {{ font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }}
+  .conclusion {{ border-left: 3px solid #409eff;
+                 background: color-mix(in srgb, currentColor 5%, transparent);
+                 border-radius: 8px; padding: .9rem 1.2rem; margin: 0 0 2rem; }}
+  .conclusion h2 {{ font-size: .8rem; letter-spacing: .06em; text-transform: uppercase;
+                    opacity: .6; margin: 0 0 .6rem; }}
+  .conclusion.empty {{ border-left-color: #e6a23c; opacity: .8; font-style: italic; }}
+  .md {{ font-size: 15px; line-height: 1.65; }}
+  .md h2, .md h3, .md h4 {{ margin: 1.1rem 0 .4rem; line-height: 1.3; }}
+  .md h2 {{ font-size: 1.05rem; }}
+  .md h3 {{ font-size: .97rem; }}
+  .md p {{ margin: .5rem 0; }}
+  .md ul, .md ol {{ margin: .4rem 0 .6rem; padding-left: 1.3rem; }}
+  .md li {{ margin: .2rem 0; }}
+  .md code {{ background: color-mix(in srgb, currentColor 8%, transparent);
+              padding: .1em .35em; border-radius: 4px; font-size: .87em; }}
+  .md .md-block {{ background: color-mix(in srgb, currentColor 6%, transparent);
+                   padding: .7rem .9rem; border-radius: 6px; overflow-x: auto;
+                   font-size: .85rem; white-space: pre-wrap; }}
+  .md table {{ border-collapse: collapse; margin: .7rem 0; font-size: .9rem; }}
+  .md th, .md td {{ border: 1px solid color-mix(in srgb, currentColor 18%, transparent);
+                    padding: .3rem .6rem; text-align: left; }}
+  .md th {{ background: color-mix(in srgb, currentColor 6%, transparent); }}
+  .md hr {{ border: 0; border-top: 1px solid color-mix(in srgb, currentColor 15%, transparent);
+            margin: 1rem 0; }}
 </style>
 </head>
 <body>
@@ -304,6 +662,7 @@ def render_html(run: Any, *, title: Optional[str] = None) -> str:
   <p class="sub">tool path: <code>{html.escape(tool_sequence)}</code></p>
   <dl>{stats_html}</dl>
   <div class="seq"><pre class="mermaid">{diagram}</pre></div>
+  {conclusion_html}
   <ol>{''.join(rows)}</ol>
 </body>
 </html>"""

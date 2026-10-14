@@ -129,7 +129,7 @@
 
       <div v-if="result.final_output" class="conclusion">
         <p class="section-label">结论</p>
-        <div class="conclusion-body">{{ result.final_output }}</div>
+        <div class="md" v-html="renderMarkdown(result.final_output)"></div>
       </div>
       <el-alert v-else-if="!result.did_investigate" type="warning" :closable="false" show-icon
         title="这次运行没有调用任何工具就给出了答复" />
@@ -195,7 +195,7 @@
 
         <div v-if="selected.final_output" class="conclusion" style="margin-top: 16px">
           <p class="section-label">结论</p>
-          <div class="conclusion-body">{{ selected.final_output }}</div>
+          <div class="md" v-html="renderMarkdown(selected.final_output)"></div>
         </div>
 
         <p class="section-label" style="margin-top: 16px">执行路径</p>
@@ -217,6 +217,7 @@ import { onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 
 import { runApi } from '../api'
+import { renderMarkdown } from '../utils/markdown'
 import TraceDiagram from '../components/TraceDiagram.vue'
 import TraceTimeline from '../components/TraceTimeline.vue'
 
@@ -332,6 +333,45 @@ onMounted(() => {
   line-height: 1.65;
   color: #303133;
 }
+/* Rendered agent markdown. Kept in step with the standalone trace page. */
+.md {
+  font-size: 14px;
+  line-height: 1.65;
+  color: #303133;
+  word-break: break-word;
+}
+.md :deep(h2),
+.md :deep(h3),
+.md :deep(h4) {
+  margin: 1rem 0 0.35rem;
+  line-height: 1.3;
+}
+.md :deep(h2) { font-size: 1.02rem; }
+.md :deep(h3) { font-size: 0.95rem; }
+.md :deep(p) { margin: 0.45rem 0; }
+.md :deep(ul),
+.md :deep(ol) { margin: 0.35rem 0 0.55rem; padding-left: 1.25rem; }
+.md :deep(li) { margin: 0.18rem 0; }
+.md :deep(code) {
+  background: #eef1f6;
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
+  font-size: 0.88em;
+}
+.md :deep(pre.md-block) {
+  background: #f5f7fa;
+  border: 1px solid #ebeef5;
+  padding: 0.7rem 0.9rem;
+  border-radius: 6px;
+  overflow-x: auto;
+  font-size: 0.85rem;
+  white-space: pre-wrap;
+}
+.md :deep(table) { border-collapse: collapse; margin: 0.6rem 0; font-size: 0.9rem; }
+.md :deep(th),
+.md :deep(td) { border: 1px solid #dcdfe6; padding: 0.3rem 0.6rem; text-align: left; }
+.md :deep(th) { background: #f5f7fa; }
+.md :deep(hr) { border: 0; border-top: 1px solid #dcdfe6; margin: 0.9rem 0; }
 .goal-cell {
   display: inline-block;
   max-width: 340px;

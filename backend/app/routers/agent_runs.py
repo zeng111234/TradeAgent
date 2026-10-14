@@ -21,7 +21,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.loop import AgentBudget
-from app.agent.render import render_html, render_mermaid_sequence
+from app.agent.render import derive_stats, render_html, render_mermaid_sequence
 from app.agent.repository import get_run, list_runs, trace_of
 from app.agent.service import (
     DEFAULT_BUDGET,
@@ -140,22 +140,27 @@ async def api_agent_runs(limit: int = 20, status: Optional[str] = None,
                          db: AsyncSession = Depends(get_db)):
     """Recent runs, newest first. The audit trail."""
     rows = await list_runs(db, limit=limit, status=status)
-    return {
-        "count": len(rows),
-        "runs": [
+    listing = []
+    for row in rows:
+        steps = trace_of(row)
+        stats = derive_stats(steps)
+        listing.append(
             {
-                "run_id": r.run_id,
-                "goal": r.goal,
-                "status": r.status,
-                "stop_reason": r.stop_reason,
-                "rounds": r.rounds,
-                "tool_calls": r.tool_calls,
-                "elapsed_ms": r.elapsed,
-                "created_at": r.created_at.isoformat() if r.created_at else None,
+                "run_id": row.run_id,
+                "goal": row.goal,
+                "status": row.status,
+                "stop_reason": row.stop_reason,
+                # Derived from the trace, so the path shown for a run cannot
+                # disagree with the trace you open for it.
+                "tool_sequence": stats["tool_sequence"],
+                "rounds": stats["rounds"],
+                "tool_calls": stats["tool_calls"],
+                "refused_calls": stats["refused_calls"],
+                "elapsed_ms": row.elapsed,
+                "created_at": row.created_at.isoformat() if row.created_at else None,
             }
-            for r in rows
-        ],
-    }
+        )
+    return {"count": len(listing), "runs": listing}
 
 
 @router.get("/runs/{run_id}")
@@ -202,10 +207,21 @@ async def api_agent_run_html(run_id: str, db: AsyncSession = Depends(get_db)):
     if row is None:
         raise HTTPException(status_code=404, detail=f"no run with id {run_id}")
 
+    trace = trace_of(row)
+    stats = derive_stats(trace)
+    # Pass the derived numbers through so the rendered header agrees with the
+    # timeline below it and with the listing the user clicked from.
     page = render_html({
         "goal": row.goal,
         "status": row.status,
         "stop_reason": row.stop_reason,
-        "steps": trace_of(row),
+        # Without this the conclusion section rendered empty, and it is the part
+        # a human actually reads.
+        "final_output": row.final_output or "",
+        "steps": trace,
+        **stats,
+        "elapsed": row.elapsed / 1000.0 if row.elapsed else 0,
+        "prompt_tokens": row.prompt_tokens,
+        "completion_tokens": row.completion_tokens,
     })
     return HTMLResponse(content=page)
