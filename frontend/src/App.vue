@@ -37,6 +37,10 @@
           <el-icon><MagicStick /></el-icon>
           <span>AI Agent</span>
         </el-menu-item>
+        <el-menu-item index="/runs">
+          <el-icon><Guide /></el-icon>
+          <span>运行轨迹</span>
+        </el-menu-item>
       </el-menu>
       <div class="sidebar-footer">
         <p>TradeAgent v1.0</p>

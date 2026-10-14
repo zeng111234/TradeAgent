@@ -97,4 +97,17 @@ export const schedulerApi = {
   runDaily: (params) => api.post('/scheduler/run-daily', null, { params }),
 }
 
+// --- Agent runs (goal-driven, bounded, fully traced) ---
+export const runApi = {
+  // What the agent may and may not do. The boundary is published rather than
+  // left to be inferred.
+  capabilities: () => api.get('/agent/capabilities'),
+  // Synchronous: holds until the run finishes or hits its wall-clock budget.
+  run: (data) => api.post('/agent/run', data),
+  list: (params) => api.get('/agent/runs', { params }),
+  get: (runId) => api.get(`/agent/runs/${runId}`),
+  // Standalone HTML page, openable in a new tab without this frontend.
+  traceUrl: (runId) => `/api/v1/agent/runs/${runId}/trace.html`,
+}
+
 export default api
