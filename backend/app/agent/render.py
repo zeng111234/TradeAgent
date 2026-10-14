@@ -192,7 +192,9 @@ def render_mermaid_sequence_comparison(
                 if call.get("name") not in all_tools:
                     all_tools.append(call.get("name"))
     for name in all_tools:
-        lines.append(f"    participant {mermaid_id(name)} as {mermaid_label(name, limit=24)}")
+        # Tool names are already identifiers; no need to ellipse them, and a
+        # long name must stay readable because it is the participant's label.
+        lines.append(f"    participant {mermaid_id(name)} as {mermaid_label(name, limit=120)}")
 
     for label, steps, meta in entries:
         lines.append(f"    Note over U,A: {mermaid_label(label, limit=60)}")

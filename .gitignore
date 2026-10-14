@@ -20,6 +20,9 @@ ENV/
 .coverage
 htmlcov/
 
+# Generated agent-run artefacts (reproduce with scripts/demo_agent_run.py)
+artifacts/agent-demo/
+
 # Environment
 .env
 *.env.local
