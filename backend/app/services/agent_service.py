@@ -304,24 +304,27 @@ async def daily_follow_up_intelligence(db_session=None) -> dict:
     if not db_session:
         return {"error": "Database session required", "actions": []}
 
-    from sqlalchemy import select, or_, and_
+    from sqlalchemy import select
     from app.models.customer import Customer, CustomerContact
-    from app.models.email_log import EmailLog, EmailStatus
-    from datetime import datetime, timedelta
+    from app.models.email_log import EmailLog
+    from datetime import datetime
 
+    from app.services.follow_up_policy import (
+        FollowUpPolicy,
+        assess_follow_up,
+        days_between,
+    )
+
+    policy = FollowUpPolicy()
     now = datetime.utcnow()
     actions = []
 
-    # 1. Find customers that need follow-up (contacted but no reply in 3+ days)
     result = await db_session.execute(
-        select(Customer).where(
-            Customer.stage.in_(["contacted", "interested", "quoting"])
-        )
+        select(Customer).where(Customer.stage.in_(list(policy.stages_in_play)))
     )
     customers = result.scalars().all()
 
     for c in customers:
-        # Check last email
         email_result = await db_session.execute(
             select(EmailLog)
             .where(EmailLog.customer_id == c.id)
@@ -330,54 +333,36 @@ async def daily_follow_up_intelligence(db_session=None) -> dict:
         )
         last_email = email_result.scalar_one_or_none()
 
-        priority = "low"
-        reason = ""
-        suggested_action = ""
+        decision = assess_follow_up(
+            stage=c.stage.value if hasattr(c.stage, "value") else str(c.stage),
+            days_since_last_email=days_between(now, last_email.created_at) if last_email else None,
+            has_any_email=last_email is not None,
+            policy=policy,
+        )
+        if decision is None:
+            continue
 
-        if c.stage == "quoting":
-            priority = "high"
-            reason = f"In quoting stage - follow up on quote for {c.company_name}"
-            suggested_action = "Follow up on quoted price, ask if they need samples"
-        elif c.stage == "interested":
-            priority = "medium"
-            reason = f"Customer showed interest - keep momentum"
-            suggested_action = "Send product details or case studies"
-        elif c.stage == "contacted":
-            if last_email and (now - last_email.created_at).days >= 3:
-                priority = "high"
-                reason = f"No reply in {(now - last_email.created_at).days} days"
-                suggested_action = "Send a follow-up email with different angle"
-            elif not last_email:
-                priority = "medium"
-                reason = f"Marked as contacted but no email record"
-                suggested_action = "Send initial outreach email"
-            else:
-                priority = "low"
-                reason = f"Recently contacted, wait for reply"
-                suggested_action = "Wait 2 more days before follow-up"
+        priority, reason, suggested_action = decision
 
-        if reason:
-            # Get primary contact
-            contact_result = await db_session.execute(
-                select(CustomerContact)
-                .where(CustomerContact.customer_id == c.id, CustomerContact.is_primary == 1)
-                .limit(1)
-            )
-            contact = contact_result.scalar_one_or_none()
+        contact_result = await db_session.execute(
+            select(CustomerContact)
+            .where(CustomerContact.customer_id == c.id, CustomerContact.is_primary == 1)
+            .limit(1)
+        )
+        contact = contact_result.scalar_one_or_none()
 
-            actions.append({
-                "customer_id": c.id,
-                "company_name": c.company_name,
-                "stage": c.stage,
-                "priority": priority,
-                "reason": reason,
-                "suggested_action": suggested_action,
-                "contact_email": contact.email if contact else None,
-                "contact_name": contact.name if contact else None,
-                "last_contacted": last_email.created_at.isoformat() if last_email else None,
-            })
+        actions.append({
+            "customer_id": c.id,
+            "company_name": c.company_name,
+            "stage": c.stage.value if hasattr(c.stage, "value") else str(c.stage),
+            "priority": priority,
+            "reason": reason,
+            "suggested_action": suggested_action,
+            "contact_email": contact.email if contact else None,
+            "contact_name": contact.name if contact else None,
+            "last_contacted": last_email.created_at.isoformat() if last_email else None,
+        })
 
-    # Sort by priority
     priority_order = {"high": 0, "medium": 1, "low": 2}
     actions.sort(key=lambda x: priority_order.get(x["priority"], 3))
 
@@ -747,107 +732,82 @@ async def customer_churn_alerts(db_session=None) -> dict:
     from app.models.email_log import EmailLog, EmailStatus
     from datetime import datetime, timedelta
 
+    from sqlalchemy import select
+    from app.models.customer import Customer, CustomerContact
+    from app.models.email_log import EmailLog
+    from datetime import datetime
+
+    from app.services.follow_up_policy import (
+        ChurnPolicy,
+        assess_churn,
+        days_between,
+    )
+
+    policy = ChurnPolicy()
     now = datetime.utcnow()
     alerts = []
 
-    # Get all active customers (not completed or lost)
     result = await db_session.execute(
-        select(Customer).where(
-            Customer.stage.notin_(["completed", "lost"])
-        )
+        select(Customer).where(Customer.stage.notin_(list(("completed", "lost"))))
     )
     customers = result.scalars().all()
 
     for c in customers:
-        risk_level = None
-        risk_reasons = []
-        suggested_actions = []
-
-        # Get email stats for this customer
         email_result = await db_session.execute(
-            select(EmailLog).where(EmailLog.customer_id == c.id).order_by(EmailLog.created_at.desc())
+            select(EmailLog)
+            .where(EmailLog.customer_id == c.id)
+            .order_by(EmailLog.created_at.desc())
         )
         all_emails = email_result.scalars().all()
         last_email = all_emails[0] if all_emails else None
-        total_sent = len([e for e in all_emails if e.status in ("SENT", "OPENED", "REPLIED")])
-        total_replies = len([e for e in all_emails if e.status == "REPLIED"])
 
-        # Risk Factor 1: No contact at all
-        if c.stage == "new" and (now - c.created_at).days > 7:
-            risk_level = "high"
-            risk_reasons.append(f"New customer created {(now - c.created_at).days} days ago, never contacted")
-            suggested_actions.append("Send initial outreach email immediately")
+        def _status(value) -> str:
+            return value.value if hasattr(value, "value") else str(value or "")
 
-        # Risk Factor 2: No reply after multiple emails
-        if total_sent >= 3 and total_replies == 0:
-            risk_level = "critical"
-            risk_reasons.append(f"Sent {total_sent} emails, received 0 replies")
-            suggested_actions.append("Try a different channel (WhatsApp, phone) or change email approach")
-        elif total_sent >= 2 and total_replies == 0:
-            risk_level = "high"
-            risk_reasons.append(f"Sent {total_sent} emails, no reply yet")
-            suggested_actions.append("Send a follow-up with different angle or value proposition")
+        sent_states = ("sent", "delivered", "opened", "replied")
+        total_sent = len([e for e in all_emails if _status(e.status) in sent_states])
+        total_replies = len([e for e in all_emails if _status(e.status) == "replied"])
 
-        # Risk Factor 3: Long time no contact
         last_contact = c.last_contacted_at or (last_email.created_at if last_email else None)
-        if last_contact:
-            days_since = (now - last_contact).days
-            if c.stage in ("interested", "quoting") and days_since > 14:
-                risk_level = "critical"
-                risk_reasons.append(f"Hot lead gone cold - no contact for {days_since} days in {c.stage} stage")
-                suggested_actions.append("Urgent: Call or WhatsApp immediately, then follow up with email")
-            elif c.stage == "contacted" and days_since > 21:
-                risk_level = "high"
-                risk_reasons.append(f"No response for {days_since} days after initial contact")
-                suggested_actions.append("Try re-engagement email with new product offer or discount")
-            elif days_since > 30:
-                risk_level = "medium"
-                risk_reasons.append(f"No contact for {days_since} days - customer may have moved on")
-                suggested_actions.append("Send a check-in email with industry news or new products")
+        stage_ref = c.updated_at or c.created_at
 
-        # Risk Factor 4: Stuck in stage
-        if c.stage == "quoting" and (now - (c.updated_at or c.created_at)).days > 14:
-            risk_level = "high"
-            risk_reasons.append("Stuck in quoting stage for over 2 weeks")
-            suggested_actions.append("Follow up on the quote - ask if they need samples or have concerns")
-        elif c.stage == "sample" and (now - (c.updated_at or c.created_at)).days > 21:
-            risk_level = "high"
-            risk_reasons.append("Sample sent but no feedback for over 3 weeks")
-            suggested_actions.append("Follow up on sample - ask about quality and next steps")
+        assessment = assess_churn(
+            stage=_status(c.stage),
+            created_days_ago=days_between(now, c.created_at),
+            days_since_contact=days_between(now, last_contact),
+            days_in_stage=days_between(now, stage_ref),
+            emails_sent=total_sent,
+            emails_replied=total_replies,
+            last_email_unopened=bool(last_email) and _status(last_email.status) == "sent",
+            last_email_days_ago=days_between(now, last_email.created_at) if last_email else None,
+            policy=policy,
+        )
+        if not assessment.at_risk:
+            continue
 
-        # Risk Factor 5: Quoted price but went silent
-        if c.stage == "quoting" and last_email and (now - last_email.created_at).days > 7:
-            unread = last_email.status == "SENT"
-            if unread:
-                risk_reasons.append("Quote email sent but not opened")
-                suggested_actions.append("Resend with different subject line or try WhatsApp")
+        contact_result = await db_session.execute(
+            select(CustomerContact)
+            .where(CustomerContact.customer_id == c.id, CustomerContact.is_primary == 1)
+            .limit(1)
+        )
+        contact = contact_result.scalar_one_or_none()
 
-        if risk_level:
-            # Get primary contact
-            contact_result = await db_session.execute(
-                select(CustomerContact)
-                .where(CustomerContact.customer_id == c.id, CustomerContact.is_primary == 1)
-                .limit(1)
-            )
-            contact = contact_result.scalar_one_or_none()
+        alerts.append({
+            "customer_id": c.id,
+            "company_name": c.company_name,
+            "stage": _status(c.stage),
+            "country": c.country,
+            "risk_level": assessment.level,
+            "risk_reasons": assessment.reasons,
+            "suggested_actions": assessment.actions,
+            "contact_email": contact.email if contact else None,
+            "contact_name": contact.name if contact else None,
+            "last_contacted": last_contact.isoformat() if last_contact else None,
+            "emails_sent": total_sent,
+            "emails_replied": total_replies,
+            "days_in_stage": days_between(now, stage_ref) or 0,
+        })
 
-            alerts.append({
-                "customer_id": c.id,
-                "company_name": c.company_name,
-                "stage": c.stage,
-                "country": c.country,
-                "risk_level": risk_level,
-                "risk_reasons": risk_reasons,
-                "suggested_actions": suggested_actions,
-                "contact_email": contact.email if contact else None,
-                "contact_name": contact.name if contact else None,
-                "last_contacted": last_contact.isoformat() if last_contact else None,
-                "emails_sent": total_sent,
-                "emails_replied": total_replies,
-                "days_in_stage": (now - (c.updated_at or c.created_at)).days,
-            })
-
-    # Sort by risk level
     risk_order = {"critical": 0, "high": 1, "medium": 2, "low": 3}
     alerts.sort(key=lambda x: risk_order.get(x["risk_level"], 4))
 
