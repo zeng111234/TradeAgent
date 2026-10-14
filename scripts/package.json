@@ -1,0 +1,13 @@
+{
+  "name": "tradeagent-scripts",
+  "private": true,
+  "type": "module",
+  "description": "Verification tooling for generated artefacts. Not part of the app build.",
+  "scripts": {
+    "verify:mermaid": "node verify-mermaid.mjs"
+  },
+  "devDependencies": {
+    "dompurify": "^3.2.0",
+    "mermaid": "^11.4.0"
+  }
+}
