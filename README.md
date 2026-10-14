@@ -77,6 +77,16 @@ if score >= 40:         keep()
 - 轨迹渲染成 Mermaid 时序图 / 流程图 + 独立 HTML 页面
 - 全部落库，可回放、可审计
 
+### 6. 长任务不炸上下文
+- 上下文超预算时自动压缩：系统提示与最近几轮永不裁剪，只裁旧的工具输出
+- 裁掉的内容**写入磁盘并可读回**（`recall_observation`），不是丢掉
+- 裁剪幅度按缺口缩放；实在压不下去时报告 `unreachable`，不假装成功
+
+### 7. 子 agent 委派
+- `spawn_researcher` 把「读一大堆材料」这件事推到独立上下文里
+- 子 agent 拿到的工具表**去掉了写工具**，也去掉了委派工具，**深度上限 1**
+- 返回的是结论 + 证据来源，不是它的完整过程；子 agent 失败不会中断父 run
+
 ## Agent 权限边界
 
 **agent 可以调查、阅读、准备草稿。它不能发送。**
@@ -140,7 +150,7 @@ python scripts/demo_agent_run.py             # 两个不同目标 → 两条不�
 
 ```bash
 cd backend
-python -m pytest          # 232 个，约 2.5 秒，不需要网络
+python -m pytest          # 309 个，约 4 秒，不需要网络
 ```
 
 ## 环境变量
@@ -153,6 +163,7 @@ python -m pytest          # 232 个，约 2.5 秒，不需要网络
 | `SMTP_*` / `REPORT_EMAIL` | 可选 | 每日报告邮件；不配置则打印到 stdout |
 | `SCAN_KEYWORDS` / `SCAN_COUNTRIES` | 可选 | 每日扫描的关键词与市场 |
 | `SCAN_DRY_RUN` | 可选 | `1` = 不写文件、不发邮件 |
+| `AGENT_SPILL_DIR` | 可选 | 压缩时溢出的完整观察文本存放位置（默认系统临时目录） |
 
 ## 技术栈
 

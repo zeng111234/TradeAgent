@@ -192,8 +192,9 @@ goal a user might type.
 - **`agent_service.py` is not fully decomposed.** The churn and follow-up
   functions still carry hardcoded thresholds. They are reachable through their
   own endpoints and are next, not done.
-- **No sub-agents.** Delegation for context isolation is not implemented. See
-  the alignment notes below for what it would take.
+- **No sub-agents for the smallest runs.** Delegation is on by default but can be
+  turned off per run (`allow_delegation=False`), and a scan child cannot spawn
+  grandchildren.
 
 ## Alignment with production harnesses
 
@@ -285,18 +286,37 @@ claiming a bound it did not achieve.
   wrong. The trade-off is real, though — a whitelist cannot express "read-only
   except when the operator says otherwise", and adding such a tier is the
   obvious next step if the tool set grows.
-- **Sub-agents.** DSH has a first-class multi-provider delegation subsystem
-  (`default maxDepth: 1`, `maxActiveSubagents: 8`, `one-shot` or `continuable`);
-  Pi omits them on purpose. TradeAgent has neither, so delegation is the largest
-  remaining gap against DSH. The shape it would take is clear from the research:
-  a `spawn_researcher` tool with `maxDepth=1`, a read-only registry for the
-  child, the child's final answer returned as the tool result, and the parent's
-  context protected from the child's transcript.
+- **Sub-agents.** Implemented in `app/agent/subagent.py`. DSH has a first-class
+  multi-provider delegation subsystem (`maxDepth` default 1,
+  `maxActiveSubagents` 8, one-shot or continuable); Pi omits sub-agents on
+  purpose. This follows DSH on the parts that matter:
+  - **Depth is enforced, not advised.** `maxDepth` defaults to 1. At the cap the
+    tool stays *visible* and the call is refused with a reason — hiding it would
+    leave the model unable to tell that delegation exists but is exhausted.
+    `ToolRegistry.depth` is what makes this checkable rather than advisory.
+  - **A child gets its own registry**, built fresh from the parent's minus the
+    delegation tools and minus anything tagged `write`. A child that could reach
+    a scan's `save_prospects` would be writing into the parent's output from a
+    context the parent cannot see.
+  - **The child's final answer is the tool result**, plus a small
+    `how_it_was_established` block so the parent can weigh it. The child's
+    transcript stays in its own run record.
+  - **A child failure is a tool failure.** It cannot abort the parent.
 - **Event-sourced session log.** Both use durable, replayable histories (Pi a
   JSONL tree with branching; DSH an event-sourced log with crash repair). Here
   `AgentRun.trace` is a JSON column — enough to audit and render a run, not
   enough to resume one. Fine at this scale; the first thing to change if runs
   ever need to be long-lived.
+
+### Where this is deliberately simpler than DSH
+
+- **Sub-agents run sequentially, not concurrently.** DSH admits up to 8 live
+  children; here it is one at a time. Enough for the use case and it avoids a
+  class of interleaving bugs. The limit is a choice, not an oversight.
+- **No `continuable` children.** Every child is one-shot. A durable child that
+  can be steered later is a larger feature than this needs.
+- **No session `ask`/`never` policy.** See the approval note above: the
+  capability is absent from the registry, so there is nothing to approve.
 
 ## Reading order
 

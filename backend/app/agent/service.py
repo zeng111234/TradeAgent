@@ -64,6 +64,8 @@ class AgentResult:
     mermaid_sequence: str
     mermaid_flowchart: str
     html: str
+    # Sub-agent runs spawned by this one, if delegation was enabled.
+    delegations: Optional[dict] = None
 
     @property
     def status(self) -> str:
@@ -73,6 +75,8 @@ class AgentResult:
         payload = self.run.as_dict()
         payload["mermaid_sequence"] = self.mermaid_sequence
         payload["mermaid_flowchart"] = self.mermaid_flowchart
+        if self.delegations is not None:
+            payload["delegations"] = self.delegations
         return payload
 
 
@@ -126,6 +130,7 @@ async def execute(
     registry: Optional[ToolRegistry] = None,
     persist: bool = True,
     spill_dir: Optional[Path] = None,
+    allow_delegation: bool = True,
 ) -> AgentResult:
     """Run the agent and return a displayable result.
 
@@ -137,6 +142,16 @@ async def execute(
 
     client = llm or build_llm_client()
     tools = registry or build_registry()
+    spill = spill_dir if spill_dir is not None else spill_root()
+
+    # Delegation is opt-out rather than opt-in: the whole point is that a run
+    # which would otherwise drag every page it reads into one context can push
+    # the reading somewhere else. Depth 1, so a child cannot delegate again.
+    record = None
+    if allow_delegation:
+        from .subagent import attach_delegation
+
+        record = attach_delegation(tools, llm=client, spill_dir=spill)
 
     run = await run_agent(
         goal.strip(),
@@ -144,18 +159,21 @@ async def execute(
         tools,
         budget=budget or DEFAULT_BUDGET,
         context=context,
-        spill_dir=spill_dir if spill_dir is not None else spill_root(),
+        spill_dir=spill,
     )
 
     if persist:
         await _persist(run)
 
-    return AgentResult(
+    result = AgentResult(
         run=run,
         mermaid_sequence=render_mermaid_sequence(run),
         mermaid_flowchart=render_mermaid_flowchart(run),
         html=render_html(run),
     )
+    if record is not None:
+        result.delegations = record.as_dict()
+    return result
 
 
 async def _persist(run: AgentRun) -> None:

@@ -31,6 +31,20 @@ from .tools import (  # noqa: F401
     build_params_model,
     tool,
 )
+from .context import (  # noqa: F401
+    CompactionReport,
+    SpillStore,
+    build_recall_tool,
+    compact_messages,
+    estimate_tokens,
+)
+from .subagent import (  # noqa: F401
+    CHILD_BUDGET,
+    Delegation,
+    DelegationRecord,
+    attach_delegation,
+    build_child_registry,
+)
 
 __all__ = [
     "AgentBudget",
@@ -52,4 +66,14 @@ __all__ = [
     "ToolResult",
     "build_params_model",
     "tool",
+    "CompactionReport",
+    "SpillStore",
+    "build_recall_tool",
+    "compact_messages",
+    "estimate_tokens",
+    "CHILD_BUDGET",
+    "Delegation",
+    "DelegationRecord",
+    "attach_delegation",
+    "build_child_registry",
 ]

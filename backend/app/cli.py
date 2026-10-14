@@ -81,10 +81,31 @@ def _cmd_run(args: argparse.Namespace) -> int:
 
 
 def _cmd_tools(_args: argparse.Namespace) -> int:
-    from app.agent.service import build_registry
+    """List the tools the agent is offered, including the per-run ones.
+
+    `spawn_researcher` and `recall_observation` are attached when a run starts
+    rather than existing in the base registry, so listing only the base would
+    understate what the agent can do.
+    """
+    from app.agent.loop import AgentBudget, AgentLoop
+    from app.agent.service import build_registry, spill_root
+
+    class _NoModel:
+        """Registration needs a client, not a working one."""
+
+        async def chat(self, *args, **kwargs):  # pragma: no cover - never called
+            raise RuntimeError("the tool listing does not call a model")
 
     registry = build_registry()
-    print(f"{len(registry)} tools available to the agent\n")
+    from app.agent.subagent import attach_delegation
+
+    record = attach_delegation(registry, llm=_NoModel())
+
+    # AgentLoop registers recall_observation when a spill store is available;
+    # constructing one is how the listing stays truthful.
+    AgentLoop(_NoModel(), registry, budget=AgentBudget(), spill_dir=spill_root())
+
+    print(f"{len(registry)} tools offered to the agent\n")
     for entry in registry.schemas():
         fn = entry["function"]
         params = fn["parameters"]
@@ -95,9 +116,12 @@ def _cmd_tools(_args: argparse.Namespace) -> int:
             mark = "*" if name in required else " "
             print(f"      {mark} {name}: {spec.get('type', 'any')}")
         print()
+
     writers = [t.name for t in registry.tagged("write")]
     print(f"write-capable tools: {', '.join(writers) or '(none)'}")
-    print("no send, delete or dispatch tool exists — that is enforced by omission")
+    print("no send, delete or dispatch tool exists — enforced by omission")
+    if record is not None and "spawn_researcher" in registry:
+        print("sub-agents: depth 1, read-only, cannot delegate further")
     return 0
 
 

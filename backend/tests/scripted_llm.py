@@ -15,15 +15,42 @@ from app.agent.tools import Tool, ToolRegistry
 
 
 @dataclass
+class ChatCall:
+    """One recorded ``chat()`` invocation.
+
+    Kept as a record rather than a bare message list so a test can assert on what
+    the model was *offered* (the tool schemas) as well as what it was told.
+    """
+
+    messages: list
+    tools: list
+    temperature: float = 0.2
+    max_tokens: int = 1500
+
+    # Convenience: iteration and len behave like the message list, so simple
+    # assertions such as ``child_llm.calls[0][-1].content`` keep working.
+    def __iter__(self):
+        return iter(self.messages)
+
+    def __len__(self) -> int:
+        return len(self.messages)
+
+    def __getitem__(self, index):
+        return self.messages[index]
+
+
+@dataclass
 class ScriptedLLM:
+    """Returns pre-scripted replies in order and records what it was asked."""
+
     script: list[dict]
-    calls: list[list] = field(default_factory=list)
+    calls: list[ChatCall] = field(default_factory=list)
     prompt_tokens: int = 150
     completion_tokens: int = 80
     _index: int = 0
 
     async def chat(self, messages, tools, *, temperature=0.2, max_tokens=1500):
-        self.calls.append(list(messages))
+        self.calls.append(ChatCall(list(messages), list(tools), temperature, max_tokens))
         if self._index >= len(self.script):
             return LLMReply(content="(script exhausted)")
         entry = self.script[self._index]
@@ -43,6 +70,20 @@ class ScriptedLLM:
             prompt_tokens=self.prompt_tokens,
             completion_tokens=self.completion_tokens,
         )
+
+    # -- helpers for assertions -------------------------------------------
+
+    @property
+    def call_count(self) -> int:
+        return len(self.calls)
+
+    def offered_tool_names(self) -> list[str]:
+        if not self.calls:
+            return []
+        return sorted(entry["function"]["name"] for entry in self.calls[0].tools)
+
+    def last_messages(self) -> list:
+        return self.calls[-1].messages if self.calls else []
 
 
 def call(name: str, arguments: Optional[dict] = None, *, content: str = "") -> dict:

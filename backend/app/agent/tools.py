@@ -150,8 +150,12 @@ class Tool:
 class ToolRegistry:
     """Ordered collection of tools with duplicate protection."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, depth: int = 0) -> None:
         self._tools: dict[str, Tool] = {}
+        # How many delegation hops deep this registry's agent is. A registry
+        # handed to a sub-agent is one deeper, which is what makes maxDepth
+        # enforceable rather than advisory.
+        self.depth = depth
 
     def register(self, tool: Tool) -> Tool:
         if tool.name in self._tools:
