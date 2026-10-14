@@ -192,12 +192,118 @@ goal a user might type.
 - **`agent_service.py` is not fully decomposed.** The churn and follow-up
   functions still carry hardcoded thresholds. They are reachable through their
   own endpoints and are next, not done.
+- **No sub-agents.** Delegation for context isolation is not implemented. See
+  the alignment notes below for what it would take.
+
+## Alignment with production harnesses
+
+This design was checked against two shipping agents: **Pi** (the coding agent at
+pi.dev, source in `badlogic/pi-mono`) and **DeepSeek Harness**. The comparison
+changed three things, and it is worth recording which and why.
+
+### The bounded loop is the part neither reference ships
+
+Both Pi and DSH run **unbounded** loops. Pi's `runLoop` has no step, turn, token
+or wall-clock cap — zero grep hits in the loop source, and no such setting. DSH
+documents the absence as deliberate:
+
+> No built-in turn budget — tool calls or steering continue the current turn; a
+> policy that bounds runaway turns must cancel from an existing lifecycle
+> extension point.
+
+DSH's own field report shows the consequence: a **single turn of 72 steps**, with
+a repetition detector that never fired because it keys on *identical* arguments
+and the polling loop varied one `timeout_ms`.
+
+So `AgentBudget` is not the naive choice here — it is the piece both reference
+agents leave to the implementer. Keeping it.
+
+### Adopted: a truncated response is not a valid tool call
+
+Pi refuses to execute *any* tool call from a message whose `stopReason` is
+`length`, because salvage-parsed arguments can validate while being silently
+truncated — a half-written URL or body that passes the schema and then does
+damage.
+
+`AgentLoop` now does the same. On `finish_reason` of `length` or `max_tokens`,
+every call in that round is refused with an explanation and the model is told to
+re-issue. Covered by
+`test_calls_from_a_length_truncated_response_are_refused`.
+
+### Adopted: every declared call gets exactly one result, in order
+
+The subtler invariant, and one this loop was **actually breaking**. The assistant
+message declares N tool calls; if the budget ran out mid-loop the old code
+returned immediately, leaving orphaned `tool_call`s with no results. DSH exists
+specifically to prevent this — `TOOL_OUTCOME_UNKNOWN` / `TOOL_NOT_STARTED` keep
+the transcript replayable, and its compaction cuts snap to
+`toolPairingBalancedBefore/After` edges.
+
+The first fix produced a second bug that a test caught: refused results were
+appended *before* executing the allowed ones, so results arrived as
+`[2, 3, 0, 1]`. Reordered results are their own hazard — a model replaying the
+transcript reads them against the wrong calls. The batch is now split first and
+appended strictly in declaration order.
+
+Both halves are asserted by `_assert_pairing_holds`, which compares the
+*sequence* of declared ids against the sequence of result ids rather than
+counting them. `test_agent_loop.py` runs that check over every termination path:
+normal, budget-exhausted, mid-batch cut, stall, and round-budget.
+
+### Adopted: truncate, but keep it retrievable
+
+`context.py` bounds the request. Pi's convention is *"truncate large model-facing
+results and tell the model where to read the complete output"*; DSH goes further
+with a spill policy that writes the full result to a file and hands the model a
+path, summarised as *"truncate but preserve recoverability."*
+
+`SpillStore` does the same: trimmed observations are written to
+`AGENT_SPILL_DIR` (default: system temp), the marker names the file, and
+`recall_observation` reads it back. The tool is registered **only when a spill
+directory exists**, so the marker never promises a retrieval that cannot happen.
+
+The first implementation of the cut was wrong in a way worth recording. A fixed
+head/tail size frees a constant number of tokens per pass; if each round adds
+more than that, the request grows without bound while every pass reports success.
+Measured: at round 8 the request was **4696 tokens against a 3000 budget, still
+climbing**. The cut is now scaled to the deficit — how much the trimmable middle
+must shrink — which holds 14 fat rounds to a peak of **2880**. Past a floor the
+middle cannot shrink further and the report sets `unreachable`, rather than
+claiming a bound it did not achieve.
+
+### Compared, and deliberately not adopted
+
+- **Approval escalation.** DSH has a four-layer fail-closed stack: a closed
+  outcome vocabulary (`allowed-once` / `rejected` / `cancelled` / `unavailable`),
+  a session `ask`/`never` policy enforced *before* the answerer chain, per-call
+  sandbox modes with a closed escalation ladder requiring a justification, and
+  audit events kept out of model context. Pi has **no permission system at all**
+  and relies on OS isolation plus a `tool_call` extension convention.
+  TradeAgent's boundary is different in kind: it does not need to mediate
+  arbitrary filesystem or process access, it needs to not send email. Omitting
+  the capability from the registry achieves that with no policy engine to get
+  wrong. The trade-off is real, though — a whitelist cannot express "read-only
+  except when the operator says otherwise", and adding such a tier is the
+  obvious next step if the tool set grows.
+- **Sub-agents.** DSH has a first-class multi-provider delegation subsystem
+  (`default maxDepth: 1`, `maxActiveSubagents: 8`, `one-shot` or `continuable`);
+  Pi omits them on purpose. TradeAgent has neither, so delegation is the largest
+  remaining gap against DSH. The shape it would take is clear from the research:
+  a `spawn_researcher` tool with `maxDepth=1`, a read-only registry for the
+  child, the child's final answer returned as the tool result, and the parent's
+  context protected from the child's transcript.
+- **Event-sourced session log.** Both use durable, replayable histories (Pi a
+  JSONL tree with branching; DSH an event-sourced log with crash repair). Here
+  `AgentRun.trace` is a JSON column — enough to audit and render a run, not
+  enough to resume one. Fine at this scale; the first thing to change if runs
+  ever need to be long-lived.
 
 ## Reading order
 
 1. `app/agent/tools.py` — what a tool is, and how its schema is derived
 2. `app/agent/loop.py` — the loop, and every way it can stop
-3. `app/agent/trade_tools.py` — the rule "tools return facts" in practice
-4. `app/agent/scan_runner.py` — the daily job, agent-driven
-5. `tests/test_agent_loop.py` — the state machine, offline
-6. `tests/test_no_handrolled_scoring.py` — the guard against regression
+3. `app/agent/context.py` — keeping a long run inside the window
+4. `app/agent/trade_tools.py` — the rule "tools return facts" in practice
+5. `app/agent/scan_runner.py` — the daily job, agent-driven
+6. `tests/test_agent_loop.py` — the state machine and the transcript invariants
+7. `tests/test_no_handrolled_scoring.py` — the guard against regression

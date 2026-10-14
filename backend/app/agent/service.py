@@ -18,7 +18,9 @@ class of bug this refactor exists to remove.
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Optional
 
 from app.config import settings
@@ -93,6 +95,21 @@ def build_llm_client(timeout: float = 120.0) -> LLMClient:
     )
 
 
+def spill_root() -> Path:
+    """Where trimmed observations are kept so compaction stays lossless.
+
+    A single run-scoped directory under the system temp directory. Configurable
+    via ``AGENT_SPILL_DIR`` for deployments that want it somewhere persistent or
+    on a different volume.
+    """
+    configured = (os.environ.get("AGENT_SPILL_DIR") or "").strip()
+    if configured:
+        return Path(configured)
+    import tempfile
+
+    return Path(tempfile.gettempdir()) / "tradeagent-spill"
+
+
 def build_registry() -> ToolRegistry:
     """The tool whitelist for a normal run."""
     from .trade_tools import build_trade_registry
@@ -108,6 +125,7 @@ async def execute(
     llm: Optional[LLMClient] = None,
     registry: Optional[ToolRegistry] = None,
     persist: bool = True,
+    spill_dir: Optional[Path] = None,
 ) -> AgentResult:
     """Run the agent and return a displayable result.
 
@@ -126,6 +144,7 @@ async def execute(
         tools,
         budget=budget or DEFAULT_BUDGET,
         context=context,
+        spill_dir=spill_dir if spill_dir is not None else spill_root(),
     )
 
     if persist:

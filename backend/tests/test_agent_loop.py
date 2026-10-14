@@ -240,21 +240,40 @@ async def test_round_budget_truncates(registry):
     assert llm.call_count == 3
 
 
-async def test_tool_call_budget_truncates(registry):
+async def test_tool_call_budget_refuses_further_calls(registry):
+    """The budget stops work; the run continues so the model can report.
+
+    Returning the moment the budget is hit would end the run mid-thought. The
+    calls that could not be made are refused with an explanation, and the model
+    gets a round to say what it established.
+    """
     script = [
         multi_tool_reply(("list_customers", {}), ("list_customers", {})),
         multi_tool_reply(("list_customers", {}), ("list_customers", {})),
-        multi_tool_reply(("list_customers", {}), ("list_customers", {})),
+        final("Two calls ran; the rest were refused by the budget."),
     ]
     loop, _ = make_loop(script, registry, max_tool_calls=3, max_rounds=10)
     run = await loop.run("blast the tools")
 
-    assert run.status == "truncated"
-    assert run.stop_reason == "tool-call budget exhausted"
+    assert run.status == "succeeded"
     assert run.tool_call_count == 3
+    assert run.refused_call_count == 1
+    assert all(
+        c.refused_reason == "tool_budget_exhausted"
+        for s in run.steps for c in s.tool_calls if c.refused
+    )
+    # It ran three calls across two rounds, then reported.
+    assert len(run.steps) == 3
+    _assert_pairing_holds(run)
 
 
-async def test_per_round_cap_drops_extra_calls(registry):
+async def test_per_round_cap_refuses_extra_calls_rather_than_dropping_them(registry):
+    """A call the assistant declared must always get a result.
+
+    Dropping it silently leaves the transcript with an unanswered tool_call,
+    which providers reject on replay — and means nobody, human or model, learns
+    that the call did not happen.
+    """
     loop, _ = make_loop(
         [
             multi_tool_reply(*[("list_customers", {})] * 6),
@@ -264,8 +283,21 @@ async def test_per_round_cap_drops_extra_calls(registry):
         max_calls_per_round=2,
     )
     run = await loop.run("too many at once")
-    assert len(run.steps[0].tool_calls) == 2
-    assert "dropped" in run.steps[0].note
+
+    step = run.steps[0]
+    assert len(step.tool_calls) == 6, "every declared call must be recorded"
+    executed = [c for c in step.tool_calls if not c.refused]
+    refused = [c for c in step.tool_calls if c.refused]
+    assert len(executed) == 2
+    assert len(refused) == 4
+    assert all(c.refused_reason == "tool_budget_exhausted" for c in refused)
+    assert "NOT EXECUTED" in refused[0].observation
+    assert "budget" in step.note
+
+    # The pairing invariant: one result per declared call, in order.
+    declared = [c.call_id for s in run.steps for c in s.tool_calls]
+    results = [m.tool_call_id for m in run.messages if m.role == "tool"]
+    assert results == declared
 
 
 async def test_token_budget_truncates(registry):
@@ -430,6 +462,240 @@ async def test_on_step_callback_fires_per_round(registry):
     loop = AgentLoop(llm, registry, on_step=lambda step: seen.append(step.round))
     await loop.run("go")
     assert seen == [1, 2]
+
+
+# --- transcript invariants -------------------------------------------------
+#
+# These two are what a naive ReAct loop gets wrong, and what production harnesses
+# guard explicitly. Both are transcript-shape invariants, so they are asserted on
+# the message list rather than on the trace.
+
+def _assert_pairing_holds(run):
+    """Every assistant tool_call must have exactly one matching tool result.
+
+    Providers reject a replayed transcript containing an orphaned call, so a run
+    that breaks this cannot be resumed or replayed. Checking the shape is
+    stronger than checking counts.
+    """
+    declared = [c.id for m in run.messages if m.role == "assistant" for c in m.tool_calls]
+    results = [m.tool_call_id for m in run.messages if m.role == "tool"]
+
+    assert results == declared, (
+        "tool_call/tool_result pairing broken\n"
+        f"  declared: {declared}\n"
+        f"  results : {results}\n"
+        f"  orphaned: {[c for c in declared if c not in results]}\n"
+        f"  unmatched results: {[r for r in results if r not in declared]}"
+    )
+
+
+async def test_pairing_holds_on_a_normal_run(registry):
+    loop, _ = make_loop(
+        [tool_reply("inspect_website", {"url": "https://a.de"}), final("done")],
+        registry,
+    )
+    run = await loop.run("go")
+    _assert_pairing_holds(run)
+
+
+async def test_pairing_holds_when_the_tool_budget_runs_out_mid_batch(registry):
+    """The bug this guards: returning mid-loop leaves the rest unanswered."""
+    loop, _ = make_loop(
+        [
+            multi_tool_reply(("list_customers", {}), ("list_customers", {}),
+                             ("list_customers", {}), ("list_customers", {})),
+            final("stopping; the budget is spent"),
+        ],
+        registry,
+        max_tool_calls=2,
+        max_rounds=5,
+    )
+    run = await loop.run("blast the tools")
+
+    assert run.tool_call_count == 2
+    _assert_pairing_holds(run)
+
+    # The two the budget cut off are recorded, not vanished.
+    refused = [c for s in run.steps for c in s.tool_calls if c.refused]
+    assert len(refused) == 2
+    assert all(c.refused_reason == "tool_budget_exhausted" for c in refused)
+    assert all("NOT EXECUTED" in c.observation for c in refused)
+
+
+async def test_pairing_holds_when_the_budget_is_already_exhausted(registry):
+    """A round that starts with no budget left still answers every call."""
+    loop, _ = make_loop(
+        [
+            multi_tool_reply(*[("list_customers", {})] * 3),
+            multi_tool_reply(*[("list_customers", {})] * 3),
+            final("Budget spent; nothing further was attempted."),
+        ],
+        registry,
+        max_tool_calls=2,
+        max_rounds=6,
+    )
+    run = await loop.run("go")
+
+    _assert_pairing_holds(run)
+    assert run.tool_call_count == 2, "only genuinely executed calls count"
+    assert run.refused_call_count == 4
+    assert "budget" in run.steps[1].note
+
+
+async def test_pairing_holds_when_the_round_budget_runs_out(registry):
+    loop, _ = make_loop(
+        [multi_tool_reply(("list_customers", {}), ("list_customers", {})) for _ in range(5)],
+        registry,
+        max_rounds=2,
+        max_tool_calls=50,
+    )
+    run = await loop.run("go")
+    assert run.status == "truncated"
+    _assert_pairing_holds(run)
+
+
+async def test_pairing_holds_when_a_run_stalls(registry):
+    loop, _ = make_loop(["", "", ""], registry, max_idle_rounds=3)
+    run = await loop.run("go")
+    assert run.status == "stalled"
+    _assert_pairing_holds(run)
+
+
+async def test_refused_calls_do_not_count_toward_the_budget(registry):
+    """Otherwise a round of refusals would eat the next round's budget."""
+    loop, _ = make_loop(
+        [
+            multi_tool_reply(*[("list_customers", {})] * 4),
+            multi_tool_reply(*[("list_customers", {})] * 4),
+            final("done"),
+        ],
+        registry,
+        max_calls_per_round=2,
+        max_tool_calls=4,
+        max_rounds=5,
+    )
+    run = await loop.run("go")
+
+    assert run.tool_call_count == 4, "four calls actually ran"
+    assert run.refused_call_count == 4, "four were refused"
+
+
+async def test_tool_sequence_excludes_refused_calls(registry):
+    """The sequence describes what shaped the run, so it lists executions only."""
+    loop, _ = make_loop(
+        [
+            multi_tool_reply(("inspect_website", {"url": "https://a.de"}),
+                             ("list_customers", {})),
+            final("done"),
+        ],
+        registry,
+        max_calls_per_round=1,
+    )
+    run = await loop.run("go")
+
+    assert run.tool_sequence == ["inspect_website"]
+    assert run.refused_call_count == 1
+    assert len(run.steps[0].tool_calls) == 2
+
+
+# --- Invariant 1: a truncated response is not a valid tool call -------------
+
+async def test_calls_from_a_length_truncated_response_are_refused(registry):
+    """Truncated arguments can validate while being silently mangled.
+
+    Pi refuses to execute every tool call in a message whose stopReason is
+    "length". Executing them is how a loop corrupts state: the JSON parses, the
+    schema validates, and half a URL or half a body is sent.
+    """
+    loop, _ = make_loop(
+        [
+            {
+                "content": "",
+                "finish_reason": "length",
+                "tool_calls": [{
+                    "name": "inspect_website",
+                    "arguments": '{"url": "https://example.com/very/long/pa',
+                }],
+            },
+            tool_reply("inspect_website", {"url": "https://example.com/complete"}),
+            final("recovered"),
+        ],
+        registry,
+    )
+    run = await loop.run("go")
+
+    assert run.status == "succeeded"
+    first = run.steps[0].tool_calls[0]
+    assert first.refused is True
+    assert first.refused_reason == "response_length_exceeded"
+    assert "token limit" in first.observation
+    assert "Re-issue" in first.observation
+    assert "output token limit" in run.steps[0].note
+
+    # Nothing was executed in that round.
+    assert run.tool_call_count == 1
+    # The model was told, so it could retry — and it did.
+    assert run.steps[1].tool_calls[0].ok is True
+    _assert_pairing_holds(run)
+
+
+async def test_max_tokens_finish_reason_is_also_treated_as_truncation(registry):
+    loop, _ = make_loop(
+        [
+            {"content": "partial", "finish_reason": "max_tokens",
+             "tool_calls": [{"name": "list_customers", "arguments": "{}"}]},
+            final("done"),
+        ],
+        registry,
+    )
+    run = await loop.run("go")
+    assert run.steps[0].tool_calls[0].refused is True
+
+
+async def test_normal_finish_reasons_execute_normally(registry):
+    """Only length-style stops are refused; tool_calls and stop run as usual."""
+    for reason in ("tool_calls", "stop", ""):
+        loop, _ = make_loop(
+            [
+                {"content": "", "finish_reason": reason,
+                 "tool_calls": [{"name": "list_customers", "arguments": "{}"}]},
+                final("done"),
+            ],
+            registry,
+        )
+        run = await loop.run("go")
+        assert run.steps[0].tool_calls[0].refused is False, f"refused on finish_reason={reason!r}"
+
+
+async def test_a_truncated_round_still_ends_on_text(registry):
+    """A length stop with no tool calls is handled by the normal text path."""
+    loop, _ = make_loop([{"content": final("partial answer"), "finish_reason": "length"}], registry)
+    run = await loop.run("go")
+    assert run.status == "succeeded"
+    assert run.tool_call_count == 0
+
+
+async def test_refused_calls_are_visible_in_the_trace(registry):
+    """Three calls declared, one executed, two refused — and all three recorded."""
+    loop, _ = make_loop(
+        [
+            multi_tool_reply(("list_customers", {}), ("list_customers", {}),
+                             ("list_customers", {})),
+            final("stopping; only one call was allowed"),
+        ],
+        registry,
+        max_calls_per_round=1,
+    )
+    run = await loop.run("go")
+    payload = run.as_dict()
+
+    calls = payload["steps"][0]["tool_calls"]
+    assert len(calls) == 3, "every declared call appears in the trace"
+    assert [bool(c["refused_reason"]) for c in calls] == [False, True, True]
+    assert payload["tool_calls"] == 1
+    assert payload["refused_calls"] == 2
+    assert calls[1]["observation"].startswith("NOT EXECUTED")
+    assert "refused_reason" in calls[1]
 
 
 # --- the acceptance criterion ---------------------------------------------

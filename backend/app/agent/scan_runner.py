@@ -29,7 +29,7 @@ from typing import Any, Optional
 from .loop import AgentBudget, AgentRun, run_agent
 from .protocol import LLMClient
 from .scan_tools import ProspectSink, build_scan_registry
-from .service import SCHEDULED_BUDGET, build_llm_client
+from .service import SCHEDULED_BUDGET, build_llm_client, spill_root
 
 logger = logging.getLogger(__name__)
 
@@ -156,6 +156,7 @@ async def run_scan(
         budget=budget or SCHEDULED_BUDGET,
         context=context,
         system_prompt=SCAN_SYSTEM_PROMPT,
+        spill_dir=spill_root(),
     )
 
     report = sink.build_report(
@@ -244,6 +245,7 @@ async def find_leads_agentic(
         budget=budget or SCHEDULED_BUDGET,
         context=f"Markets requested: {market}. No prior domain memory applies to this lookup.",
         system_prompt=SCAN_SYSTEM_PROMPT,
+        spill_dir=spill_root(),
     )
 
     await _persist(run)

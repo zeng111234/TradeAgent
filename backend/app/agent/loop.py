@@ -22,6 +22,7 @@ import logging
 import time
 import uuid
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Callable, Optional
 
 from .protocol import LLMClient, Message, ToolCall, parse_arguments
@@ -74,6 +75,25 @@ class AgentError(Exception):
     """Unrecoverable loop failure (as opposed to a tool failure)."""
 
 
+def _refused(call: ToolCall, observation: str, *, reason: str) -> ToolInvocation:
+    """A tool call that was deliberately not executed.
+
+    Recorded as a normal invocation so the trace shows it, and so the assistant
+    message's tool_calls and the tool results stay paired one-for-one. A refused
+    call is always visible; a silently dropped one is not.
+    """
+    return ToolInvocation(
+        name=call.name,
+        arguments_raw=call.arguments,
+        arguments=parse_arguments(call.arguments),
+        ok=False,
+        observation=observation,
+        elapsed=0.0,
+        call_id=call.id,
+        refused_reason=reason,
+    )
+
+
 @dataclass
 class AgentBudget:
     """Hard caps. Any one of them being hit ends the run cleanly."""
@@ -87,6 +107,13 @@ class AgentBudget:
     # normal (that is how a run ends); more than one means the model is stuck.
     max_idle_rounds: int = 3
     tool_timeout_seconds: float = 60.0
+    # Ceiling for the *request* sent to the model, which is not the same as
+    # max_tokens: max_tokens bounds what the run may spend in total, this bounds
+    # how large any single request may get. Exceeding it triggers compaction
+    # rather than an error. 0 disables compaction.
+    context_budget_tokens: int = 24_000
+    # Recent messages never compacted: they are what the model is reasoning over.
+    keep_recent_messages: int = 6
 
 
 @dataclass
@@ -100,6 +127,13 @@ class ToolInvocation:
     observation: str
     elapsed: float
     call_id: str = ""
+    # Set when the call was deliberately not executed (budget exhausted, or the
+    # response was truncated). An empty string means it was genuinely run.
+    refused_reason: str = ""
+
+    @property
+    def refused(self) -> bool:
+        return bool(self.refused_reason)
 
 
 @dataclass
@@ -128,6 +162,7 @@ class TraceStep:
                     "observation": c.observation,
                     "elapsed": round(c.elapsed, 3),
                     "call_id": c.call_id,
+                    "refused_reason": c.refused_reason,
                 }
                 for c in self.tool_calls
             ],
@@ -149,19 +184,34 @@ class AgentRun:
     completion_tokens: int = 0
     elapsed: float = 0.0
     error: Optional[str] = None
+    # One entry per compaction pass: round, tokens freed, observations spilled.
+    # Recorded rather than silent, so a run that had to compact says so.
+    compactions: list[dict] = field(default_factory=list)
 
     @property
     def tool_call_count(self) -> int:
-        return sum(len(s.tool_calls) for s in self.steps)
+        """Executed tool calls. Refused ones are recorded but not counted.
+
+        Budgets are expressed in work actually done, and ``refused`` calls did no
+        work. Counting them would also make the budget check self-defeating: a
+        round that refuses a hundred calls would exhaust the next round's budget.
+        """
+        return sum(
+            1 for s in self.steps for c in s.tool_calls if not c.refused
+        )
+
+    @property
+    def refused_call_count(self) -> int:
+        return sum(1 for s in self.steps for c in s.tool_calls if c.refused)
 
     @property
     def tool_sequence(self) -> list[str]:
-        """Flattened ordered list of tool names actually called.
+        """Flattened ordered list of tools actually executed.
 
-        This is the value the acceptance criterion checks: two different goals
-        must produce two different sequences.
+        Refused calls are excluded: this is the value the acceptance criterion
+        checks, and a call that never ran did not shape the run.
         """
-        return [c.name for s in self.steps for c in s.tool_calls]
+        return [c.name for s in self.steps for c in s.tool_calls if not c.refused]
 
     def as_dict(self) -> dict:
         return {
@@ -173,12 +223,14 @@ class AgentRun:
             "error": self.error,
             "rounds": len(self.steps),
             "tool_calls": self.tool_call_count,
+            "refused_calls": self.refused_call_count,
             "tool_sequence": self.tool_sequence,
             "did_investigate": self.did_investigate,
             "prompt_tokens": self.prompt_tokens,
             "completion_tokens": self.completion_tokens,
             "elapsed": round(self.elapsed, 3),
             "steps": [s.as_dict() for s in self.steps],
+            "compactions": list(self.compactions),
         }
 
     @property
@@ -202,12 +254,30 @@ class AgentLoop:
         budget: Optional[AgentBudget] = None,
         system_prompt: str = DEFAULT_SYSTEM_PROMPT,
         on_step: Optional[Callable[[TraceStep], None]] = None,
+        spill_dir: Optional[Path] = None,
     ) -> None:
         self.llm = llm
-        self.registry = registry
         self.budget = budget or AgentBudget()
         self.system_prompt = system_prompt
         self.on_step = on_step
+
+        # The spill store holds the full text of observations trimmed by
+        # compaction. Created lazily-ish: only when a directory is available, so
+        # the loop still works in a read-only filesystem, just without recovery.
+        self.spill = None
+        if self.budget.context_budget_tokens and spill_dir is not None:
+            from .context import SpillStore
+
+            self.spill = SpillStore(Path(spill_dir))
+
+        # A compaction that trims an observation names the file it wrote, so the
+        # agent can read the detail back. Registering the tool is what makes that
+        # promise true rather than decorative.
+        self.registry = registry
+        if self.spill is not None and "recall_observation" not in registry:
+            from .context import build_recall_tool
+
+            registry.register(build_recall_tool(self.spill))
 
     async def run(self, goal: str, *, context: str = "") -> AgentRun:
         run = AgentRun(goal=goal)
@@ -276,23 +346,71 @@ class AgentLoop:
             idle_rounds = 0
             run.messages.append(Message.assistant(reply.content, reply.tool_calls))
 
-            calls = reply.tool_calls[: self.budget.max_calls_per_round]
-            overflow = reply.tool_calls[self.budget.max_calls_per_round:]
-            if overflow:
-                step.note = f"{len(overflow)} extra call(s) dropped (per-round cap)"
+            # --- Invariant 1: a response cut off at the token limit may carry
+            # truncated arguments. Such arguments can still *validate* while
+            # being silently mangled, so the calls are refused rather than
+            # executed. Both reference agents guard this; a naive loop executes
+            # the call and corrupts state.
+            truncated = (reply.finish_reason or "").lower() in ("length", "max_tokens")
+            if truncated and reply.tool_calls:
+                step.note = f"refused {len(reply.tool_calls)} call(s): response hit the output token limit"
+                for call in reply.tool_calls:
+                    observation = (
+                        "NOT EXECUTED: the response hit the output token limit, so "
+                        f"the arguments for '{call.name}' may be truncated. "
+                        "Re-issue the call with complete arguments."
+                    )
+                    step.tool_calls.append(
+                        _refused(call, observation, reason="response_length_exceeded")
+                    )
+                    run.messages.append(Message.tool_result(call, observation))
+                if self.on_step:
+                    self.on_step(step)
+                continue
 
-            for call in calls:
-                if run.tool_call_count >= self.budget.max_tool_calls:
-                    return self._finish(run, started, "truncated", "tool-call budget exhausted")
+            # --- Invariant 2: every tool call the assistant message declared
+            # must receive exactly one tool result, **in the declared order**.
+            # Providers reject a transcript with an unanswered call, and a
+            # reordered transcript is its own hazard: a model replaying it would
+            # read results against the wrong calls. So the batch is split first,
+            # then every result is appended in declaration order.
+            budget_left = max(0, self.budget.max_tool_calls - run.tool_call_count)
 
-                invocation = await self._execute(call)
-                step.tool_calls.append(invocation)
-                run.messages.append(Message.tool_result(call, invocation.observation))
-                logger.info(
-                    "run %s round %s -> %s (%s, %.2fs)",
-                    run.run_id[:8], round_index, call.name,
-                    "ok" if invocation.ok else "failed", invocation.elapsed,
+            to_execute = reply.tool_calls[: self.budget.max_calls_per_round]
+            refused_calls = reply.tool_calls[self.budget.max_calls_per_round:]
+            if len(to_execute) > budget_left:
+                refused_calls = to_execute[budget_left:] + refused_calls
+                to_execute = to_execute[:budget_left]
+
+            if refused_calls:
+                note = f"{len(refused_calls)} call(s) not executed (budget)"
+                step.note = f"{step.note}; {note}" if step.note else note
+
+            next_to_execute = 0
+            for call in reply.tool_calls:
+                still_allowed = next_to_execute < len(to_execute)
+                if still_allowed and to_execute[next_to_execute].id == call.id:
+                    next_to_execute += 1
+                    invocation = await self._execute(call)
+                    step.tool_calls.append(invocation)
+                    run.messages.append(Message.tool_result(call, invocation.observation))
+                    logger.info(
+                        "run %s round %s -> %s (%s, %.2fs)",
+                        run.run_id[:8], round_index, call.name,
+                        "ok" if invocation.ok else "failed", invocation.elapsed,
+                    )
+                    continue
+
+                observation = (
+                    "NOT EXECUTED: this run's tool-call budget is exhausted, so the "
+                    "call was not made. Nothing was sent and nothing was changed. "
+                    "Report what you have established so far and say what is still "
+                    "unverified."
                 )
+                step.tool_calls.append(
+                    _refused(call, observation, reason="tool_budget_exhausted")
+                )
+                run.messages.append(Message.tool_result(call, observation))
 
             if run.prompt_tokens + run.completion_tokens > self.budget.max_tokens:
                 return self._finish(run, started, "truncated", "token budget exhausted")
@@ -306,8 +424,12 @@ class AgentLoop:
 
     async def _ask(self, run: AgentRun, schemas: list[dict], round_index: int):
         try:
+            # The full history is kept on the run for the trace; the model gets a
+            # bounded projection of it. Nothing is lost — oversized observations
+            # are written to the spill store and stay retrievable by name.
+            messages = self._project_for_model(run, round_index)
             return await self.llm.chat(
-                list(run.messages),
+                messages,
                 schemas,
                 temperature=0.2,
                 max_tokens=1500,
@@ -315,6 +437,32 @@ class AgentLoop:
         except Exception as exc:  # noqa: BLE001 - surfaced as a run error
             logger.error("LLM call failed in run %s: %s", run.run_id, exc, exc_info=True)
             raise AgentError(f"LLM call failed in round {round_index}: {exc}") from exc
+
+    def _project_for_model(self, messages_owner, round_index: int) -> list[Message]:
+        """Return the message list to send, compacting if it is too large."""
+        from .context import compact_messages, estimate_tokens
+
+        budget = self.budget.context_budget_tokens
+        messages = messages_owner.messages
+
+        if not budget or estimate_tokens(messages) <= budget:
+            return list(messages)
+
+        view, report = compact_messages(
+            messages,
+            budget_tokens=budget,
+            keep_recent=self.budget.keep_recent_messages,
+            spill=self.spill,
+        )
+        if report.did_anything:
+            logger.info(
+                "run %s compacted before round %s: %s",
+                messages_owner.run_id[:8], round_index, report.as_note(),
+            )
+            messages_owner.compactions.append(
+                {"round": round_index, **report.__dict__}
+            )
+        return view
 
     async def _execute(self, call: ToolCall) -> ToolInvocation:
         started = time.monotonic()
@@ -340,13 +488,14 @@ class AgentLoop:
             call_id=call.id,
         )
 
-    @staticmethod
     def _finish(
+        self,
         run: AgentRun,
         started: float,
         status: str,
         stop_reason: str,
         final_output: str = "",
+        step: Optional[TraceStep] = None,
     ) -> AgentRun:
         run.status = status
         run.stop_reason = stop_reason
@@ -355,6 +504,11 @@ class AgentLoop:
         elif status == "succeeded":
             run.final_output = ""
         run.elapsed = time.monotonic() - started
+        # A budget can be exhausted mid-round, after tool calls have already been
+        # answered. Fire the callback so those answers are observable rather than
+        # existing only in the message history.
+        if step is not None and self.on_step:
+            self.on_step(step)
         return run
 
 
@@ -366,9 +520,16 @@ async def run_agent(
     budget: Optional[AgentBudget] = None,
     context: str = "",
     system_prompt: str = DEFAULT_SYSTEM_PROMPT,
+    spill_dir: Optional[Path] = None,
 ) -> AgentRun:
-    """Convenience wrapper. ``AgentError`` is converted into a failed run."""
-    loop = AgentLoop(llm, registry, budget=budget, system_prompt=system_prompt)
+    """Convenience wrapper. ``AgentError`` is converted into a failed run.
+
+    Pass ``spill_dir`` to make compaction lossless: trimmed observations are
+    written there and stay retrievable by name. Without it compaction still
+    bounds the request, but the trimmed detail is gone for good.
+    """
+    loop = AgentLoop(llm, registry, budget=budget, system_prompt=system_prompt,
+                     spill_dir=spill_dir)
     try:
         return await loop.run(goal, context=context)
     except AgentError as exc:
