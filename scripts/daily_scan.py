@@ -1,503 +1,339 @@
+"""Daily lead scan — agent-driven.
+
+Drop-in replacement for the previous version of this script. Same inputs (all
+via environment variables, because that is how GitHub Actions drives it), same
+output files, same report email. What changed is who decides which prospects
+are worth keeping.
+
+Previously this file contained the decision itself::
+
+    score = 20
+    if is_b2b:              score += 30
+    if buyer_keyword:       score += 20
+    if product_keyword:     score += 20
+    if emails_found:        score += 10
+    if score >= 40:         keep()
+
+and the model was called once per surviving candidate, purely to write copy.
+Now the agent chooses what to search, what to open, what to reject and why; the
+hardcoded scorer is gone.
+
+Environment:
+    SCAN_KEYWORDS        comma separated product keywords
+    SCAN_COUNTRIES       comma separated markets; empty means the global default
+    SCAN_HEADCOUNT       how many prospects to aim for (default 5)
+    SCAN_DRY_RUN         "1" to run without writing files or sending mail
+    SCAN_COMMIT          "0" to skip writing output files
+    REPORT_EMAIL         where the report goes
+    SMTP_*               SMTP credentials (absent => report printed to stdout)
+    OPENAI_API_KEY       required; without it this script exits non-zero
+    OPENAI_BASE_URL, OPENAI_MODEL
+
+Exit codes:
+    0  scan completed (zero prospects kept is a valid result)
+    1  no model configured
+    2  the agent run failed outright
 """
-TradeAgent Daily Lead Scan Script (v3)
-- Searches globally across 15+ textile importing countries
-- Uses ALL keywords (not just the first one)
-- Skips previously scanned domains
-- AI-generates personalized draft emails using page content
-- Saves structured JSON for Web platform import
-- Drafts stay in report for human review (not auto-sent)
-- Target: ~10 new leads per day
-"""
+from __future__ import annotations
+
+import asyncio
 import json
-import re
 import os
 import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
+import sys
 from datetime import datetime
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from pathlib import Path
 
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-SCANNED_FILE = os.path.join(SCRIPT_DIR, "scanned_domains.json")
-LEADS_JSON_FILE = os.path.join(SCRIPT_DIR, "daily_leads.json")
-TARGET_NEW_LEADS = 10
+SCRIPT_DIR = Path(__file__).resolve().parent
+REPO_DIR = SCRIPT_DIR.parent
+BACKEND_DIR = REPO_DIR / "backend"
 
-# Global textile importing countries
+if str(BACKEND_DIR) not in sys.path:
+    sys.path.insert(0, str(BACKEND_DIR))
+
 GLOBAL_COUNTRIES = [
     "Germany", "United States", "United Kingdom", "France", "Italy",
     "Spain", "Australia", "India", "Japan", "South Korea",
     "Brazil", "Turkey", "Netherlands", "Canada", "Mexico",
 ]
-
-# Domain scan expiration: re-scan after 7 days
-SCAN_EXPIRE_DAYS = 7
+DEFAULT_KEYWORDS = "embroidery thread, gold metallic yarn, metallic thread, gold yarn"
 
 
-def load_scanned_domains() -> dict:
-    """Load previously scanned domains with timestamps from file.
-    
-    Returns a dict: {domain: iso_timestamp}
-    Domains older than SCAN_EXPIRE_DAYS are automatically pruned.
-    """
-    from datetime import timedelta
-    now = datetime.now()
-    expire_cutoff = now - timedelta(days=SCAN_EXPIRE_DAYS)
-
-    if os.path.exists(SCANNED_FILE):
-        try:
-            with open(SCANNED_FILE, "r") as f:
-                data = json.load(f)
-                raw_domains = data.get("domains", [])
-
-                # Handle old format (list of strings) -> convert to dict with timestamps
-                if raw_domains and isinstance(raw_domains[0], str):
-                    scanned = {d: data.get("updated", now.isoformat()) for d in raw_domains}
-                else:
-                    scanned = {d.get("domain", ""): d.get("scanned_at", now.isoformat()) for d in raw_domains if d.get("domain")}
-
-                # Prune expired domains
-                pruned = {}
-                expired_count = 0
-                for domain, ts in scanned.items():
-                    try:
-                        scan_date = datetime.fromisoformat(ts)
-                        if scan_date > expire_cutoff:
-                            pruned[domain] = ts
-                        else:
-                            expired_count += 1
-                    except (ValueError, TypeError):
-                        # Keep if can't parse date
-                        pruned[domain] = ts
-
-                if expired_count > 0:
-                    print(f"  [INFO] Pruned {expired_count} expired domains (>{SCAN_EXPIRE_DAYS} days old)")
-                    # Save pruned list immediately
-                    save_scanned_domains(pruned)
-
-                return pruned
-        except Exception:
-            return {}
-    return {}
+def _env_flag(name: str, default: bool = False) -> bool:
+    raw = os.environ.get(name)
+    if raw is None or raw == "":
+        return default
+    return raw.strip().lower() in ("1", "true", "yes", "on")
 
 
-def save_scanned_domains(scanned: dict):
-    """Save the full scanned domains dict to file."""
-    try:
-        domain_list = [{"domain": d, "scanned_at": ts} for d, ts in scanned.items()]
-        with open(SCANNED_FILE, "w") as f:
-            json.dump({
-                "domains": domain_list,
-                "updated": datetime.now().isoformat(),
-                "total": len(domain_list),
-            }, f, indent=2)
-    except Exception as e:
-        print(f"  [WARN] Could not save scanned domains: {e}")
+def send_report_email(report: str, prospect_count: int) -> None:
+    """Send the report. Absent SMTP config prints instead of failing."""
+    host = os.environ.get("SMTP_HOST", "smtp.qq.com")
+    port = int(os.environ.get("SMTP_PORT", "465"))
+    user = os.environ.get("SMTP_USER", "")
+    password = os.environ.get("SMTP_PASSWORD", "")
+    recipient = os.environ.get("REPORT_EMAIL") or user
 
-
-def save_scanned_domain(domain: str, scanned: dict):
-    """Add a domain to the scanned dict and save."""
-    scanned[domain] = datetime.now().isoformat()
-    save_scanned_domains(scanned)
-
-
-def search_leads(product_keyword: str, target_country: str, max_results: int = 5, already_scanned: dict = None) -> list:
-    """Search for potential buyers using ddgs for one keyword + one country."""
-    from ddgs import DDGS
-
-    already_scanned = already_scanned or {}
-
-    queries = [
-        f"{product_keyword} buyer {target_country}",
-        f"{product_keyword} importer {target_country}",
-        f"{product_keyword} wholesaler {target_country}",
-        f"{product_keyword} distributor {target_country}",
-        f"{product_keyword} retailer {target_country}",
-        f'"{product_keyword}" company {target_country}',
-    ]
-
-    seen_domains = set()
-    leads = []
-
-    ddgs = DDGS()
-    for query in queries:
-        try:
-            results = list(ddgs.text(query, max_results=max_results))
-            for r in results:
-                href = r.get("href", "")
-                if href and href.startswith("http"):
-                    domain = href.split("/")[2] if len(href.split("/")) > 2 else href
-                    if domain not in seen_domains and domain not in already_scanned:
-                        seen_domains.add(domain)
-                        leads.append({
-                            "company_name": r.get("title", "Unknown").split(" - ")[0].strip()[:100],
-                            "website": href,
-                            "snippet": r.get("body", "")[:200],
-                            "domain": domain,
-                            "keyword": product_keyword,
-                            "country": target_country,
-                        })
-        except Exception as e:
-            print(f"  [WARN] Search error for '{query}': {e}")
-
-    return leads
-
-
-def scrape_lead_details(leads: list) -> list:
-    """Visit each lead's website and extract emails, company info."""
-    import requests
-    from bs4 import BeautifulSoup
-
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-    }
-
-    enriched = []
-    b2b_platforms = ["exporthub.com", "tradekey.com", "alibaba.com", "made-in-china.com",
-                     "globalsources.com", "volza.com", "fibre2fashion.com"]
-
-    for lead in leads[:20]:
-        try:
-            resp = requests.get(lead["website"], headers=headers, timeout=10, verify=False)
-            raw_html = resp.text
-            soup = BeautifulSoup(raw_html, "lxml")
-
-            # Extract emails FIRST from raw HTML (before removing footer/header)
-            # Footer and header often contain contact info
-            all_emails = list(set(re.findall(
-                r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', raw_html)))
-            all_emails = [e for e in all_emails if not any(x in e.lower() for x in
-                ["noreply", "example.com", "sentry", "wixpress", "wordpress",
-                 ".png", ".jpg", ".gif", ".css", ".js"])]
-
-            # Also extract emails specifically from footer/header areas
-            for section in soup.find_all(["footer", "header"]):
-                section_emails = re.findall(
-                    r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}',
-                    section.get_text(separator=" "))
-                all_emails.extend(section_emails)
-            all_emails = list(set(all_emails))
-
-            # Now clean up the page for text extraction
-            for tag in soup(["script", "style", "nav"]):
-                tag.decompose()
-            # Keep footer/header text for page_text (contact info is valuable)
-            page_text = soup.get_text(separator=" ", strip=True)[:8000]
-            text_lower = page_text.lower()
-
-            emails = all_emails
-
-            # Score relevance
-            score = 20
-            is_b2b = any(p in lead["website"].lower() for p in b2b_platforms)
-            if is_b2b:
-                score += 30
-            buyer_kw = ["import", "buyer", "wholesale", "distributor", "trade", "supplier"]
-            if any(kw in text_lower for kw in buyer_kw):
-                score += 20
-            product_parts = lead.get("keyword", "textile").lower().split()
-            if any(part in text_lower for part in product_parts if len(part) > 3):
-                score += 20
-            if emails:
-                score += 10
-
-            if score >= 40:
-                lead["emails"] = emails[:3]
-                lead["relevance_score"] = min(score, 100)
-                lead["page_text_preview"] = page_text[:3000]
-                enriched.append(lead)
-        except Exception:
-            pass
-
-    enriched.sort(key=lambda x: x.get("relevance_score", 0), reverse=True)
-    return enriched
-
-
-def generate_draft_email(lead: dict) -> str:
-    """Generate a personalized draft email for a lead.
-    
-    Uses AI with full page context for genuine personalization.
-    Does NOT send - returns the draft text only.
-    """
-    api_key = os.environ.get("OPENAI_API_KEY", "")
-    base_url = os.environ.get("OPENAI_BASE_URL", "https://api.xiaomimimo.com/v1")
-    model = os.environ.get("OPENAI_MODEL", "mimo-v2.5")
-
-    company = lead.get("company_name", "your company")
-    website = lead.get("website", "")
-    snippet = lead.get("snippet", "")
-    keyword = lead.get("keyword", "textile products")
-    country = lead.get("country", "your region")
-    page_text = lead.get("page_text_preview", "")
-
-    print(f"  [DEBUG] API key present: {bool(api_key)}, base_url: {base_url}, model: {model}")
-    if api_key:
-        try:
-            from openai import OpenAI
-            client = OpenAI(api_key=api_key, base_url=base_url)
-
-            prompt = f"""Write a personalized cold outreach email (120-180 words) from a Chinese textile supplier.
-
-About the target company:
-- Company name: {company}
-- Website: {website}
-- Country: {country}
-- Search snippet: {snippet[:200]}
-- What their website says: {page_text[:1500]}
-
-Your product: {keyword} (from Ningbo, China)
-
-CRITICAL RULES:
-1. Reference SOMETHING SPECIFIC from their website (their products, market, customers, niche, etc.)
-2. Explain WHY your {keyword} is relevant to THEIR specific business and how it fits their product line
-3. Mention product advantages: quality consistency, competitive MOQ, fast delivery from Ningbo
-4. Offer a concrete next step: free samples, catalog with color card, or small trial order
-5. Sound natural and human, NOT like a template
-6. Professional but warm tone
-7. DO NOT use phrases like "I hope this email finds you well" or "We are a leading manufacturer"
-8. Include your company's flexibility on customization (colors, specs, packaging)
-
-Return ONLY the email body (no subject line, no JSON)."""
-
-            resp = client.chat.completions.create(
-                model=model,
-                messages=[
-                    {"role": "system", "content": "You write personalized B2B cold emails for a Chinese textile supplier based in Ningbo. Each email must be 120-180 words, reference specific details about the recipient's business, and include product benefits, customization options, and a concrete next step."},
-                    {"role": "user", "content": prompt},
-                ],
-                temperature=0.8,
-                max_tokens=500,
-            )
-            result = resp.choices[0].message.content.strip()
-            print(f"  [OK] AI draft generated ({len(result)} chars)")
-            return result
-        except Exception as e:
-            print(f"  [ERROR] AI draft FAILED for {company}: {type(e).__name__}: {e}")
-            # Print more details for debugging
-            import traceback
-            traceback.print_exc()
-
-    # Fallback: smarter template with page-based context
-    page_lower = page_text.lower()
-    business_context = ""
-    if "embroidery" in page_lower or "needlework" in page_lower:
-        business_context = "your embroidery and needlework products"
-    elif "fashion" in page_lower or "clothing" in page_lower or "garment" in page_lower:
-        business_context = "your fashion and garment business"
-    elif "quilt" in page_lower or "craft" in page_lower:
-        business_context = "your quilting and craft supplies"
-    elif "upholstery" in page_lower or "interior" in page_lower or "decor" in page_lower:
-        business_context = "your interior decoration products"
-    elif "import" in page_lower or "trade" in page_lower or "distribution" in page_lower:
-        business_context = "your distribution network in the textile market"
-    else:
-        business_context = f"your business in {country}"
-
-    return f"""Dear {company},
-
-I came across your company and was impressed by {business_context}. We are a specialized manufacturer of {keyword} based in Ningbo, China, and I believe our products could be a strong fit for your product range.
-
-We offer consistent quality, competitive pricing, and flexible order quantities. I'd love to send you our latest product catalog and samples so you can evaluate them firsthand.
-
-Would you be interested in exploring this further?
-
-Best regards"""
-
-
-def build_report(leads: list, keywords_used: list, countries_scanned: list, skipped_count: int) -> str:
-    """Build a human-readable morning report with draft emails."""
-    date = datetime.now().strftime("%Y-%m-%d")
-    lines = []
-    lines.append(f"Good morning! TradeAgent Daily Report for {date}")
-    lines.append(f"Keywords: {', '.join(keywords_used)}")
-    lines.append(f"Regions: {', '.join(countries_scanned[:5])}{'...' if len(countries_scanned) > 5 else ''}")
-    lines.append(f"Previously scanned (skipped): {skipped_count} domains")
-    lines.append("=" * 60)
-    lines.append("")
-
-    if not leads:
-        lines.append("[New Leads] No new leads found today.")
-        lines.append("")
-        lines.append("Tips: Try different keywords or expand target countries.")
-    else:
-        lines.append(f"[New Leads] Found {len(leads)} NEW potential customers:")
-        lines.append("")
-        for i, lead in enumerate(leads[:TARGET_NEW_LEADS], 1):
-            score = lead.get("relevance_score", 0)
-            emails = lead.get("emails", [])
-            keyword = lead.get("keyword", "")
-            country = lead.get("country", "")
-            email_str = f" | Email: {', '.join(emails)}" if emails else " | No email found"
-            lines.append(f"  {i}. {lead['company_name']}")
-            lines.append(f"     Website: {lead['website']}")
-            lines.append(f"     Found via: '{keyword}' in {country}")
-            lines.append(f"     Score: {score}/100{email_str}")
-            if lead.get("snippet"):
-                lines.append(f"     Info: {lead['snippet'][:120]}")
-
-            # Draft email section
-            draft = lead.get("draft_email", "")
-            if draft:
-                lines.append("")
-                lines.append(f"     --- DRAFT EMAIL (NOT SENT - REVIEW FIRST) ---")
-                for dline in draft.split("\n"):
-                    lines.append(f"     {dline}")
-                lines.append(f"     --- END DRAFT ---")
-            lines.append("")
-
-    lines.append("=" * 60)
-    lines.append("ALL drafts above are for REVIEW ONLY. Nothing was sent automatically.")
-    lines.append("")
-    lines.append(f"Structured data saved to: {LEADS_JSON_FILE}")
-    lines.append("Import to Web platform: TradeAgent > Dashboard > Import Today's Leads")
-    lines.append("Or send drafts manually: TradeAgent > Emails > Pending Review")
-    lines.append("")
-    lines.append("This report was generated automatically by TradeAgent.")
-    lines.append("https://github.com/zeng111234/TradeAgent")
-    return "\n".join(lines)
-
-
-def save_leads_json(leads: list, keywords_used: list, countries_scanned: list):
-    """Save leads as structured JSON for web platform import."""
-    output = {
-        "scan_date": datetime.now().isoformat(),
-        "keywords_used": keywords_used,
-        "countries_scanned": countries_scanned,
-        "total_found": len(leads),
-        "leads": []
-    }
-
-    for lead in leads:
-        email_list = lead.get("emails", [])
-        output["leads"].append({
-            "company_name": lead.get("company_name", "Unknown"),
-            "website": lead.get("website", ""),
-            "country": lead.get("country", ""),
-            "keyword": lead.get("keyword", ""),
-            "snippet": lead.get("snippet", ""),
-            "emails": email_list,
-            "relevance_score": lead.get("relevance_score", 0),
-            "page_text_preview": lead.get("page_text_preview", "")[:500],
-            "draft_email": lead.get("draft_email", ""),
-            "draft_subject": f"Partnership Inquiry - Quality {lead.get('keyword', 'Textile Products')} from China",
-        })
-
-    try:
-        with open(LEADS_JSON_FILE, "w", encoding="utf-8") as f:
-            json.dump(output, f, indent=2, ensure_ascii=False)
-        print(f"[OK] Structured leads saved to {LEADS_JSON_FILE}")
-    except Exception as e:
-        print(f"[ERROR] Could not save leads JSON: {e}")
-
-
-def send_email_report(report: str, leads: list):
-    """Send the daily report via email."""
-    smtp_host = os.environ.get("SMTP_HOST", "smtp.qq.com")
-    smtp_port = int(os.environ.get("SMTP_PORT", "465"))
-    smtp_user = os.environ.get("SMTP_USER", "")
-    smtp_password = os.environ.get("SMTP_PASSWORD", "")
-    recipient = os.environ.get("REPORT_EMAIL", smtp_user)
-
-    if not smtp_user or not smtp_password:
-        print("[INFO] SMTP not configured, printing report to console only.")
+    if not user or not password:
+        print("[info] SMTP not configured — printing the report instead")
         print(report)
         return
 
-    msg = MIMEMultipart("alternative")
-    msg["Subject"] = f"TradeAgent Daily Report - {datetime.now().strftime('%Y-%m-%d')} ({len(leads)} new leads)"
-    msg["From"] = smtp_user
-    msg["To"] = recipient
-
-    msg.attach(MIMEText(report, "plain", "utf-8"))
-
-    # HTML version
-    html = report.replace("\n", "<br>").replace("  ", "&nbsp;&nbsp;")
-    html_body = f'<div style="font-family: monospace; font-size: 13px; max-width: 700px;">{html}</div>'
-    msg.attach(MIMEText(html_body, "html", "utf-8"))
+    message = MIMEMultipart("alternative")
+    date = datetime.now().strftime("%Y-%m-%d")
+    message["Subject"] = f"TradeAgent daily report — {date} ({prospect_count} new prospects)"
+    message["From"] = user
+    message["To"] = recipient
+    message.attach(MIMEText(report, "plain", "utf-8"))
+    message.attach(
+        MIMEText(
+            '<div style="font-family:monospace;font-size:13px;max-width:760px">'
+            + report.replace("&", "&amp;").replace("<", "&lt;").replace("\n", "<br>")
+            + "</div>",
+            "html",
+            "utf-8",
+        )
+    )
 
     try:
-        with smtplib.SMTP_SSL(smtp_host, smtp_port) as server:
-            server.login(smtp_user, smtp_password)
-            server.sendmail(smtp_user, recipient, msg.as_string())
-        print(f"[OK] Report emailed to {recipient}")
-    except Exception as e:
-        print(f"[ERROR] Failed to send email: {e}")
+        with smtplib.SMTP_SSL(host, port) as server:
+            server.login(user, password)
+            server.sendmail(user, [recipient], message.as_string())
+        print(f"[ok] report emailed to {recipient}")
+    except Exception as exc:  # noqa: BLE001
+        print(f"[error] could not send report: {exc}")
         print(report)
 
 
-def main():
-    print("=" * 60)
-    print(f"TradeAgent Daily Scan v3 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print("=" * 60)
+def _demo_run(keywords: list[str], countries: list[str], headcount: int) -> int:
+    """Exercise the whole scan path offline, against a temp directory.
 
-    # Load config
-    keywords_str = os.environ.get("SCAN_KEYWORDS", "embroidery thread, gold metallic yarn, metallic thread, gold yarn")
-    countries_str = os.environ.get("SCAN_COUNTRIES", "")
-    if countries_str:
-        countries = [c.strip() for c in countries_str.split(",") if c.strip()]
-    else:
-        countries = GLOBAL_COUNTRIES
+    Uses the real loop, the real tools, the real sink and the real report. Only
+    the model and the two network-backed tools are replaced. Exists so the
+    pipeline can be demonstrated and smoke-tested without credentials.
+    """
+    import tempfile
 
-    keywords = [k.strip() for k in keywords_str.split(",") if k.strip()]
+    from app.agent.protocol import LLMReply, ToolCall
+    from app.agent.scan_runner import run_scan
+    from app.agent.tools import Tool, ToolRegistry
 
-    # Load previously scanned domains
-    scanned = load_scanned_domains()
-    skipped_count = len(scanned)
-    print(f"Previously scanned: {skipped_count} domains (will skip)")
+    work = Path(tempfile.mkdtemp(prefix="tradeagent-scan-demo-"))
 
-    all_leads = []
-    seen_this_run = set()
+    class ScriptedLLM:
+        """Same protocol as the real client; replays a fixed script."""
 
-    # Search with EACH keyword in EACH country
-    for keyword in keywords:
-        for country in countries:
-            if len(all_leads) >= TARGET_NEW_LEADS * 2:
-                break
-            print(f"\n--- Searching: '{keyword}' in {country} ---")
-            raw = search_leads(keyword, country, max_results=5, already_scanned=scanned)
-            print(f"  Found {len(raw)} new results")
-            enriched = scrape_lead_details(raw)
-            print(f"  {len(enriched)} relevant after filtering")
+        def __init__(self, script):
+            self.script = script
+            self.index = 0
 
-            for lead in enriched:
-                domain = lead.get("domain", "")
-                if domain not in seen_this_run and len(all_leads) < TARGET_NEW_LEADS * 2:
-                    seen_this_run.add(domain)
-                    all_leads.append(lead)
+        async def chat(self, messages, tools, *, temperature=0.2, max_tokens=1500):
+            if self.index >= len(self.script):
+                return LLMReply(content="(script exhausted)")
+            entry = self.script[self.index]
+            self.index += 1
+            return LLMReply(
+                content=entry.get("content", ""),
+                tool_calls=[
+                    ToolCall(id=f"c{i}", name=tc["name"],
+                             arguments=__import__("json").dumps(tc["arguments"]))
+                    for i, tc in enumerate(entry.get("tool_calls", []))
+                ],
+                prompt_tokens=180, completion_tokens=90,
+            )
 
-        if len(all_leads) >= TARGET_NEW_LEADS * 2:
-            break
+    def _call(name, arguments=None):
+        return {"tool_calls": [{"name": name, "arguments": arguments or {}}]}
 
-    # Take top N leads
-    all_leads.sort(key=lambda x: x.get("relevance_score", 0), reverse=True)
-    top_leads = all_leads[:TARGET_NEW_LEADS]
+    canned_search = {
+        "count": 2,
+        "queries_run": [f"{keywords[0]} wholesaler {countries[0]}", f"{keywords[0]} importer {countries[0]}"],
+        "candidates": [
+            {"company_name": "Example Textil GmbH", "website": "https://example-textil.example",
+             "domain": "example-textil.example", "snippet": "Wholesaler of embroidery threads",
+             "search_keyword": keywords[0], "search_country": countries[0]},
+            {"company_name": "Textile Buyer Directory", "website": "https://directory.example",
+             "domain": "directory.example", "snippet": "Directory of European textile buyers",
+             "search_keyword": keywords[0], "search_country": countries[0]},
+        ],
+        "errors": [],
+        "note": "Unranked and unscored by design.",
+    }
+    canned_page = {
+        "url": "https://example-textil.example", "status_code": 200,
+        "title": "Example Textil GmbH - Embroidery Threads and Metallic Yarns",
+        "emails": ["einkauf@example-textil.example"], "phones": ["+49 40 123456"],
+        "text": "Importer and wholesaler of embroidery threads, metallic yarns and trims "
+                "for the German apparel industry since 1978.",
+        "text_truncated": False, "text_total_chars": 130,
+    }
 
-    print(f"\n=== Selected {len(top_leads)} new leads for today ===")
+    script = [
+        _call("already_scanned"),
+        _call("search_prospects", {"keyword": keywords[0], "country": countries[0]}),
+        _call("inspect_website", {"url": "https://example-textil.example"}),
+        _call("save_prospects", {"prospects": [{
+            "company_name": "Example Textil GmbH",
+            "website": "https://example-textil.example",
+            "country": countries[0],
+            "industry": "Textile",
+            "keyword": keywords[0],
+            "why": "Imports embroidery threads for the German apparel market",
+            "emails": ["einkauf@example-textil.example"],
+            "score": 82,
+            "recommendation": "approach_now",
+            "reasoning": "Their site says they import and wholesale embroidery threads, "
+                         "which is precisely our product line, and they publish a purchasing address.",
+            "evidence": "Importer and wholesaler of embroidery threads and metallic yarns since 1978.",
+        }]}),
+        _call("report_scan_findings", {
+            "market_insights": "German textile buyers describe themselves as wholesalers rather "
+                               "than importers, so 'wholesaler' is the more productive query.",
+            "search_tips": "'importer' returned mostly marketplace directories; 'wholesaler' "
+                           "returned companies that actually stock the product.",
+        }),
+        {"content": "Kept one prospect. Rejected the directory site, which stocks nothing and "
+                    "offers no route to a purchasing contact, so approaching it would waste a turn."},
+    ]
 
-    # Generate draft emails for each lead
-    print("\nGenerating personalized draft emails...")
-    for lead in top_leads:
-        company = lead.get("company_name", "Unknown")
-        print(f"  Drafting for: {company}...")
-        lead["draft_email"] = generate_draft_email(lead)
+    # Rebuild the registry with the two network tools replaced.
+    import app.agent.scan_runner as runner
+    import app.agent.scan_tools as scan_tools
 
-    # Mark all found domains as scanned (so we skip them tomorrow)
-    for lead in top_leads:
-        domain = lead.get("domain", "")
-        if domain:
-            save_scanned_domain(domain, scanned)
+    real_build = scan_tools.build_scan_registry
 
-    print(f"\nTotal scanned domains now: {len(scanned)}")
+    def patched_build(sink, *, allow_save=True):
+        base = real_build(sink, allow_save=allow_save)
+        swapped = ToolRegistry()
 
-    # Save structured JSON for web platform import
-    save_leads_json(top_leads, keywords, countries)
+        async def stub_search(keyword: str, country: str = "", max_results: int = 8) -> dict:
+            return canned_search
 
-    # Build and send report
-    report = build_report(top_leads, keywords, countries, skipped_count)
-    send_email_report(report, top_leads)
+        async def stub_inspect(url: str, max_chars: int = 3000) -> dict:
+            page = dict(canned_page)
+            page["url"] = url
+            return page
 
-    print(f"\nDone! {len(top_leads)} new leads with draft emails.")
-    return len(top_leads)
+        stubs = {"search_prospects": stub_search, "inspect_website": stub_inspect}
+        for name in base.names():
+            original = base.get(name)
+            swapped.register(
+                Tool(name, original.description, original.params_model,
+                     stubs.get(name, original.fn), set(original.tags))
+            )
+        return swapped
+
+    runner.build_scan_registry = patched_build
+    try:
+        outcome = asyncio.run(run_scan(
+            keywords=keywords, countries=countries, out_dir=work,
+            headcount=headcount, llm=ScriptedLLM(script), commit=True,
+        ))
+    finally:
+        runner.build_scan_registry = real_build
+
+    print(outcome.report)
+    print()
+    print(f"[demo] artefacts     : {work}")
+    print(f"[demo] tool path     : {' -> '.join(outcome.run.tool_sequence)}")
+    print(f"[demo] prospects kept: {outcome.prospect_count}")
+    print("[demo] offline — no model was called and no network request was made")
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    from app.agent.scan_runner import run_scan
+    from app.agent.service import is_configured
+
+    argv = list(sys.argv[1:] if argv is None else argv)
+    demo = "--demo" in argv
+
+    keywords = [
+        k.strip()
+        for k in os.environ.get("SCAN_KEYWORDS", DEFAULT_KEYWORDS).split(",")
+        if k.strip()
+    ]
+    countries_raw = os.environ.get("SCAN_COUNTRIES", "").strip()
+    countries = (
+        [c.strip() for c in countries_raw.split(",") if c.strip()]
+        if countries_raw
+        else GLOBAL_COUNTRIES
+    )
+    headcount = int(os.environ.get("SCAN_HEADCOUNT", "5") or 5)
+
+    dry_run = _env_flag("SCAN_DRY_RUN")
+    commit = _env_flag("SCAN_COMMIT", default=True) and not dry_run
+
+    print("=" * 62)
+    print(f"TradeAgent daily scan — {datetime.now():%Y-%m-%d %H:%M:%S}")
+    print(f"  keywords : {', '.join(keywords)}")
+    print(f"  markets  : {', '.join(countries[:6])}{'...' if len(countries) > 6 else ''}")
+    print(f"  target   : {headcount} prospect(s)")
+    print(f"  mode     : {'demo (offline)' if demo else ('dry run' if dry_run else ('commit' if commit else 'read-only'))}")
+    print("=" * 62)
+
+    if demo:
+        return _demo_run(keywords, countries, headcount)
+
+    if not is_configured():
+        print(
+            "[fatal] No LLM configured. Set OPENAI_API_KEY (and optionally "
+            "OPENAI_BASE_URL / OPENAI_MODEL).\n"
+            "        There is no template fallback: a scan that cannot judge is not "
+            "a scan, and pretending otherwise is the failure this rewrite removes.\n"
+            "        Run `python scripts/daily_scan.py --demo` to exercise the "
+            "pipeline offline instead."
+        )
+        return 1
+
+    outcome = asyncio.run(
+        run_scan(
+            keywords=keywords,
+            countries=countries,
+            out_dir=SCRIPT_DIR,
+            headcount=headcount,
+            commit=commit,
+        )
+    )
+
+    run = outcome.run
+    print()
+    print(f"[run] status      : {run.status} ({run.stop_reason})")
+    print(f"[run] tool path   : {' -> '.join(run.tool_sequence) or '(none)'}")
+    print(f"[run] rounds/calls: {len(run.steps)}/{run.tool_call_count}")
+    print(f"[run] tokens      : {run.prompt_tokens} in / {run.completion_tokens} out")
+    print(f"[run] kept        : {outcome.prospect_count} prospect(s)")
+    if outcome.leads_path:
+        print(f"[out] leads       : {outcome.leads_path}")
+        print(f"[out] domains     : {outcome.scanned_path}")
+
+    # Machine-readable summary for CI logs and for the workflow to diff.
+    print("\n--- summary json ---")
+    print(
+        json.dumps(
+            {
+                "run_id": run.run_id,
+                "status": run.status,
+                "stop_reason": run.stop_reason,
+                "tool_sequence": run.tool_sequence,
+                "rounds": len(run.steps),
+                "tool_calls": run.tool_call_count,
+                "prospects_kept": outcome.prospect_count,
+                "dry_run": dry_run,
+            },
+            ensure_ascii=False,
+        )
+    )
+
+    if dry_run:
+        print("\n(dry run: no files written, no email sent)")
+        return 0
+
+    send_report_email(outcome.report, outcome.prospect_count)
+    return 2 if run.status == "error" else 0
 
 
 if __name__ == "__main__":
-    count = main()
-    print(f"\nLeads found: {count}")
+    raise SystemExit(main())

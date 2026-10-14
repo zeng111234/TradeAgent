@@ -103,10 +103,28 @@ Return ONLY valid JSON, no other text."""
 
 
 def _basic_analyze_website(page_text: str, title: str, url: str) -> dict:
-    """Basic keyword-based website analysis (fallback)."""
+    """Extract facts from a page. Deliberately produces NO lead score.
+
+    This used to score the lead with four constants::
+
+        score = 40                      # base
+        if industry detected:  score += 15
+        if country detected:   score += 10
+        if import/wholesale:   score += 20
+        if contact/inquiry:    score += 10
+
+    That number was then displayed as `/100` next to a real lead, so a page
+    containing the word "contact" scored the same as a genuine importer. The
+    scoring is gone. Detection of industry and country stays because those are
+    observations, not judgements.
+
+    When no model is configured the caller gets `not_analyzed`, which says
+    plainly that nothing assessed this page. An honest gap beats a fabricated
+    number.
+    """
     text_lower = page_text.lower()
 
-    # Detect industry
+    # Detect industry (observation, kept)
     industry_keywords = {
         "electronics": ["electronics", "led", "solar", "battery", "charger", "cable", "circuit"],
         "home_garden": ["furniture", "home", "garden", "kitchen", "decor", "lighting"],
@@ -123,7 +141,7 @@ def _basic_analyze_website(page_text: str, title: str, url: str) -> dict:
             detected_industry = ind
             break
 
-    # Detect country
+    # Detect country (observation, kept)
     country_clues = {
         "United States": [".com", "usa", "america", "united states"],
         "Germany": [".de", "germany", "gmbh"],
@@ -139,16 +157,16 @@ def _basic_analyze_website(page_text: str, title: str, url: str) -> dict:
             detected_country = country
             break
 
-    # Simple scoring
-    score = 40  # base
-    if detected_industry != "unknown":
-        score += 15
-    if detected_country != "unknown":
-        score += 10
-    if "import" in text_lower or "wholesale" in text_lower or "distributor" in text_lower:
-        score += 20
-    if "contact" in text_lower or "inquiry" in text_lower:
-        score += 10
+    # Presence signals. These are reported as booleans, NOT summed into a score:
+    # whether they add up to a good prospect is a judgement, and the caller
+    # should make it explicitly or ask a model to.
+    signals = {
+        "mentions_importing": any(
+            w in text_lower for w in ("import", "importer", "imports")
+        ),
+        "mentions_wholesale": any(w in text_lower for w in ("wholesale", "distributor", "distribution")),
+        "has_contact_language": any(w in text_lower for w in ("contact", "inquiry", "enquiry")),
+    }
 
     return {
         "company_name": title.split("-")[0].strip() if title else "Unknown",
@@ -157,11 +175,20 @@ def _basic_analyze_website(page_text: str, title: str, url: str) -> dict:
         "products_they_sell": [],
         "company_size_estimate": "unknown",
         "likely_buying_interest": [],
-        "lead_score": min(score, 100),
-        "score_reasoning": "Basic keyword analysis. Add API key for deeper AI analysis.",
-        "recommended_approach": "Send a professional cold email introducing your products.",
+        # No lead_score key. Callers that need an assessment must ask a model.
+        "presence_signals": signals,
+        "not_analyzed": (
+            "No model is configured and no scoring heuristic is applied, so this "
+            "page has not been assessed for fit. The fields above are keyword "
+            "observations only. Configure OPENAI_API_KEY for a real judgement."
+        ),
+        "score_reasoning": (
+            "No score is produced here by design. A keyword-derived number looks "
+            "like an assessment but is not one."
+        ),
+        "recommended_approach": None,
         "key_selling_points": [],
-        "best_contact_angle": "General product inquiry",
+        "best_contact_angle": None,
         "estimated_order_potential": "unknown",
         "risk_factors": [],
         "ai_powered": False,
@@ -1049,242 +1076,41 @@ async def auto_lead_scanner(
     target_region: str = "",
     max_results: int = 10,
 ) -> dict:
-    """Auto Lead Scanner - automatically find potential buyers from Google.
-    
-    Instead of manually Googling "gold thread buyer Germany" and visiting each site:
-    1. Search Google with product + country keywords
-    2. Visit each result page
-    3. Extract company info (name, email, phone, products)
-    4. Score relevance
-    5. Return structured lead list ready to import into CRM
-    
-    This is the CORE automation that saves hours of manual prospecting.
+    """Find potential buyers by reading their websites. Delegates to the agent.
+
+    This function used to search, scrape, and then discard candidates with a
+    fixed formula::
+
+        relevance_score = 20
+        if b2b_platform:            relevance_score += 30
+        if buyer_keyword_in_text:   relevance_score += 20
+        if product_keyword_match:   relevance_score += 20
+        if product_keywords in text: relevance_score += 15
+        if emails_found:            relevance_score += 10
+        if contact/inquiry in text: relevance_score += 5
+        if relevance_score >= 30:   keep()
+
+    Two things were wrong with that beyond the constants being arbitrary. The
+    filter ran *before* the model was called, so the model only ever saw
+    candidates the formula had already approved - it was asked to rank a list
+    it had no say in. And the surviving number was presented as a relevance
+    score, which reads as an assessment.
+
+    Now the agent decides which candidates are worth opening, reads them, and
+    records its own judgement with the evidence behind it. The response shape
+    is unchanged so the existing endpoint and frontend keep working.
+
+    Raises AgentUnavailable when no model is configured. There is no silent
+    fallback to the removed heuristic: a scan that cannot judge is not a scan.
     """
-    import requests
-    from bs4 import BeautifulSoup
+    from app.agent.scan_runner import find_leads_agentic
 
-    leads = []
-
-    # Build search queries
-    queries = [
-        f"{product_keywords} buyer {target_country}",
-        f"{product_keywords} importer {target_country}",
-        f"{product_keywords} wholesale {target_country}",
-        f'"{product_keywords}" company {target_country} email',
-    ]
-
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.9",
-    }
-
-    seen_domains = set()
-    all_urls = []
-
-    # Step 1: Search using ddgs library
-    try:
-        from ddgs import DDGS
-        ddgs = DDGS()
-        for query in queries[:2]:
-            try:
-                results = list(ddgs.text(query, max_results=max_results))
-                for r in results:
-                    href = r.get("href", "")
-                    if href and href.startswith("http"):
-                        domain = href.split("/")[2] if len(href.split("/")) > 2 else href
-                        if domain not in seen_domains:
-                            seen_domains.add(domain)
-                            all_urls.append(href)
-                            logger.info(f"Found: {domain} - {r.get('title', '')[:50]}")
-            except Exception as e:
-                logger.error(f"DDGS search error for '{query}': {e}")
-    except ImportError:
-        logger.warning("ddgs not installed, falling back to basic scraping")
-    except Exception as e:
-        logger.error(f"DDGS error: {e}")
-
-    logger.info(f"Lead Scanner found {len(all_urls)} URLs from search")
-
-    # Step 2: Visit each URL and extract company info
-    for url in all_urls[:max_results]:
-        try:
-            resp = requests.get(url, headers=headers, timeout=10, verify=False)
-            soup = BeautifulSoup(resp.text, "lxml")
-
-            # Remove noise
-            for tag in soup(["script", "style", "nav", "footer"]):
-                tag.decompose()
-
-            page_text = soup.get_text(separator="\n", strip=True)[:5000]
-            title = soup.title.string if soup.title else ""
-            text_lower = page_text.lower()
-
-            # Extract emails from page
-            email_pattern = r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
-            emails = list(set(re.findall(email_pattern, page_text)))
-            # Filter out common non-company emails
-            emails = [e for e in emails if not any(x in e.lower() for x in
-                ["noreply", "no-reply", "support@", "info@google", "example.com",
-                 "sentry.io", "wixpress", "wordpress", "@s.", ".png", ".jpg"])]
-
-            # Extract phone numbers
-            phone_pattern = r'[\+]?[\d\s\-\(\)]{7,15}'
-            phones = re.findall(phone_pattern, page_text)
-            phones = [p.strip() for p in phones if len(p.strip()) >= 8][:3]
-
-            # Detect company name from title
-            company_name = title.split("-")[0].strip() if title else ""
-            company_name = company_name.split("|")[0].strip()
-
-            # Detect country clues
-            detected_country = target_country or "Unknown"
-            country_keywords = {
-                "Germany": [".de", "gmbh", "german"],
-                "United States": [".com", "llc", "inc", "corp"],
-                "United Kingdom": [".co.uk", "ltd", "limited"],
-                "France": [".fr", "sarl", "sas"],
-                "Italy": [".it", "srl", "spa"],
-                "Spain": [".es", "sl", "sa"],
-                "Netherlands": [".nl", "bv"],
-                "India": [".in", "pvt"],
-                "Brazil": [".br", "ltda"],
-                "Australia": [".au", "pty"],
-            }
-            url_lower = url.lower()
-            if not target_country:
-                for country, clues in country_keywords.items():
-                    if any(c in url_lower for c in clues) or any(c in text_lower for c in clues):
-                        detected_country = country
-                        break
-
-            # Check if page is relevant (buyer/importer)
-            relevance_score = 20  # base
-            buyer_keywords = ["import", "buyer", "wholesale", "distributor", "retailer",
-                            "sourcing", "procurement", "supply chain", "trade",
-                            "importer", "importers", "buyer", "buyers", "purchasing"]
-            b2b_platforms = ["exporthub.com", "tradekey.com", "alibaba.com", "made-in-china.com",
-                           "globalsources.com", "indiamart.com", "volza.com", "importgenius.com",
-                           "panjiva.com", "tradedata.net", "kompass.com", "thomasnet.com"]
-            
-            # B2B platform boost
-            is_b2b = any(p in url_lower for p in b2b_platforms)
-            if is_b2b:
-                relevance_score += 30
-            
-            if any(kw in text_lower for kw in buyer_keywords):
-                relevance_score += 20
-            # Check for product keywords (fuzzy match - partial)
-            product_parts = product_keywords.lower().split()
-            if any(part in text_lower for part in product_parts if len(part) > 3):
-                relevance_score += 20
-            if product_keywords.lower() in text_lower:
-                relevance_score += 15
-            if emails:
-                relevance_score += 10
-            if "contact" in text_lower or "inquiry" in text_lower:
-                relevance_score += 5
-
-            # Only include if somewhat relevant
-            if relevance_score >= 30:
-                leads.append({
-                    "company_name": company_name or "Unknown",
-                    "website": url,
-                    "country": detected_country,
-                    "emails": emails[:3],
-                    "phones": phones[:2],
-                    "relevance_score": min(relevance_score, 100),
-                    "page_title": title[:200],
-                    "snippet": page_text[:300].replace("\n", " "),
-                    "has_contact": bool(emails),
-                })
-
-        except Exception as e:
-            logger.error(f"Error scraping {url}: {e}")
-
-    # Sort by relevance
-    leads.sort(key=lambda x: x["relevance_score"], reverse=True)
-
-    # AI enhancement: if API key available, use AI to score and enrich top leads
-    if settings.OPENAI_API_KEY and leads:
-        try:
-            from openai import AsyncOpenAI
-            client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY, base_url=settings.OPENAI_BASE_URL)
-
-            leads_summary = "\n".join([
-                f"- {l['company_name']} ({l['website']}) - {l['country']} - Score: {l['relevance_score']}"
-                for l in leads[:8]
-            ])
-
-            prompt = f"""You are a foreign trade lead analyst. Review these leads found by Google search for "{product_keywords}" in {target_country}.
-
-Leads:
-{leads_summary}
-
-For each lead, provide a brief assessment. Return JSON:
-{{
-    "recommendations": [
-        {{
-            "company_name": "name",
-            "priority": "high|medium|low",
-            "reason": "why this is a good/bad lead",
-            "approach_angle": "how to approach this customer",
-            "estimated_potential": "small/medium/large order"
-        }}
-    ],
-    "market_insights": "brief insights about this market for these products",
-    "search_tips": "suggestions for better search queries"
-}}
-
-Return ONLY valid JSON."""
-
-            resp = await client.chat.completions.create(
-                model=settings.OPENAI_MODEL,
-                messages=[
-                    {"role": "system", "content": "You are a B2B trade lead analyst. Return valid JSON."},
-                    {"role": "user", "content": prompt},
-                ],
-                temperature=0.3,
-                max_tokens=1500,
-            )
-
-            content = resp.choices[0].message.content.strip()
-            if content.startswith("```"):
-                content = content.split("```")[1]
-                if content.startswith("json"):
-                    content = content[4:]
-            ai_analysis = json.loads(content)
-
-            # Merge AI analysis into leads
-            for rec in ai_analysis.get("recommendations", []):
-                for lead in leads:
-                    if lead["company_name"] == rec.get("company_name"):
-                        lead["ai_priority"] = rec.get("priority", "medium")
-                        lead["ai_reason"] = rec.get("reason", "")
-                        lead["approach_angle"] = rec.get("approach_angle", "")
-                        lead["estimated_potential"] = rec.get("estimated_potential", "unknown")
-                        break
-
-            return {
-                "total_found": len(leads),
-                "leads": leads,
-                "market_insights": ai_analysis.get("market_insights", ""),
-                "search_tips": ai_analysis.get("search_tips", ""),
-                "ai_powered": True,
-                "search_queries_used": queries[:2],
-            }
-
-        except Exception as e:
-            logger.error(f"AI enhancement error: {e}")
-
-    return {
-        "total_found": len(leads),
-        "leads": leads,
-        "market_insights": "",
-        "search_tips": "Try different keyword combinations for better results",
-        "ai_powered": False,
-        "search_queries_used": queries[:2],
-    }
+    return await find_leads_agentic(
+        product_keywords=product_keywords,
+        target_country=target_country,
+        target_region=target_region,
+        max_results=max_results,
+    )
 
 
 async def generate_pi(

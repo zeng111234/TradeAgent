@@ -28,6 +28,16 @@ async def get_db() -> AsyncSession:
 
 
 async def init_db():
-    """Initialize database tables."""
+    """Create every table.
+
+    Imports the models package first. Without it, ``Base.metadata`` contains
+    only whatever the importing module happened to pull in — so calling this
+    from a fresh process (a CLI, a cron job, a test) would silently create a
+    database with no tables, and the failure would only surface later as
+    "no such table". Registering the models explicitly makes the function mean
+    what its name says.
+    """
+    import app.models  # noqa: F401  (registers every table on Base.metadata)
+
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)

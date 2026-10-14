@@ -54,9 +54,19 @@ import app.config as app_config  # noqa: E402
 app_config.settings.DATABASE_URL = os.environ["DATABASE_URL"]
 
 
-@pytest.fixture(scope="session")
-def _db_ready():
-    """Session-scoped guard: the app's own lifespan creates the schema."""
+@pytest.fixture(scope="session", autouse=True)
+def _create_schema():
+    """Create every table once for the session.
+
+    The ``client`` fixture gets this for free from the app lifespan, but tests
+    that only use ``db`` (repository, scan runner) would otherwise hit
+    "no such table: agent_runs". Creating it here is idempotent.
+    """
+    import asyncio
+
+    from app.database import init_db
+
+    asyncio.run(init_db())
     yield
 
 
