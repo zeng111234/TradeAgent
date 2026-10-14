@@ -1,0 +1,34 @@
+# Store every text file with LF, regardless of the platform it was edited on.
+#
+# Why this exists: the repository stores LF, but on Windows the working tree is
+# checked out as CRLF. An editor or tool that writes CRLF then turns a two-line
+# change into a whole-file diff, which hides the real edit. That happened twice
+# during the agent refactor — a 77/251 change appeared as 2650 lines until the
+# line endings were normalised back.
+#
+# Pinning `eol=lf` makes the working tree and the index agree, so a diff shows
+# only what changed.
+* text=auto eol=lf
+
+# Binary formats must not be touched.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.pdf binary
+*.zip binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.eot binary
+
+# Generated or vendored files we never edit by hand.
+package-lock.json -diff linguist-generated
+*.min.js -diff
+*.min.css -diff
+
+# Windows scripts still need CRLF to run reliably from cmd.exe.
+*.bat text eol=crlf
+*.cmd text eol=crlf
