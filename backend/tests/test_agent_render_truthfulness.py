@@ -202,6 +202,54 @@ def test_refused_calls_are_labelled_in_the_timeline():
     assert "refused: tool_budget_exhausted" in page
 
 
+# --- zoom controls on the standalone page ----------------------------------
+#
+# Without these the diagram was squeezed into the page width and could not be
+# enlarged — a ten-participant sequence diagram became unreadable, which defeats
+# the point of showing it.
+
+def test_the_diagram_has_zoom_controls():
+    page = render_html({
+        "goal": "g", "status": "succeeded", "stop_reason": "final answer",
+        "steps": TRACE, "final_output": "Done.",
+    })
+    for control in ('id="zoom-in"', 'id="zoom-out"', 'id="zoom-reset"',
+                    'id="zoom-full"', 'id="viewport"', 'id="canvas"'):
+        assert control in page, f"missing zoom control: {control}"
+
+
+def test_zoom_controls_have_no_duplicate_ids():
+    """A duplicated id made the percentage label unreachable by getElementById."""
+    page = render_html({
+        "goal": "g", "status": "succeeded", "stop_reason": "final answer",
+        "steps": TRACE, "final_output": "Done.",
+    })
+    for element_id in ("zoom-in", "zoom-out", "zoom-reset", "zoom-full", "viewport", "canvas"):
+        assert page.count(f'id="{element_id}"') == 1, f"duplicate id: {element_id}"
+
+
+def test_diagram_is_configured_not_to_squeeze():
+    """useMaxWidth would let Mermaid shrink the SVG to its parent, undoing zoom."""
+    page = render_html({
+        "goal": "g", "status": "succeeded", "stop_reason": "final answer",
+        "steps": TRACE, "final_output": "Done.",
+    })
+    assert "useMaxWidth: false" in page
+    # And sanitisation stays strict: labels carry scraped page text.
+    assert 'securityLevel: "strict"' in page
+
+
+def test_standalone_page_has_no_app_shell_dependency():
+    """It must open from disk, in a new tab, with no frontend build."""
+    page = render_html({
+        "goal": "g", "status": "succeeded", "stop_reason": "final answer",
+        "steps": TRACE, "final_output": "Done.",
+    })
+    assert page.startswith("<!DOCTYPE html>")
+    assert 'mermaid@11' in page
+    assert "<script" in page
+
+
 # --- render_markdown -------------------------------------------------------
 
 def test_markdown_basics():

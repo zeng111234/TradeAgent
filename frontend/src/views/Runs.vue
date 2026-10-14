@@ -32,22 +32,40 @@
           权限边界 —— agent 有 {{ capabilities.tool_count }} 个工具，但发送权不在它手上
         </span>
       </template>
-      <el-row :gutter="20">
-        <el-col :span="12">
+
+      <div class="boundary-grid">
+        <div class="boundary-cell">
           <p class="section-label">可写工具（仅此两个）</p>
-          <el-tag v-for="t in capabilities.write_capable" :key="t" size="small" style="margin: 0 6px 6px 0">
-            {{ t }}
-          </el-tag>
-        </el-col>
-        <el-col :span="12">
-          <p class="section-label">不存在的工具</p>
-          <el-tag v-for="c in capabilities.cannot" :key="c" type="danger" size="small" effect="plain"
-            style="margin: 0 6px 6px 0">
-            {{ c }}
-          </el-tag>
-          <p class="hint">{{ capabilities.sending }}</p>
-        </el-col>
-      </el-row>
+          <div class="tag-cloud">
+            <el-tag v-for="t in capabilities.write_capable" :key="t" size="small" style="margin: 0">
+              {{ t }}
+            </el-tag>
+          </div>
+          <p class="hint">
+            两个都能写，但都写不到客户手上：一个只存 <code>pending</code> 草稿，一个遇到已存在的客户直接
+            <code>skipped</code>。
+          </p>
+        </div>
+
+        <div class="boundary-cell">
+          <p class="section-label">
+            刻意不存在的工具
+            <span class="badge">不是缺失，是设计</span>
+          </p>
+          <div class="tag-cloud">
+            <el-tag v-for="c in capabilities.cannot" :key="c" type="danger" size="small" effect="plain"
+              style="margin: 0">
+              {{ c }}
+            </el-tag>
+          </div>
+          <p class="hint">
+            这些不是我忘了加，是<strong>故意没有注册</strong>。边界靠"工具不存在"实现，不靠提示词要求模型自觉 ——
+            一条提示词可以被绕过，一个不存在的工具不行。
+          </p>
+        </div>
+      </div>
+
+      <p class="hint boundary-foot">{{ capabilities.sending }}</p>
     </el-card>
 
     <!-- Run form -->
@@ -170,9 +188,19 @@
         </el-table-column>
         <el-table-column prop="rounds" label="轮次" width="70" />
         <el-table-column prop="tool_calls" label="调用" width="70" />
-        <el-table-column label="目标" min-width="240">
+        <el-table-column label="目标" min-width="200">
           <template #default="{ row }">
             <span class="goal-cell">{{ row.goal }}</span>
+          </template>
+        </el-table-column>
+        <!-- An explicit action, because the diagram is the whole point of this
+             page and a row click is not a visible affordance. -->
+        <el-table-column label="操作" width="150" align="right">
+          <template #default="{ row }">
+            <el-button size="small" type="primary" link @click.stop="openRun(row)">
+              查看轨迹
+            </el-button>
+            <el-button size="small" link @click.stop="openTracePage(row)">新窗口</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -303,6 +331,11 @@ async function openRun(row) {
   }
 }
 
+/** The standalone page renders the same trace without the app shell. */
+function openTracePage(row) {
+  window.open(traceUrl(row.run_id), '_blank', 'noopener')
+}
+
 onMounted(() => {
   loadCapabilities()
   loadRuns()
@@ -315,6 +348,39 @@ onMounted(() => {
   font-size: 13px;
   color: #606266;
   margin: 0 0 8px;
+}
+/* A two-column el-row with :span="12" clipped the tag list on narrower windows,
+   which is how the boundary came to look truncated. Flex wrap instead. */
+.boundary-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px;
+}
+.boundary-cell {
+  flex: 1 1 320px;
+  min-width: 260px;
+}
+.tag-cloud {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.badge {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 500;
+  color: #b88230;
+  background: #fdf6ec;
+  border: 1px solid #f5dab1;
+}
+.boundary-foot {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid #f0f2f5;
 }
 .hint {
   color: #909399;

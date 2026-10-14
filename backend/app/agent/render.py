@@ -599,7 +599,107 @@ def render_html(run: Any, *, title: Optional[str] = None) -> str:
 <title>{heading}</title>
 <script type="module">
   import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
-  mermaid.initialize({{ startOnLoad: true, theme: "neutral" }});
+  // securityLevel stays strict: diagram labels contain scraped page text, and
+  // Mermaid's own pan/zoom is only available at 'loose'. The controls below are
+  // plain CSS transforms over the SVG Mermaid produced.
+  mermaid.initialize({{
+    startOnLoad: true,
+    theme: "neutral",
+    securityLevel: "strict",
+    sequence: {{ useMaxWidth: false }},
+    flowchart: {{ useMaxWidth: false }},
+  }});
+  // --- zoom and pan, applied after Mermaid draws ---
+  document.addEventListener("DOMContentLoaded", function () {{
+    var zoom = 1, dragging = false, start = null;
+    var viewport = document.getElementById("viewport");
+    var canvas = document.getElementById("canvas");
+    var label = document.getElementById("zoom-reset");
+
+    function apply() {{
+      canvas.style.width = (canvas.dataset.baseWidth || 0) + "px";
+      canvas.style.transform = "scale(" + zoom + ")";
+      if (label) label.textContent = Math.round(zoom * 100) + "%";
+      viewport.style.cursor = zoom > 1 ? "grab" : "default";
+    }}
+
+    function measure() {{
+      var node = canvas.querySelector("svg");
+      if (!node) return false;
+      node.style.maxWidth = "none";
+      node.style.width = "100%";
+      node.style.height = "auto";
+      var box = node.getAttribute("viewBox");
+      var natural = box ? Number(box.split(/[\\s,]+/)[2]) : 0;
+      // Same rule as the app: scale up to fill, never below a readable floor.
+      canvas.dataset.baseWidth = Math.round(
+        Math.max(viewport.clientWidth, Math.min(natural || viewport.clientWidth, 3000))
+      );
+      apply();
+      return true;
+    }}
+
+    function zoomTo(next) {{
+      var clamped = Math.min(4, Math.max(0.25, Math.round(next * 100) / 100));
+      if (clamped === zoom) return;
+      var cx = viewport.scrollLeft + viewport.clientWidth / 2;
+      var cy = viewport.scrollTop + viewport.clientHeight / 2;
+      var was = zoom;
+      zoom = clamped;
+      apply();
+      var ratio = zoom / was;
+      viewport.scrollLeft = cx * ratio - viewport.clientWidth / 2;
+      viewport.scrollTop = cy * ratio - viewport.clientHeight / 2;
+    }}
+
+    document.getElementById("zoom-in").addEventListener("click", function () {{ zoomTo(zoom + 0.25); }});
+    document.getElementById("zoom-out").addEventListener("click", function () {{ zoomTo(zoom - 0.25); }});
+    document.getElementById("zoom-reset").addEventListener("click", function () {{
+      zoomTo(1);
+      viewport.scrollLeft = 0;
+      viewport.scrollTop = 0;
+    }});
+    document.getElementById("zoom-full").addEventListener("click", function () {{
+      viewport.classList.toggle("fullscreen");
+      document.body.style.overflow = viewport.classList.contains("fullscreen") ? "hidden" : "";
+      measure();
+    }});
+    document.addEventListener("keydown", function (event) {{
+      if (event.key === "Escape" && viewport.classList.contains("fullscreen")) {{
+        viewport.classList.remove("fullscreen");
+        document.body.style.overflow = "";
+        measure();
+      }}
+    }});
+    viewport.addEventListener("mousedown", function (event) {{
+      if (zoom <= 1 || event.button !== 0) return;
+      dragging = true;
+      start = {{ x: event.clientX, y: event.clientY,
+                 left: viewport.scrollLeft, top: viewport.scrollTop }};
+      viewport.style.cursor = "grabbing";
+    }});
+    viewport.addEventListener("mousemove", function (event) {{
+      if (!dragging) return;
+      viewport.scrollLeft = start.left - (event.clientX - start.x);
+      viewport.scrollTop = start.top - (event.clientY - start.y);
+    }});
+    window.addEventListener("mouseup", function () {{
+      dragging = false;
+      viewport.style.cursor = zoom > 1 ? "grab" : "default";
+    }});
+    viewport.addEventListener("wheel", function (event) {{
+      if (!event.ctrlKey) return;
+      event.preventDefault();
+      zoomTo(zoom + (event.deltaY < 0 ? 0.25 : -0.25));
+    }}, {{ passive: false }});
+
+    // Mermaid renders asynchronously; poll briefly for the SVG.
+    var tries = 0;
+    (function wait() {{
+      if (measure() || ++tries > 60) return;
+      setTimeout(wait, 100);
+    }})();
+  }});
 </script>
 <style>
   :root {{ color-scheme: light dark; }}
@@ -612,7 +712,23 @@ def render_html(run: Any, *, title: Optional[str] = None) -> str:
         border-radius: 10px; }}
   dl div {{ display: flex; gap: .5rem; }}
   dt {{ opacity: .62; }} dd {{ margin: 0; font-weight: 600; }}
-  .seq {{ margin: 0 0 2rem; overflow-x: auto; }}
+  .diagram {{ margin: 0 0 2rem; }}
+  .toolbar {{ display: flex; align-items: center; gap: .5rem; flex-wrap: wrap;
+              margin-bottom: .6rem; }}
+  .toolbar button {{ font: inherit; font-size: .82rem; padding: .25rem .7rem; cursor: pointer;
+                     border: 1px solid color-mix(in srgb, currentColor 22%, transparent);
+                     border-radius: 6px; background: transparent; color: inherit; }}
+  .toolbar button:disabled {{ opacity: .4; cursor: default; }}
+  .toolbar .pct {{ min-width: 3.4rem; }}
+  .toolbar .hint {{ opacity: .6; font-size: .78rem; margin-left: .3rem; }}
+  .viewport {{ overflow: auto; max-height: 30rem; border-radius: 8px; padding: .5rem;
+               background: color-mix(in srgb, currentColor 3%, transparent); }}
+  .viewport.fullscreen {{ position: fixed; inset: 24px; z-index: 100;
+                          max-height: none; background: Canvas;
+                          box-shadow: 0 12px 48px rgba(0,0,0,.25); padding: 1rem; }}
+  #canvas {{ display: inline-block; min-width: 100%; transform-origin: 0 0;
+             transition: transform .12s ease-out; }}
+  #canvas svg {{ display: block; max-width: none !important; height: auto; }}
   ol {{ list-style: none; padding: 0; margin: 0; }}
   li {{ border-left: 3px solid color-mix(in srgb, currentColor 22%, transparent);
         padding: 0 0 1.1rem 1.1rem; margin: 0 0 1.1rem; }}
@@ -661,7 +777,18 @@ def render_html(run: Any, *, title: Optional[str] = None) -> str:
   <h1>{heading}</h1>
   <p class="sub">tool path: <code>{html.escape(tool_sequence)}</code></p>
   <dl>{stats_html}</dl>
-  <div class="seq"><pre class="mermaid">{diagram}</pre></div>
+  <div class="diagram">
+    <div class="toolbar">
+      <button id="zoom-out" title="Zoom out">−</button>
+      <button id="zoom-in" title="Zoom in">+</button>
+      <button id="zoom-reset" class="pct" title="Reset to 100%">100%</button>
+      <button id="zoom-full">Full screen</button>
+      <span class="hint">Ctrl + scroll to zoom, drag to pan</span>
+    </div>
+    <div class="viewport" id="viewport">
+      <div id="canvas"><pre class="mermaid">{diagram}</pre></div>
+    </div>
+  </div>
   {conclusion_html}
   <ol>{''.join(rows)}</ol>
 </body>
