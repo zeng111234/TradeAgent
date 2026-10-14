@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.database import init_db
-from app.routers import customers, emails, tasks, analytics, agent
+from app.routers import customers, emails, tasks, analytics, agent, agent_runs
 from app.scheduler import start_scheduler, stop_scheduler, get_job_status, trigger_daily_routine
 
 # Logging
@@ -55,6 +55,9 @@ app.include_router(emails.router, prefix="/api/v1")
 app.include_router(tasks.router, prefix="/api/v1")
 app.include_router(analytics.router, prefix="/api/v1")
 app.include_router(agent.router, prefix="/api/v1")
+# Goal-driven runs and their traces. Separate router so the reviewed,
+# human-triggered endpoints above stay untouched.
+app.include_router(agent_runs.router, prefix="/api/v1")
 
 
 @app.get("/")

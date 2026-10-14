@@ -28,6 +28,12 @@ EXPECTED_ROUTES: dict[str, set[str]] = {
     "/api/v1/agent/scan-leads": {"post"},
     "/api/v1/agent/scan-leads-draft": {"post"},
     "/api/v1/agent/send-drafted-emails": {"post"},
+    # --- goal-driven agent runs (added by the agent refactor) ---
+    "/api/v1/agent/capabilities": {"get"},
+    "/api/v1/agent/run": {"post"},
+    "/api/v1/agent/runs": {"get"},
+    "/api/v1/agent/runs/{run_id}": {"get"},
+    "/api/v1/agent/runs/{run_id}/trace.html": {"get"},
     # --- analytics router (5) ---
     "/api/v1/analytics/countries": {"get"},
     "/api/v1/analytics/dashboard": {"get"},

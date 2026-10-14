@@ -158,7 +158,7 @@ async def _persist(run: AgentRun) -> None:
 
 
 def summarise(result: AgentResult) -> dict[str, Any]:
-    """Compact shape for logs and CI output."""
+    """Compact shape for logs, CI output and API responses."""
     run = result.run
     return {
         "run_id": run.run_id,
@@ -169,6 +169,8 @@ def summarise(result: AgentResult) -> dict[str, Any]:
         "tool_calls": run.tool_call_count,
         "did_investigate": run.did_investigate,
         "elapsed": round(run.elapsed, 2),
+        "prompt_tokens": run.prompt_tokens,
+        "completion_tokens": run.completion_tokens,
         "final_output": run.final_output,
         "error": run.error,
     }
