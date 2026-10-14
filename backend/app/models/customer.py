@@ -1,108 +1,108 @@
-"""Customer related database models."""
-from datetime import datetime
-from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Float, Enum as SQLEnum
-from sqlalchemy.orm import relationship
-import enum
-
-from app.database import Base
-
-
-class CustomerStage(str, enum.Enum):
-    """Customer pipeline stage."""
-    NEW = "new"                # ĞÂ¿Í»§
-    CONTACTED = "contacted"    # ÒÑÁªÏµ
-    INTERESTED = "interested"  # ÓĞÒâÏò
-    QUOTING = "quoting"        # ±¨¼ÛÖĞ
-    SAMPLE = "sample"          # ¼ÄÑùÖĞ
-    ORDERING = "ordering"      # ÏÂµ¥ÖĞ
-    COMPLETED = "completed"    # ÒÑ³É½»
-    LOST = "lost"              # ÒÑÁ÷Ê§
-
-
-class CustomerSource(str, enum.Enum):
-    """Customer source channel."""
-    MANUAL = "manual"          # ÊÖ¶¯Â¼Èë
-    IMPORT = "import"          # ÅúÁ¿µ¼Èë
-    SCRAPER = "scraper"        # Êı¾İ²É¼¯
-    REFERRAL = "referral"      # ¿Í»§ÍÆ¼ö
-    EXHIBITION = "exhibition"  # Õ¹»á
-    ALIBABA = "alibaba"        # °¢Àï¹ú¼ÊÕ¾
-    OTHER = "other"            # ÆäËû
-
-
-class Customer(Base):
-    """Customer model - core entity."""
-    __tablename__ = "customers"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    company_name = Column(String(200), nullable=False, index=True)
-    company_name_cn = Column(String(200), nullable=True)  # ÖĞÎÄ¹«Ë¾Ãû
-    country = Column(String(100), nullable=True)
-    region = Column(String(100), nullable=True)  # Ê¡/Öİ
-    city = Column(String(100), nullable=True)
-    website = Column(String(500), nullable=True)
-    industry = Column(String(200), nullable=True)  # ĞĞÒµ
-    products = Column(Text, nullable=True)  # ²É¹º²úÆ·¹Ø¼ü´Ê
-    source = Column(SQLEnum(CustomerSource), default=CustomerSource.MANUAL)
-    stage = Column(SQLEnum(CustomerStage), default=CustomerStage.NEW)
-    score = Column(Float, default=0.0)  # AIÆ¥ÅäÆÀ·Ö 0-100
-    tags = Column(String(500), nullable=True)  # ¶ººÅ·Ö¸ôµÄ±êÇ©
-    annual_import_value = Column(String(100), nullable=True)  # Äê½ø¿Ú¶î
-    notes = Column(Text, nullable=True)
-
-    # Ê±¼ä´Á
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    last_contacted_at = Column(DateTime, nullable=True)
-    next_follow_up_at = Column(DateTime, nullable=True)
-
-    # ¹ØÁª
-    contacts = relationship("CustomerContact", back_populates="customer", cascade="all, delete-orphan")
-    notes_list = relationship("CustomerNote", back_populates="customer", cascade="all, delete-orphan")
-    email_logs = relationship("EmailLog", back_populates="customer", cascade="all, delete-orphan")
-
-    def __repr__(self):
-        return f"<Customer(id={self.id}, company='{self.company_name}', stage='{self.stage}')>"
-
-
-class CustomerContact(Base):
-    """Customer contact person model."""
-    __tablename__ = "customer_contacts"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    customer_id = Column(Integer, ForeignKey("customers.id"), nullable=False)
-    name = Column(String(100), nullable=False)
-    title = Column(String(100), nullable=True)  # Ö°Î»
-    email = Column(String(200), nullable=True)
-    phone = Column(String(50), nullable=True)
-    whatsapp = Column(String(50), nullable=True)
-    linkedin = Column(String(300), nullable=True)
-    is_primary = Column(Integer, default=0)  # ÊÇ·ñÖ÷ÒªÁªÏµÈË
-    notes = Column(Text, nullable=True)
-
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-
-    # ¹ØÁª
-    customer = relationship("Customer", back_populates="contacts")
-
-    def __repr__(self):
-        return f"<CustomerContact(id={self.id}, name='{self.name}', email='{self.email}')>"
-
-
-class CustomerNote(Base):
-    """Customer interaction notes / communication timeline."""
-    __tablename__ = "customer_notes"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    customer_id = Column(Integer, ForeignKey("customers.id"), nullable=False)
-    content = Column(Text, nullable=False)
-    note_type = Column(String(50), default="general")  # general, email, call, meeting, quotation
-
-    created_at = Column(DateTime, default=datetime.utcnow)
-
-    # ¹ØÁª
-    customer = relationship("Customer", back_populates="notes_list")
-
-    def __repr__(self):
+"""Customer related database models."""
+from datetime import datetime
+from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Float, Enum as SQLEnum
+from sqlalchemy.orm import relationship
+import enum
+
+from app.database import Base
+
+
+class CustomerStage(str, enum.Enum):
+    """Customer pipeline stage."""
+    NEW = "new"                # æ–°å®¢æˆ·
+    CONTACTED = "contacted"    # å·²è”ç³»
+    INTERESTED = "interested"  # æœ‰æ„å‘
+    QUOTING = "quoting"        # æŠ¥ä»·ä¸­
+    SAMPLE = "sample"          # å¯„æ ·ä¸­
+    ORDERING = "ordering"      # ä¸‹å•ä¸­
+    COMPLETED = "completed"    # å·²æˆäº¤
+    LOST = "lost"              # å·²æµå¤±
+
+
+class CustomerSource(str, enum.Enum):
+    """Customer source channel."""
+    MANUAL = "manual"          # æ‰‹åŠ¨å½•å…¥
+    IMPORT = "import"          # æ‰¹é‡å¯¼å…¥
+    SCRAPER = "scraper"        # æ•°æ®é‡‡é›†
+    REFERRAL = "referral"      # å®¢æˆ·æ¨è
+    EXHIBITION = "exhibition"  # å±•ä¼š
+    ALIBABA = "alibaba"        # é˜¿é‡Œå›½é™…ç«™
+    OTHER = "other"            # å…¶ä»–
+
+
+class Customer(Base):
+    """Customer model - core entity."""
+    __tablename__ = "customers"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    company_name = Column(String(200), nullable=False, index=True)
+    company_name_cn = Column(String(200), nullable=True)  # ä¸­æ–‡å…¬å¸å
+    country = Column(String(100), nullable=True)
+    region = Column(String(100), nullable=True)  # çœ/å·
+    city = Column(String(100), nullable=True)
+    website = Column(String(500), nullable=True)
+    industry = Column(String(200), nullable=True)  # è¡Œä¸š
+    products = Column(Text, nullable=True)  # é‡‡è´­äº§å“å…³é”®è¯
+    source = Column(SQLEnum(CustomerSource), default=CustomerSource.MANUAL)
+    stage = Column(SQLEnum(CustomerStage), default=CustomerStage.NEW)
+    score = Column(Float, default=0.0)  # AIåŒ¹é…è¯„åˆ† 0-100
+    tags = Column(String(500), nullable=True)  # é€—å·åˆ†éš”çš„æ ‡ç­¾
+    annual_import_value = Column(String(100), nullable=True)  # å¹´è¿›å£é¢
+    notes = Column(Text, nullable=True)
+
+    # æ—¶é—´æˆ³
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    last_contacted_at = Column(DateTime, nullable=True)
+    next_follow_up_at = Column(DateTime, nullable=True)
+
+    # å…³è”
+    contacts = relationship("CustomerContact", back_populates="customer", cascade="all, delete-orphan")
+    notes_list = relationship("CustomerNote", back_populates="customer", cascade="all, delete-orphan")
+    email_logs = relationship("EmailLog", back_populates="customer", cascade="all, delete-orphan")
+
+    def __repr__(self):
+        return f"<Customer(id={self.id}, company='{self.company_name}', stage='{self.stage}')>"
+
+
+class CustomerContact(Base):
+    """Customer contact person model."""
+    __tablename__ = "customer_contacts"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    customer_id = Column(Integer, ForeignKey("customers.id"), nullable=False)
+    name = Column(String(100), nullable=False)
+    title = Column(String(100), nullable=True)  # èŒä½
+    email = Column(String(200), nullable=True)
+    phone = Column(String(50), nullable=True)
+    whatsapp = Column(String(50), nullable=True)
+    linkedin = Column(String(300), nullable=True)
+    is_primary = Column(Integer, default=0)  # æ˜¯å¦ä¸»è¦è”ç³»äºº
+    notes = Column(Text, nullable=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # å…³è”
+    customer = relationship("Customer", back_populates="contacts")
+
+    def __repr__(self):
+        return f"<CustomerContact(id={self.id}, name='{self.name}', email='{self.email}')>"
+
+
+class CustomerNote(Base):
+    """Customer interaction notes / communication timeline."""
+    __tablename__ = "customer_notes"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    customer_id = Column(Integer, ForeignKey("customers.id"), nullable=False)
+    content = Column(Text, nullable=False)
+    note_type = Column(String(50), default="general")  # general, email, call, meeting, quotation
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    # å…³è”
+    customer = relationship("Customer", back_populates="notes_list")
+
+    def __repr__(self):
         return f"<CustomerNote(id={self.id}, type='{self.note_type}')>"

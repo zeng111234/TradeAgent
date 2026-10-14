@@ -1,52 +1,52 @@
-"""Email log model for tracking sent emails."""
-from datetime import datetime
-from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Enum as SQLEnum
-from sqlalchemy.orm import relationship
-import enum
-
-from app.database import Base
-
-
-class EmailStatus(str, enum.Enum):
-    """Email sending status."""
-    PENDING = "pending"        # ´ı·¢ËÍ
-    SENT = "sent"              # ÒÑ·¢ËÍ
-    DELIVERED = "delivered"    # ÒÑËÍ´ï
-    OPENED = "opened"          # ÒÑ´ò¿ª
-    REPLIED = "replied"        # ÒÑ»Ø¸´
-    BOUNCED = "bounced"        # ÍËĞÅ
-    FAILED = "failed"          # ·¢ËÍÊ§°Ü
-
-
-class EmailLog(Base):
-    """Record of every email sent through the system."""
-    __tablename__ = "email_logs"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    customer_id = Column(Integer, ForeignKey("customers.id"), nullable=True)
-    template_id = Column(Integer, ForeignKey("email_templates.id"), nullable=True)
-
-    # ÓÊ¼şĞÅÏ¢
-    to_email = Column(String(200), nullable=False)
-    to_name = Column(String(200), nullable=True)
-    subject = Column(String(500), nullable=False)
-    body = Column(Text, nullable=False)
-    status = Column(SQLEnum(EmailStatus), default=EmailStatus.PENDING)
-
-    # ×·×Ù
-    tracking_id = Column(String(100), nullable=True, unique=True, index=True)  # ×·×ÙID
-    opened_at = Column(DateTime, nullable=True)  # Ê×´Î´ò¿ªÊ±¼ä
-    open_count = Column(Integer, default=0)  # ´ò¿ª´ÎÊı
-    replied_at = Column(DateTime, nullable=True)  # »Ø¸´Ê±¼ä
-
-    # ´íÎóĞÅÏ¢
-    error_message = Column(Text, nullable=True)
-
-    created_at = Column(DateTime, default=datetime.utcnow)
-    sent_at = Column(DateTime, nullable=True)
-
-    # ¹ØÁª
-    customer = relationship("Customer", back_populates="email_logs")
-
-    def __repr__(self):
+"""Email log model for tracking sent emails."""
+from datetime import datetime
+from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Enum as SQLEnum
+from sqlalchemy.orm import relationship
+import enum
+
+from app.database import Base
+
+
+class EmailStatus(str, enum.Enum):
+    """Email sending status."""
+    PENDING = "pending"        # å¾…å‘é€
+    SENT = "sent"              # å·²å‘é€
+    DELIVERED = "delivered"    # å·²é€è¾¾
+    OPENED = "opened"          # å·²æ‰“å¼€
+    REPLIED = "replied"        # å·²å›å¤
+    BOUNCED = "bounced"        # é€€ä¿¡
+    FAILED = "failed"          # å‘é€å¤±è´¥
+
+
+class EmailLog(Base):
+    """Record of every email sent through the system."""
+    __tablename__ = "email_logs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    customer_id = Column(Integer, ForeignKey("customers.id"), nullable=True)
+    template_id = Column(Integer, ForeignKey("email_templates.id"), nullable=True)
+
+    # é‚®ä»¶ä¿¡æ¯
+    to_email = Column(String(200), nullable=False)
+    to_name = Column(String(200), nullable=True)
+    subject = Column(String(500), nullable=False)
+    body = Column(Text, nullable=False)
+    status = Column(SQLEnum(EmailStatus), default=EmailStatus.PENDING)
+
+    # è¿½è¸ª
+    tracking_id = Column(String(100), nullable=True, unique=True, index=True)  # è¿½è¸ªID
+    opened_at = Column(DateTime, nullable=True)  # é¦–æ¬¡æ‰“å¼€æ—¶é—´
+    open_count = Column(Integer, default=0)  # æ‰“å¼€æ¬¡æ•°
+    replied_at = Column(DateTime, nullable=True)  # å›å¤æ—¶é—´
+
+    # é”™è¯¯ä¿¡æ¯
+    error_message = Column(Text, nullable=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+    sent_at = Column(DateTime, nullable=True)
+
+    # å…³è”
+    customer = relationship("Customer", back_populates="email_logs")
+
+    def __repr__(self):
         return f"<EmailLog(id={self.id}, to='{self.to_email}', status='{self.status}')>"

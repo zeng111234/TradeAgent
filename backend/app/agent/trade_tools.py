@@ -63,6 +63,132 @@ def _session_factory():
     return async_session
 
 
+@tool(
+    description=(
+        "The configured customer policy's assessment of one customer: its risk "
+        "level (critical/high/medium), the reasons it fired, the actions it "
+        "suggests, and the thresholds it applied. This is the SAME policy that "
+        "the churn and follow-up endpoints use, so the answer is consistent with "
+        "what the dashboard shows. Use it to compare your own judgement against "
+        "the house rules, and to explain a disagreement between them."
+    ),
+    tags={"read", "crm", "policy"},
+)
+async def get_customer_assessment(customer_id: int) -> dict:
+    """The deterministic policy's verdict, plus the thresholds behind it.
+
+    Why this exists: the agent had its own path to these signals
+    (``get_customer_signals``, which returns raw numbers and no verdict) while the
+    endpoints used hardcoded thresholds in ``agent_service``. Two judgement paths
+    over the same data is a design smell — the agent could recommend chasing a
+    customer the dashboard had not flagged, and neither could explain the other.
+
+    Now there is one set of thresholds. The agent can still disagree with them,
+    but it has to disagree with a number it can see and name, which is a much
+    better position than disagreeing with a rule it never saw.
+
+    The thresholds are returned alongside the verdict on purpose: a fixed rule
+    presented without its constants invites the model to treat it as ground truth,
+    and these numbers are opinions that may not fit the case in front of it.
+    """
+    from sqlalchemy import select
+
+    from app.models.customer import Customer
+    from app.models.email_log import EmailLog
+    from app.services.follow_up_policy import (
+        ChurnPolicy,
+        FollowUpPolicy,
+        assess_churn,
+        assess_follow_up,
+        days_between,
+    )
+
+    now = datetime.utcnow()
+    churn_policy = ChurnPolicy()
+    follow_policy = FollowUpPolicy()
+
+    async with _session_factory()() as db:
+        customer = (
+            await db.execute(select(Customer).where(Customer.id == int(customer_id)))
+        ).scalar_one_or_none()
+        if customer is None:
+            return {"error": f"no customer with id {customer_id}"}
+
+        emails = (
+            await db.execute(
+                select(EmailLog)
+                .where(EmailLog.customer_id == customer.id)
+                .order_by(EmailLog.created_at.desc())
+            )
+        ).scalars().all()
+
+    stage = _status(customer.stage)
+    sent_states = {"sent", "delivered", "opened", "replied"}
+    last_email = emails[0] if emails else None
+    last_contact = customer.last_contacted_at or (last_email.created_at if last_email else None)
+    stage_ref = customer.updated_at or customer.created_at
+
+    churn = assess_churn(
+        stage=stage,
+        created_days_ago=days_between(now, customer.created_at),
+        days_since_contact=days_between(now, last_contact),
+        days_in_stage=days_between(now, stage_ref),
+        emails_sent=len([e for e in emails if _status(e.status) in sent_states]),
+        emails_replied=len([e for e in emails if _status(e.status) == "replied"]),
+        last_email_unopened=bool(last_email) and _status(last_email.status) == "sent",
+        last_email_days_ago=days_between(now, last_email.created_at) if last_email else None,
+        policy=churn_policy,
+    )
+
+    follow = assess_follow_up(
+        stage=stage,
+        days_since_last_email=days_between(now, last_email.created_at) if last_email else None,
+        has_any_email=last_email is not None,
+        policy=follow_policy,
+    )
+
+    return {
+        "customer_id": customer.id,
+        "company_name": customer.company_name,
+        "stage": stage,
+        "risk": {
+            "level": churn.level,
+            "at_risk": churn.at_risk,
+            "reasons": churn.reasons,
+            "suggested_actions": churn.actions,
+        },
+        "follow_up": (
+            {"priority": follow[0], "reason": follow[1], "suggested_action": follow[2]}
+            if follow else None
+        ),
+        "inputs": {
+            "days_since_contact": days_between(now, last_contact),
+            "days_in_stage": days_between(now, stage_ref),
+            "age_days": days_between(now, customer.created_at),
+            "emails_total": len(emails),
+            "emails_sent": len([e for e in emails if _status(e.status) in sent_states]),
+            "emails_replied": len([e for e in emails if _status(e.status) == "replied"]),
+            "never_contacted_per_log": last_contact is None,
+        },
+        "thresholds_applied": {
+            "no_reply_critical_emails": churn_policy.no_reply_critical_emails,
+            "silent_warm_after_days": churn_policy.silent_warm_after_days,
+            "silent_contacted_after_days": churn_policy.silent_contacted_after_days,
+            "stuck_quoting_after_days": churn_policy.stuck_quoting_after_days,
+            "untouched_new_after_days": churn_policy.untouched_new_after_days,
+            "follow_up_no_reply_after_days": follow_policy.contacted_no_reply_after_days,
+            "follow_up_quoting_is_always": follow_policy.quoting_always_priority,
+        },
+        "note": (
+            "This is the configured policy, not ground truth. The thresholds above "
+            "are conventions that may not fit this case. Where you disagree, say so "
+            "and give your reason — and note that the churn rule and the follow-up "
+            "rule answer different questions, so they can disagree with each other "
+            "about the same customer."
+        ),
+    }
+
+
 def _status(value: Any) -> str:
     return value.value if hasattr(value, "value") else str(value or "")
 
@@ -703,6 +829,7 @@ def build_trade_registry() -> ToolRegistry:
         get_customer,
         get_communication_history,
         get_customer_signals,
+        get_customer_assessment,
         search_prospects,
         inspect_website,
         classify_prospect,

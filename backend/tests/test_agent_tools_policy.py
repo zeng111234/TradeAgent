@@ -17,6 +17,7 @@ EXPECTED_TOOLS = [
     "create_email_draft",
     "get_communication_history",
     "get_customer",
+    "get_customer_assessment",
     "get_customer_signals",
     "inspect_website",
     "list_customers",

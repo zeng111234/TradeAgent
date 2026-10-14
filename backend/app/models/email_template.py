@@ -1,25 +1,25 @@
-"""Email template model."""
-from datetime import datetime
-from sqlalchemy import Column, Integer, String, Text, DateTime
-
-from app.database import Base
-
-
-class EmailTemplate(Base):
-    """Email template for marketing campaigns."""
-    __tablename__ = "email_templates"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    name = Column(String(200), nullable=False)  # Ä£°åÃû³Æ
-    subject = Column(String(500), nullable=False)  # ÓÊ¼şÖ÷Ìâ£¬Ö§³Ö±äÁ¿Èç {company_name}
-    body = Column(Text, nullable=False)  # ÓÊ¼şÕıÎÄ£¬Ö§³ÖHTML£¬Ö§³Ö±äÁ¿
-    language = Column(String(20), default="en")  # en, zh, es, etc.
-    category = Column(String(100), nullable=True)  # ·ÖÀà£º¿ª·¢ĞÅ/¸ú½ø/±¨¼Û/½ÚÈÕÎÊºò
-    is_ai_generated = Column(Integer, default=0)  # ÊÇ·ñAIÉú³É
-    use_count = Column(Integer, default=0)  # Ê¹ÓÃ´ÎÊı
-
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-
-    def __repr__(self):
+"""Email template model."""
+from datetime import datetime
+from sqlalchemy import Column, Integer, String, Text, DateTime
+
+from app.database import Base
+
+
+class EmailTemplate(Base):
+    """Email template for marketing campaigns."""
+    __tablename__ = "email_templates"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(200), nullable=False)  # æ¨¡æ¿åç§°
+    subject = Column(String(500), nullable=False)  # é‚®ä»¶ä¸»é¢˜ï¼Œæ”¯æŒå˜é‡å¦‚ {company_name}
+    body = Column(Text, nullable=False)  # é‚®ä»¶æ­£æ–‡ï¼Œæ”¯æŒHTMLï¼Œæ”¯æŒå˜é‡
+    language = Column(String(20), default="en")  # en, zh, es, etc.
+    category = Column(String(100), nullable=True)  # åˆ†ç±»ï¼šå¼€å‘ä¿¡/è·Ÿè¿›/æŠ¥ä»·/èŠ‚æ—¥é—®å€™
+    is_ai_generated = Column(Integer, default=0)  # æ˜¯å¦AIç”Ÿæˆ
+    use_count = Column(Integer, default=0)  # ä½¿ç”¨æ¬¡æ•°
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    def __repr__(self):
         return f"<EmailTemplate(id={self.id}, name='{self.name}')>"
