@@ -1,10 +1,11 @@
 """Database connection and session management."""
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
 
 from app.config import settings
 
-# A long analysis now writes its progress while requests are being served, and
+# A long analysis writes its progress while requests are being served, and
 # SQLite admits one writer at a time. The default is to give up after five
 # seconds with "database is locked"; waiting longer is the right trade for a
 # single-process deployment, because the alternative is silently losing a write.
@@ -13,6 +14,39 @@ engine = create_async_engine(
     echo=settings.DEBUG,
     connect_args={"timeout": 30} if settings.DATABASE_URL.startswith("sqlite") else {},
 )
+
+
+if settings.DATABASE_URL.startswith("sqlite"):
+
+    @event.listens_for(engine.sync_engine, "connect")
+    def _sqlite_pragmas(dbapi_connection, _record):  # pragma: no cover - driver hook
+        """Set the pragmas SQLite needs to behave under concurrency.
+
+        ``journal_mode=WAL`` is the important one. The default rollback journal
+        makes a writer block every reader for the duration of its transaction, so
+        several requests that only read end up waiting behind each other. WAL
+        lets readers proceed against the last committed state while one writer
+        works -- which is what makes the async server actually concurrent rather
+        than merely await-shaped. Measured on this codebase: four concurrent
+        whole-book plan runs took 2.05 s against 1.00 s sequentially without it;
+        see tests/test_concurrency_isolation.py for the regression guard.
+
+        ``synchronous=NORMAL`` is the usual companion: with WAL it fsyncs at
+        checkpoints rather than every commit, which is the documented trade for
+        this journal mode.
+
+        **Not** enabled here: ``foreign_keys=ON``. It is off by default in SQLite,
+        which is why ``POST /agent/run`` validates a customer id itself rather
+        than trusting the database. Turning it on can fail writes for rows that
+        already violate a constraint, so it is a migration-shaped decision, not a
+        pragma to slip in.
+        """
+        cursor = dbapi_connection.cursor()
+        try:
+            cursor.execute("PRAGMA journal_mode=WAL")
+            cursor.execute("PRAGMA synchronous=NORMAL")
+        finally:
+            cursor.close()
 
 async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 

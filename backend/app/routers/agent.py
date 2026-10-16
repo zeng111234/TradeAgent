@@ -19,12 +19,26 @@ from app.services.agent_service import (
 from app.database import get_db, async_session
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import Depends
+import asyncio
 import os
 import json as _json
 from datetime import datetime as _dt
 from sqlalchemy import select as _select
 
 router = APIRouter(prefix="/agent", tags=["AI Agent"])
+
+
+def _read_leads_file(path):
+    """Read and parse the scan's leads file. Runs on a worker thread.
+
+    Deliberately a plain sync function: it is the payload for
+    ``asyncio.to_thread``, and keeping the blocking code inside a nested or
+    module-level ``def`` is what makes it visible -- a file read at the top level
+    of a coroutine is invisible to the guard in
+    ``tests/test_async_honesty.py``, which is the point of that guard.
+    """
+    with open(path, "r", encoding="utf-8") as handle:
+        return _json.load(handle)
 
 
 class WebsiteAnalysisRequest(BaseModel):
@@ -403,8 +417,11 @@ async def api_import_leads():
         raise HTTPException(status_code=404, detail=f"Leads file not found at {json_path}. Run daily_scan.py first.")
 
     try:
-        with open(json_path, "r", encoding="utf-8") as f:
-            data = _json.load(f)
+        # On a worker thread: this is a file read *and* a JSON parse of whatever
+        # the scan wrote, and neither belongs in the event loop. Measured on the
+        # equivalent shape, a synchronous parse of a scan-sized file is tens of
+        # milliseconds during which every other request waits.
+        data = await asyncio.to_thread(_read_leads_file, json_path)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to read leads file: {e}")
 
@@ -523,8 +540,7 @@ async def api_preview_leads():
         return {"leads": [], "message": "No scan results found. The daily scan workflow may not have run yet. Check GitHub Actions."}
 
     try:
-        with open(json_path, "r", encoding="utf-8") as f:
-            data = _json.load(f)
-        return data
+        # Worker thread: file read plus JSON parse, same reason as above.
+        return await asyncio.to_thread(_read_leads_file, json_path)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to read leads file: {e}")

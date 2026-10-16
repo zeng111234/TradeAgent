@@ -5,6 +5,10 @@ __pycache__/
 dist/
 *.db
 *.sqlite3
+# SQLite in WAL mode: the write-ahead log and its shared-memory index, which sit
+# beside the database file and are not reproducible state.
+*.db-wal
+*.db-shm
 
 # Virtualenvs (all common names/spellings)
 .venv/
