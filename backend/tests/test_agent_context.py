@@ -329,8 +329,25 @@ async def test_loop_compacts_a_long_run(tmp_path):
     assert sizes[-1] < max(sizes), "the final request was not smaller than the peak"
     assert max(sizes[2:]) <= budget_tokens * 2, "requests stayed in the same order of magnitude"
 
-    # The promise in the marker must be real.
-    assert "recall_observation" in registry
+    # The promise in the marker must be real. Checked on the loop's own registry:
+    # the loop works on a copy so that sharing a registry between runs cannot
+    # leak state, which means the caller's registry is deliberately unchanged.
+    assert "recall_observation" in loop.registry
+
+
+async def test_a_shared_registry_is_not_mutated_by_constructing_a_loop(tmp_path):
+    """Constructing a loop must not add tools to the registry it was handed."""
+    registry = ToolRegistry()
+    registry.register(big_payload)
+    before = registry.names()
+
+    AgentLoop(ScriptedLLM([final("done")]), registry,
+              budget=AgentBudget(context_budget_tokens=1_000), spill_dir=tmp_path)
+
+    assert registry.names() == before, (
+        "building a loop mutated the caller's registry; two runs sharing one "
+        "registry would then interfere"
+    )
 
 
 async def test_the_cut_scales_to_the_deficit(tmp_path):
@@ -425,6 +442,7 @@ async def test_loop_registers_recall_only_when_it_can_spill():
     registry.register(big_payload)
     loop = AgentLoop(ScriptedLLM([final("done")]), registry,
                      budget=AgentBudget(context_budget_tokens=1_000))
+    assert "recall_observation" not in loop.registry
     assert "recall_observation" not in registry
 
 
@@ -447,10 +465,16 @@ def test_spill_root_is_configurable(monkeypatch, tmp_path):
     import app.agent.service as service
 
     monkeypatch.setenv("AGENT_SPILL_DIR", str(tmp_path / "custom"))
-    assert service.spill_root() == tmp_path / "custom"
+    configured = service.spill_root()
+    # A run-scoped subdirectory under the configured root, so one run cannot
+    # read another's trimmed observations.
+    assert configured.parent == tmp_path / "custom"
+    assert configured.name
 
     monkeypatch.delenv("AGENT_SPILL_DIR", raising=False)
-    assert service.spill_root().name == "tradeagent-spill"
+    default = service.spill_root()
+    assert default.parent.name == "tradeagent-spill"
+    assert default != service.spill_root(), "each run needs its own directory"
 
 
 async def test_execute_gives_the_agent_a_working_spill_store(monkeypatch, tmp_path):
@@ -480,13 +504,27 @@ async def test_execute_gives_the_agent_a_working_spill_store(monkeypatch, tmp_pa
     assert result.run.status == "succeeded"
     # It compacted, so the recall tool had to be reachable.
     assert result.run.compactions
-    assert "recall_observation" in registry
-    # And the files the markers name really exist.
-    spill = service.spill_root()
-    stored = sorted(p.name for p in spill.glob("*.txt"))
-    assert stored
+    # The caller's registry is untouched: execute works on a scope built from it,
+    # so two runs sharing one registry cannot interfere.
+    assert "recall_observation" not in registry
+    # And the files the markers name really exist, under the configured root.
+    base = tmp_path
+    stored = sorted(p.name for p in base.rglob("*.txt"))
+    assert stored, f"nothing spilled under {base}"
     named = [name for c in result.run.compactions for name in c["spilled"]]
     assert named and all(name in stored for name in named)
+
+
+async def test_execute_gives_each_run_its_own_spill_directory(monkeypatch, tmp_path):
+    """One run must not be able to read back another's trimmed observations."""
+    import app.agent.service as service
+
+    monkeypatch.setenv("AGENT_SPILL_DIR", str(tmp_path))
+    first = service.spill_root()
+    second = service.spill_root()
+
+    assert first != second
+    assert first.parent == second.parent == tmp_path
 
 
 async def test_compaction_disabled_when_budget_is_zero(tmp_path):

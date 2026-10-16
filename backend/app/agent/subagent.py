@@ -278,20 +278,33 @@ def attach_delegation(
     child_budget: Optional[AgentBudget] = None,
     read_only: bool = True,
     spill_dir: Optional[Path] = None,
-) -> DelegationRecord:
-    """Give a registry the ability to delegate. Returns the run's record."""
+) -> tuple[ToolRegistry, DelegationRecord]:
+    """Return **a copy** of the registry that can delegate, plus its run record.
+
+    The copy is the point, not an implementation detail. ``spawn_researcher``
+    closes over the delegation record for one run, so registering it into a
+    registry the caller owns binds that record to that registry forever.
+    Attaching twice to the same registry used to hit the duplicate-name guard,
+    skip silently, and leave the second run holding a record nothing would ever
+    write to — while the first run's record collected the second run's children.
+
+    Returning a fresh registry makes one run's delegation scope impossible to
+    share with another by accident::
+
+        registry, record = attach_delegation(base_registry, llm=client)
+    """
     record = record or DelegationRecord()
-    if "spawn_researcher" not in registry:
-        registry.register(
-            build_spawn_tool(
-                llm=llm,
-                parent_registry=registry,
-                record=record,
-                max_depth=max_depth,
-                max_children=max_children,
-                child_budget=child_budget,
-                read_only=read_only,
-                spill_dir=spill_dir,
-            )
+    scoped = registry.copy() if hasattr(registry, "copy") else registry
+    scoped.register(
+        build_spawn_tool(
+            llm=llm,
+            parent_registry=scoped,
+            record=record,
+            max_depth=max_depth,
+            max_children=max_children,
+            child_budget=child_budget,
+            read_only=read_only,
+            spill_dir=spill_dir,
         )
-    return record
+    )
+    return scoped, record

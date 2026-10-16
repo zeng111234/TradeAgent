@@ -163,6 +163,26 @@ class ToolRegistry:
         self._tools[tool.name] = tool
         return tool
 
+    def copy(self) -> "ToolRegistry":
+        """An independent registry holding the same tools.
+
+        Exists because a registry is not safe to share between runs. Two things
+        in this package once mutated a registry the caller owned — the loop
+        registering ``recall_observation``, and ``attach_delegation`` registering
+        ``spawn_researcher`` — and ``spawn_researcher`` closes over the delegation
+        record for one run. A second attachment to the same registry hit the
+        duplicate-name guard, was silently skipped, and left that run with a
+        record nothing ever wrote to, while the first run's record collected the
+        second run's children.
+
+        The ``Tool`` objects are shared, which is safe: they are immutable in
+        practice (name, description, params model, function). Only the mapping is
+        copied, so adding a tool to one registry cannot appear in another.
+        """
+        clone = ToolRegistry(depth=self.depth)
+        clone._tools = dict(self._tools)
+        return clone
+
     def add(
         self,
         name: str,

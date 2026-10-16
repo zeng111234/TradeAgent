@@ -64,7 +64,7 @@ def test_child_registry_can_be_given_write_tools_explicitly():
 def test_child_registry_never_inherits_delegation_tools():
     """Otherwise a child could recurse past the depth check."""
     parent = parent_registry()
-    attach_delegation(parent, llm=ScriptedLLM([]), max_depth=5)
+    parent, _ = attach_delegation(parent, llm=ScriptedLLM([]), max_depth=5)
     assert "spawn_researcher" in parent
 
     child = build_child_registry(parent)
@@ -102,7 +102,7 @@ async def test_delegation_at_the_depth_cap_is_refused_with_a_reason():
     """
     registry = parent_registry()
     registry.depth = 1                       # pretend we are already a child
-    record = attach_delegation(registry, llm=ScriptedLLM([]), max_depth=1)
+    registry, record = attach_delegation(registry, llm=ScriptedLLM([]), max_depth=1)
 
     spawn = registry.get("spawn_researcher")
     result = await spawn.fn(question="what do they sell?")
@@ -118,8 +118,7 @@ async def test_delegation_child_cannot_delegate_further_end_to_end():
     # The parent delegates; the child is offered a registry with no spawn tool.
     child_llm = ScriptedLLM([final("The German market is dominated by wholesalers.")])
     record = DelegationRecord()
-    registry = parent_registry()
-    attach_delegation(registry, llm=child_llm, record=record, max_depth=1)
+    registry, _ = attach_delegation(parent_registry(), llm=child_llm, record=record, max_depth=1)
 
     parent_llm = ScriptedLLM([
         call("spawn_researcher", {"question": "who dominates the German market?"}),
@@ -140,7 +139,7 @@ async def test_delegation_child_cannot_delegate_further_end_to_end():
 
 async def test_child_limit_is_enforced():
     registry = parent_registry()
-    record = attach_delegation(
+    registry, record = attach_delegation(
         registry, llm=ScriptedLLM([final("answer one"), final("answer two")]),
         max_children=1,
     )
@@ -171,7 +170,7 @@ async def test_the_childs_working_stays_out_of_the_parents_context():
     ])
 
     registry = parent_registry()
-    record = attach_delegation(registry, llm=child_llm, record=DelegationRecord())
+    registry, record = attach_delegation(registry, llm=child_llm, record=DelegationRecord())
     loop = AgentLoop(parent_llm, registry, budget=AgentBudget(max_rounds=5))
     run = await loop.run("find out what example.com does")
 
@@ -207,7 +206,7 @@ async def test_the_child_actually_gets_its_own_transcript():
         final("Both sites import textile trims."),
     ])
     registry = parent_registry()
-    record = attach_delegation(registry, llm=child_llm, record=DelegationRecord())
+    registry, record = attach_delegation(registry, llm=child_llm, record=DelegationRecord())
 
     spawn = registry.get("spawn_researcher")
     result = await spawn.fn(question="do these two sites import trims?")
@@ -226,7 +225,7 @@ async def test_a_child_that_stalls_returns_an_error_not_an_answer():
     """A child that did not conclude must not be reported as having concluded."""
     child_llm = ScriptedLLM([{"content": ""}, {"content": ""}, {"content": ""}])
     registry = parent_registry()
-    record = attach_delegation(registry, llm=child_llm, record=DelegationRecord())
+    registry, record = attach_delegation(registry, llm=child_llm, record=DelegationRecord())
 
     spawn = registry.get("spawn_researcher")
     result = await spawn.fn(question="what do they sell?")
@@ -245,7 +244,7 @@ async def test_a_child_answer_without_investigation_is_not_accepted():
         {"content": "Nothing further."},                    # short again -> stall
     ])
     registry = parent_registry()
-    record = attach_delegation(registry, llm=child_llm, record=DelegationRecord())
+    registry, record = attach_delegation(registry, llm=child_llm, record=DelegationRecord())
     result = await registry.get("spawn_researcher").fn(question="what do they do?")
 
     assert "error" in result
@@ -259,7 +258,7 @@ async def test_the_parent_survives_a_child_that_raises():
             raise RuntimeError("child provider down")
 
     registry = parent_registry()
-    record = attach_delegation(registry, llm=Exploding(), record=DelegationRecord())
+    registry, record = attach_delegation(registry, llm=Exploding(), record=DelegationRecord())
 
     parent_llm = ScriptedLLM([
         call("spawn_researcher", {"question": "anything useful?"}),
@@ -278,7 +277,7 @@ async def test_the_parent_survives_a_child_that_raises():
 
 async def test_the_parent_is_told_to_answer_itself_when_delegation_fails():
     registry = parent_registry()
-    attach_delegation(
+    registry, _ = attach_delegation(
         registry,
         llm=ScriptedLLM([{"content": ""}, {"content": ""}, {"content": ""}]),
         record=DelegationRecord(),
@@ -291,7 +290,7 @@ async def test_the_parent_is_told_to_answer_itself_when_delegation_fails():
 
 async def test_empty_question_is_rejected():
     registry = parent_registry()
-    attach_delegation(registry, llm=ScriptedLLM([]), record=DelegationRecord())
+    registry, _ = attach_delegation(registry, llm=ScriptedLLM([]), record=DelegationRecord())
     result = await registry.get("spawn_researcher").fn(question="   ")
     assert "error" in result
 
@@ -299,7 +298,7 @@ async def test_empty_question_is_rejected():
 async def test_focus_is_passed_along_with_the_question():
     child_llm = ScriptedLLM([call("list_customers", {}), final("Answered with focus.")])
     registry = parent_registry()
-    attach_delegation(registry, llm=child_llm, record=DelegationRecord())
+    registry, _ = attach_delegation(registry, llm=child_llm, record=DelegationRecord())
 
     result = await registry.get("spawn_researcher").fn(
         question="which customers need attention?", focus="the quoting stage"
@@ -311,13 +310,54 @@ async def test_focus_is_passed_along_with_the_question():
     assert "the quoting stage" in child_prompt
 
 
-async def test_delegation_is_idempotent_on_a_registry():
-    """Attaching twice must not create a duplicate tool or lose the record."""
-    registry = parent_registry()
-    record = attach_delegation(registry, llm=ScriptedLLM([]))
-    again = attach_delegation(registry, llm=ScriptedLLM([]), record=record)
-    assert again is record
-    assert registry.names().count("spawn_researcher") == 1
+async def test_attaching_twice_yields_two_independent_scopes():
+    """Each attachment gets its own registry and its own record.
+
+    The previous contract registered into the caller's registry and skipped on a
+    duplicate name. That looked idempotent but was not: ``spawn_researcher``
+    closes over the record for one run, so the second attachment silently reused
+    the first run's tool. The second run then held a record nothing would ever
+    write to, while the first run's record collected the second run's children.
+    """
+    base = parent_registry()
+
+    scoped_a, record_a = attach_delegation(base, llm=ScriptedLLM([]))
+    scoped_b, record_b = attach_delegation(base, llm=ScriptedLLM([]))
+
+    assert record_a is not record_b
+    assert scoped_a is not scoped_b
+    assert scoped_a.names().count("spawn_researcher") == 1
+    assert scoped_b.names().count("spawn_researcher") == 1
+    # The caller's registry is left alone, so it can serve further runs.
+    assert "spawn_researcher" not in base
+
+
+async def test_two_runs_sharing_a_base_registry_do_not_share_delegations():
+    """The bug this guards, reproduced directly.
+
+    With the old mutating contract: run A attached, run B's attachment was
+    skipped, and A's record ended up holding B's child.
+    """
+    base = parent_registry()
+    record_a = DelegationRecord()
+    record_b = DelegationRecord()
+
+    scoped_a, _ = attach_delegation(
+        base, llm=ScriptedLLM([call("read_big", {"url": "https://a.example"}),
+                               final("Answer belonging to run A.")]),
+        record=record_a,
+    )
+    scoped_b, _ = attach_delegation(
+        base, llm=ScriptedLLM([call("read_big", {"url": "https://b.example"}),
+                               final("Answer belonging to run B.")]),
+        record=record_b,
+    )
+
+    result_b = await scoped_b.get("spawn_researcher").fn(question="question for B")
+
+    assert "answer" in result_b
+    assert len(record_b.children) == 1, "run B's record must hold B's child"
+    assert len(record_a.children) == 0, "run A's record must not collect B's child"
 
 
 async def test_child_budget_is_smaller_than_the_parent_default():
@@ -331,7 +371,7 @@ async def test_child_budget_is_smaller_than_the_parent_default():
 
 async def test_delegation_record_serialises():
     registry = parent_registry()
-    record = attach_delegation(
+    registry, record = attach_delegation(
         registry, llm=ScriptedLLM([call("list_customers", {}), final("One customer is active.")]),
         record=DelegationRecord(),
     )
@@ -348,8 +388,7 @@ async def test_delegation_record_serialises():
 
 def test_the_tool_description_states_the_limitation():
     """The model should know the child cannot write before it relies on it."""
-    registry = parent_registry()
-    attach_delegation(registry, llm=ScriptedLLM([]))
+    registry, _ = attach_delegation(parent_registry(), llm=ScriptedLLM([]))
     description = registry.get("spawn_researcher").description.lower()
     assert "own context" in description
     assert "cannot send" in description or "cannot" in description
@@ -378,11 +417,14 @@ async def test_execute_offers_delegation_by_default(monkeypatch, tmp_path):
         llm=parent_llm, registry=registry, persist=False, spill_dir=tmp_path,
     )
 
-    assert "spawn_researcher" in registry
     assert result.delegations is not None
     assert result.delegations["spawned"] == 1
     assert result.delegations["children"][0]["ok"] is True
     assert result.as_dict()["delegations"]["spawned"] == 1
+
+    # The caller's registry stays a plain base: the run's delegation scope lives
+    # in a copy, so the same registry can serve the next run unchanged.
+    assert "spawn_researcher" not in registry
 
 
 async def test_execute_can_disable_delegation(monkeypatch, tmp_path):

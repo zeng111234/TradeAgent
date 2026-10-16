@@ -19,6 +19,8 @@ from __future__ import annotations
 
 import logging
 import os
+import tempfile
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
@@ -102,16 +104,14 @@ def build_llm_client(timeout: float = 120.0) -> LLMClient:
 def spill_root() -> Path:
     """Where trimmed observations are kept so compaction stays lossless.
 
-    A single run-scoped directory under the system temp directory. Configurable
-    via ``AGENT_SPILL_DIR`` for deployments that want it somewhere persistent or
-    on a different volume.
+    Every run gets its own directory under this root. Shared would have been
+    wrong: ``recall_observation`` resolves a name against a store, so a shared
+    root would let one run read another's trimmed observations, and names are
+    content hashes rather than secrets. Configurable via ``AGENT_SPILL_DIR``.
     """
     configured = (os.environ.get("AGENT_SPILL_DIR") or "").strip()
-    if configured:
-        return Path(configured)
-    import tempfile
-
-    return Path(tempfile.gettempdir()) / "tradeagent-spill"
+    base = Path(configured) if configured else Path(tempfile.gettempdir()) / "tradeagent-spill"
+    return base / uuid.uuid4().hex
 
 
 def build_registry() -> ToolRegistry:
@@ -136,13 +136,17 @@ async def execute(
 
     Parameters allow tests and the CLI to inject a fake model or a stubbed
     registry without touching settings or the network.
+
+    The caller's ``registry`` is never mutated. Each run works on a scope built
+    from it, because ``spawn_researcher`` binds a per-run delegation record and
+    the loop adds ``recall_observation``; both used to be written into whatever
+    registry was passed in, which broke the moment one registry served two runs.
     """
     if not (goal or "").strip():
         raise ValueError("goal must not be empty")
 
     client = llm or build_llm_client()
-    tools = registry or build_registry()
-    spill = spill_dir if spill_dir is not None else spill_root()
+    spill = Path(spill_dir) if spill_dir is not None else spill_root()
 
     # Delegation is opt-out rather than opt-in: the whole point is that a run
     # which would otherwise drag every page it reads into one context can push
@@ -151,7 +155,11 @@ async def execute(
     if allow_delegation:
         from .subagent import attach_delegation
 
-        record = attach_delegation(tools, llm=client, spill_dir=spill)
+        tools, record = attach_delegation(
+            registry or build_registry(), llm=client, spill_dir=spill
+        )
+    else:
+        tools = registry or build_registry()
 
     run = await run_agent(
         goal.strip(),

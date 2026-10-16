@@ -273,11 +273,16 @@ class AgentLoop:
         # A compaction that trims an observation names the file it wrote, so the
         # agent can read the detail back. Registering the tool is what makes that
         # promise true rather than decorative.
-        self.registry = registry
-        if self.spill is not None and "recall_observation" not in registry:
+        #
+        # Done on a copy, never on the caller's registry. Mutating it meant two
+        # runs sharing one registry interfered: the second registration was
+        # rejected by the duplicate-name guard and the caller's tool list gained
+        # an entry as a side effect of merely constructing a loop.
+        self.registry = registry.copy() if hasattr(registry, "copy") else registry
+        if self.spill is not None and "recall_observation" not in self.registry:
             from .context import build_recall_tool
 
-            registry.register(build_recall_tool(self.spill))
+            self.registry.register(build_recall_tool(self.spill))
 
     async def run(self, goal: str, *, context: str = "") -> AgentRun:
         run = AgentRun(goal=goal)
