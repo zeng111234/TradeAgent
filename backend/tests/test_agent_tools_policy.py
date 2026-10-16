@@ -19,6 +19,9 @@ EXPECTED_TOOLS = [
     "get_customer",
     "get_customer_assessment",
     "get_customer_signals",
+    # The follow-up plan, read-only. It is how the agent reads the schedule the
+    # deterministic planner produced instead of guessing who to chase.
+    "get_follow_up_plan",
     "inspect_website",
     "list_customers",
     "search_prospects",

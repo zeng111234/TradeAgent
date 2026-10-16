@@ -85,16 +85,34 @@ async def api_analyze_email(data: EmailAnalysisRequest):
 
 
 @router.post("/daily-intelligence")
-async def api_daily_intelligence(db: AsyncSession = Depends(get_db)):
-    """AI Daily Intelligence - tells you who to follow up today.
-    
-    This is the CORE AI feature that replaces manual checking:
-    - Reviews ALL your customers automatically
-    - Prioritizes by urgency and deal stage
-    - Generates draft follow-up emails for high-priority items
-    - You just review and click send
+async def api_daily_intelligence(
+    due_only: bool = False,
+    db: AsyncSession = Depends(get_db),
+):
+    """The follow-up plan.
+
+    Every entry carries a next action (`kind`), the time it is due, how many
+    unanswered emails precede it and the evidence it was computed from. The plan
+    is committed to `next_follow_up_at`, so calling this repeatedly does not
+    produce the same list forever.
+
+    Pass `due_only=true` for what the scheduled job would act on today; the
+    default returns the whole queue with its dates.
     """
-    return await daily_follow_up_intelligence(db)
+    return await daily_follow_up_intelligence(db, due_only=due_only)
+
+
+@router.get("/follow-up-plan")
+async def api_follow_up_plan(
+    due_only: bool = False,
+    db: AsyncSession = Depends(get_db),
+):
+    """Read the plan without committing it.
+
+    The POST above writes `next_follow_up_at`; this one does not, so an operator
+    (or a test) can look at the queue without changing it.
+    """
+    return await daily_follow_up_intelligence(db, due_only=due_only, persist=False)
 
 
 @router.post("/batch-emails")

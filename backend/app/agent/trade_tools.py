@@ -443,6 +443,8 @@ async def get_customer_signals(customer_id: int) -> dict:
     "medium". Those constants are somebody's opinion frozen at a point in time;
     they should be argued with, not inherited.
     """
+    from app.services.follow_up_policy import derive_thread_state
+
     now = datetime.utcnow()
     async with _session_factory()() as db:
         customer = (
@@ -480,6 +482,52 @@ async def get_customer_signals(customer_id: int) -> dict:
         "emails_bounced": len([e for e in emails if _status(e.status) == "bounced"]),
         "never_contacted": last_touch is None,
         "has_any_reply": any(_status(e.status) == "replied" for e in emails),
+        "conversation": derive_thread_state(list(emails), now).as_dict(),
+    }
+
+
+@tool(
+    description=(
+        "Today's follow-up plan for the whole book: one entry per customer, each "
+        "with the next action (kind), when it is due, how many emails have gone "
+        "unanswered, and the evidence it was computed from. Read this before "
+        "deciding who to contact: it is the schedule, and it is deterministic. "
+        "The judgement about how to approach a given customer is yours."
+    ),
+    tags={"read", "crm", "plan"},
+)
+async def get_follow_up_plan(due_only: bool = False, limit: int = 10) -> dict:
+    """The plan, read-only.
+
+    Deliberately does not commit anything: reading a plan must not change it, so
+    this calls the planner with ``persist=False``. The scheduled job is what
+    writes ``next_follow_up_at``.
+
+    ``due_only`` narrows to what is due now. The full view includes entries
+    scheduled forward, which is where the answer to "what happens next" lives.
+    """
+    from app.services.agent_service import daily_follow_up_intelligence
+
+    async with _session_factory()() as db:
+        plan = await daily_follow_up_intelligence(
+            db_session=db, due_only=due_only, persist=False
+        )
+
+    actions = plan.get("actions", [])[: max(1, min(int(limit), 50))]
+    return {
+        "as_of": plan.get("as_of"),
+        "due_only": due_only,
+        "total_actions": plan.get("total_actions", 0),
+        "deferred": plan.get("deferred", 0),
+        "by_kind": plan.get("by_kind", {}),
+        "actions": actions,
+        "note": (
+            "`kind` is a closed set: answer_them (they wrote last, we owe them "
+            "one), fix_delivery (the last email never arrived), send_follow_up, "
+            "change_channel (enough emails with no answer), review (parked). "
+            "`attempt` counts emails sent since the customer last spoke. Where "
+            "you disagree with an entry, say so and give your reason."
+        ),
     }
 
 
@@ -847,6 +895,7 @@ def build_trade_registry() -> ToolRegistry:
         get_communication_history,
         get_customer_signals,
         get_customer_assessment,
+        get_follow_up_plan,
         search_prospects,
         inspect_website,
         classify_prospect,

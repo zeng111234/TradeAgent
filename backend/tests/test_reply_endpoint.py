@@ -50,6 +50,18 @@ def follow_up_action(client):
 # --------------------------------------------------------------------------
 
 def test_a_reply_to_the_third_email_is_representable_and_means_we_owe_one(client):
+    # Relative to whatever history the shared test database already holds: the
+    # property is about the three emails this test sends, not the total.
+    outbound = ("sent", "delivered", "opened", "replied")
+    rows_before = [
+        row for row in client.get("/api/v1/emails/logs").json()
+        if row.get("customer_id") == CUSTOMER_ID and row["status"] in outbound
+    ]
+    sent_before = len(rows_before)
+    # Rows that already carry their own reply are not "superseded" -- they were
+    # answered. Only the ones the thread overtook are.
+    replied_before = len([r for r in rows_before if r["status"] == "replied"])
+
     first = send(client, "Japan Embroidery - gold thread")
     second = send(client, "Following up - Japan Embroidery")
     third = send(client, "Second follow-up - Japan Embroidery")
@@ -63,10 +75,11 @@ def test_a_reply_to_the_third_email_is_representable_and_means_we_owe_one(client
     assert body["already_recorded"] is False
 
     conversation = body["conversation"]
-    assert conversation["outbound"] == 3
+    assert conversation["outbound"] == sent_before + 3
     assert conversation["answered"] is True
-    assert conversation["superseded"] == 2, (
-        "the first two emails were not ignored; the reply overtook them"
+    assert conversation["superseded"] == sent_before + 2 - replied_before, (
+        "every outbound email the reply overtook, minus those already answered: "
+        "the thread moved on, they were not ignored"
     )
     assert conversation["awaiting_reply"] == 0
     assert conversation["they_wrote_last"] is True, "we owe them an answer"

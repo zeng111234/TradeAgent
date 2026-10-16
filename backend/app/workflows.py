@@ -320,9 +320,13 @@ async def daily_morning_routine(search_keywords: str = None, target_country: str
         from app.database import async_session
         from app.services.agent_service import daily_follow_up_intelligence
         async with async_session() as db:
-            follow_result = await daily_follow_up_intelligence(db_session=db)
+            # due_only: the scheduled job acts on *today's* plan. A commitment
+            # made today is due later, so this is what stops the same customer
+            # appearing in the notification every single morning.
+            follow_result = await daily_follow_up_intelligence(db_session=db, due_only=True)
             report["follow_ups"] = follow_result.get("actions", [])
             report["high_priority_followups"] = follow_result.get("high_priority", 0)
+            report["follow_ups_deferred"] = follow_result.get("deferred", 0)
     except Exception as e:
         logger.error(f"Follow-up check failed: {e}")
         report["high_priority_followups"] = 0
@@ -375,16 +379,26 @@ def _compile_morning_report(report: dict) -> str:
         lines.append("")
 
     # Follow-ups section
-    followups = report.get("high_priority_followups", 0)
+    followups = len(report.get("follow_ups", []))
     if followups > 0:
-        lines.append(f"[Follow-ups] {followups} customers need follow-up today:")
+        lines.append(f"[Follow-ups] {followups} due today:")
         for fu in report.get("follow_ups", [])[:3]:
             name = fu.get("company_name", "?")
             action = fu.get("suggested_action", "")
-            lines.append(f"  - {name}: {action}")
+            kind = fu.get("kind", "")
+            attempt = fu.get("attempt", 0)
+            overdue = fu.get("days_overdue", 0)
+            suffix = f" (attempt {attempt})" if attempt else ""
+            lines.append(f"  - [{kind}] {name}{suffix}: {action}")
+            if overdue:
+                lines.append(f"      {overdue} day(s) overdue")
+        deferred = report.get("follow_ups_deferred", 0)
+        if deferred:
+            # Counted, not silently dropped: a truncated list reads as complete.
+            lines.append(f"  (+{deferred} more due, over today's cap)")
         lines.append("")
     else:
-        lines.append("[Follow-ups] No urgent follow-ups today.")
+        lines.append("[Follow-ups] Nothing is due today.")
         lines.append("")
 
     # Summary

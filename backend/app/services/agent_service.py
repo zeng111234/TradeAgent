@@ -275,11 +275,24 @@ def _basic_reply_analysis(email_content: str) -> dict:
     }
 
 
-async def daily_follow_up_intelligence(db_session=None) -> dict:
-    """AI reviews ALL your customers and tells you exactly who to follow up today.
-    
-    This is the CORE differentiator - instead of you checking each customer,
-    AI analyzes everyone and gives you a prioritized action list.
+async def daily_follow_up_intelligence(
+    db_session=None,
+    *,
+    due_only: bool = False,
+    persist: bool = True,
+) -> dict:
+    """Build today's follow-up plan and commit it.
+
+    This used to be a query: it recomputed "who looks urgent" from scratch on
+    every call, so three consecutive runs returned byte-identical entries with
+    no due date and no record of how many times we had already tried. It is now
+    a **plan**: every entry has a next action and a time it becomes due, and the
+    commitment is written to ``Customer.next_follow_up_at`` so tomorrow's run is
+    incremental rather than a rerun.
+
+    ``due_only`` is what the scheduled job uses -- a commitment made today is due
+    later, so it does not come back today. A human reviewing the plan passes
+    False and sees the whole queue with its dates.
     """
     if not db_session:
         return {"error": "Database session required", "actions": []}
@@ -289,22 +302,27 @@ async def daily_follow_up_intelligence(db_session=None) -> dict:
     from app.models.email_log import EmailLog
     from datetime import datetime
 
-    from app.services.follow_up_policy import (
-        FollowUpPolicy,
-        assess_follow_up,
-        days_between,
-        derive_thread_state,
+    from app.services.follow_up_plan import (
+        DEFAULT_FOLLOW_UP_PLAN_POLICY,
+        KIND_SEND_FOLLOW_UP,
+        CustomerPlanInput,
+        plan_follow_ups,
     )
+    from app.services.follow_up_policy import days_between, derive_thread_state
 
-    policy = FollowUpPolicy()
+    plan_policy = DEFAULT_FOLLOW_UP_PLAN_POLICY
     now = datetime.utcnow()
-    actions = []
 
     result = await db_session.execute(
-        select(Customer).where(Customer.stage.in_(list(policy.stages_in_play)))
+        select(Customer).where(Customer.stage.in_(list(plan_policy_stages())))
     )
     customers = result.scalars().all()
 
+    def _status(value) -> str:
+        return value.value if hasattr(value, "value") else str(value or "")
+
+    failed_states = ("failed", "bounced")
+    inputs = []
     for c in customers:
         email_result = await db_session.execute(
             select(EmailLog)
@@ -312,24 +330,16 @@ async def daily_follow_up_intelligence(db_session=None) -> dict:
             .order_by(EmailLog.created_at.desc())
         )
         all_emails = email_result.scalars().all()
-        last_email = all_emails[0] if all_emails else None
-
-        # The follow-up path used to decide purely on "days since our last
-        # email", so a customer who replied yesterday was reported as
-        # "No reply in 8 days" and chased as if they had gone quiet.
         thread = derive_thread_state(all_emails, now)
 
-        decision = assess_follow_up(
-            stage=c.stage.value if hasattr(c.stage, "value") else str(c.stage),
-            days_since_last_email=days_between(now, last_email.created_at) if last_email else None,
-            has_any_email=last_email is not None,
-            thread=thread,
-            policy=policy,
-        )
-        if decision is None:
-            continue
-
-        priority, reason, suggested_action = decision
+        # A failed send is not an unanswered email. If the newest thing we tried
+        # never arrived, waiting out a follow-up interval is waiting for nothing.
+        last_attempt = all_emails[0] if all_emails else None
+        last_failed_at = None
+        last_failed_reason = ""
+        if last_attempt is not None and _status(last_attempt.status) in failed_states:
+            last_failed_at = last_attempt.sent_at or last_attempt.created_at
+            last_failed_reason = (last_attempt.error_message or "").strip()[:200]
 
         contact_result = await db_session.execute(
             select(CustomerContact)
@@ -338,61 +348,115 @@ async def daily_follow_up_intelligence(db_session=None) -> dict:
         )
         contact = contact_result.scalar_one_or_none()
 
-        actions.append({
-            "customer_id": c.id,
-            "company_name": c.company_name,
-            "stage": c.stage.value if hasattr(c.stage, "value") else str(c.stage),
-            "priority": priority,
-            "reason": reason,
-            "suggested_action": suggested_action,
-            "contact_email": contact.email if contact else None,
-            "contact_name": contact.name if contact else None,
-            "last_contacted": last_email.created_at.isoformat() if last_email else None,
-            "conversation": thread.as_dict(),
-        })
+        inputs.append(CustomerPlanInput(
+            customer_id=c.id,
+            company_name=c.company_name,
+            stage=_status(c.stage),
+            thread=thread,
+            last_failed_at=last_failed_at,
+            last_failed_reason=last_failed_reason,
+            has_any_email=bool(all_emails),
+            contact_email=contact.email if contact else None,
+            contact_name=contact.name if contact else None,
+            committed_for=c.next_follow_up_at,
+        ))
 
-    priority_order = {"high": 0, "medium": 1, "low": 2}
-    actions.sort(key=lambda x: priority_order.get(x["priority"], 3))
+    plan = plan_follow_ups(inputs, now=now, due_only=due_only, policy=plan_policy)
+    by_id = {c.id: c for c in customers}
+    actions = [a.as_dict() for a in plan.actions]
 
-    # Generate one-click follow-up emails for high priority
+    # Commit every customer's next action, not just today's due list. Persisting
+    # the filtered list meant the decisions scheduled *forward* -- the ones that
+    # make tomorrow's run incremental -- were never written down, so they were
+    # recomputed identically on every run. That was the whole defect.
+    #
+    # Written only where there is something to commit: a commitment a human set
+    # by hand is not ours to clear, and a stale one is visible in the customer
+    # record rather than silently dropped.
+    if persist:
+        for commitment in plan.commitments:
+            customer = by_id.get(commitment.customer_id)
+            if customer is not None:
+                customer.next_follow_up_at = commitment.due_at
+        await db_session.commit()
+
+    for action in actions:
+        # A negative "overdue" reads as an error. Two fields, each only ever
+        # positive, so neither can be misread.
+        delta = (now - datetime.fromisoformat(action["due_at"])).days
+        action["days_overdue"] = max(0, delta)
+        action["due_in_days"] = max(0, -delta)
+
+    # Drafts are for the entries that actually ask for an email. A "change the
+    # channel" or a parked customer must not come with a ready-to-send email
+    # attached: that is how a quit rule turns back into another email.
     if is_configured() and actions:
-        for action in actions[:5]:  # Top 5 high priority
-            if action["priority"] == "high" and action["contact_email"]:
-                try:
-                    email_result = await db_session.execute(
-                        select(EmailLog)
-                        .where(EmailLog.customer_id == action["customer_id"])
-                        .order_by(EmailLog.created_at.desc())
-                        .limit(1)
-                    )
-                    last = email_result.scalar_one_or_none()
-                    last_subject = last.subject if last else "initial outreach"
+        emailing = [
+            a for a in actions
+            if a["kind"] == KIND_SEND_FOLLOW_UP and a["contact_email"]
+        ]
+        for action in emailing[:5]:
+            try:
+                customer_id = action["customer_id"]
+                last_subject = "initial outreach"
+                for source in inputs:
+                    if source.customer_id == customer_id:
+                        break
+                email_result = await db_session.execute(
+                    select(EmailLog)
+                    .where(EmailLog.customer_id == customer_id)
+                    .order_by(EmailLog.created_at.desc())
+                    .limit(1)
+                )
+                last = email_result.scalar_one_or_none()
+                if last is not None:
+                    last_subject = last.subject
 
-                    prompt = f"""Write a short follow-up email (under 100 words) for a foreign trade business.
+                prompt = f"""Write a short follow-up email (under 100 words) for a foreign trade business.
 Company: {action['company_name']}
 Contact: {action['contact_name'] or 'Sir/Madam'}
 Last email subject: {last_subject}
 Current stage: {action['stage']}
 Reason: {action['reason']}
+Attempt: {action['attempt']} previous email(s) went unanswered
 
 Write a warm, professional follow-up. Be specific to their situation. Return ONLY the email body (HTML)."""
 
-                    action["draft_email"] = await complete_text(
-                        prompt,
-                        system="You are a professional foreign trade email writer. Write concise, warm emails.",
-                        temperature=0.7,
-                        max_tokens=300,
-                    )
-                    action["draft_subject"] = f"Following up - {action['company_name']}"
-                except Exception as e:
-                    logger.error(f"Draft email error: {e}")
+                action["draft_email"] = await complete_text(
+                    prompt,
+                    system="You are a professional foreign trade email writer. Write concise, warm emails.",
+                    temperature=0.7,
+                    max_tokens=300,
+                )
+                action["draft_subject"] = f"Following up - {action['company_name']}"
+            except Exception as e:
+                logger.error(f"Draft email error: {e}")
 
     return {
+        "as_of": now.isoformat(),
+        "due_only": due_only,
         "total_actions": len(actions),
+        # Every customer with something owed, due or not. The scheduled job's
+        # list is a subset of this; the difference is what tomorrow will hold.
+        "commitments": len(plan.commitments),
         "high_priority": len([a for a in actions if a["priority"] == "high"]),
         "medium_priority": len([a for a in actions if a["priority"] == "medium"]),
+        # Due entries that did not fit the daily cap. Reported rather than
+        # dropped silently, because a truncated list reads as a complete one.
+        "deferred": plan.deferred,
+        "by_kind": {
+            kind: len([a for a in actions if a["kind"] == kind])
+            for kind in sorted({a["kind"] for a in actions})
+        },
         "actions": actions,
     }
+
+
+def plan_policy_stages() -> tuple[str, ...]:
+    """Stages the follow-up plan will speak about."""
+    from app.services.follow_up_plan import PLANNED_STAGES
+
+    return PLANNED_STAGES
 
 
 async def batch_personalize_emails(

@@ -19,6 +19,8 @@ EXPECTED_ROUTES: dict[str, set[str]] = {
     "/api/v1/agent/batch-emails": {"post"},
     "/api/v1/agent/churn-alerts": {"post"},
     "/api/v1/agent/daily-intelligence": {"post"},
+    # Read the plan without committing it; the POST above writes the schedule.
+    "/api/v1/agent/follow-up-plan": {"get"},
     "/api/v1/agent/generate-pi": {"post"},
     "/api/v1/agent/holiday-emails": {"post"},
     "/api/v1/agent/holidays": {"get"},
