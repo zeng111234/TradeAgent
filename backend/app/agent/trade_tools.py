@@ -894,6 +894,17 @@ async def create_email_draft(
 
     There is deliberately no send tool. This is the mechanism that keeps the
     agent inside its authority: it can prepare, a human dispatches.
+
+    **Duplicate drafts are refused.** Two pending drafts for the same customer
+    with the same subject are not two pieces of work -- they are one piece of
+    work listed twice, and a human working down the list sends the customer the
+    same email twice. Re-running an analysis is easy to do (a retry, a second
+    click, the same goal twice in a day) and used to leave exactly that. The
+    second call now returns ``duplicate`` with the id of the draft already
+    waiting, so the agent can see that its work is already on the desk.
+
+    A *different* subject is still allowed: answering a question and chasing a
+    quote are different emails, and only the human knows which one this is.
     """
     if not (subject or "").strip():
         return {"error": "subject is required"}
@@ -927,6 +938,33 @@ async def create_email_draft(
                     f"no email address on file for customer {customer_id}. Find one "
                     "first (inspect_website) rather than inventing one."
                 )
+            }
+
+        # Still waiting on a human, same customer, same subject: this is the
+        # same piece of work.
+        waiting = (
+            await db.execute(
+                select(EmailLog)
+                .where(
+                    EmailLog.customer_id == customer.id,
+                    EmailLog.status == EmailStatus.PENDING,
+                    func.lower(EmailLog.subject) == subject.strip().lower(),
+                )
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if waiting is not None:
+            return {
+                "status": "duplicate",
+                "email_log_id": waiting.id,
+                "customer_id": customer.id,
+                "subject": waiting.subject,
+                "reason": (
+                    "a draft with this subject is already waiting for review for "
+                    "this customer. Nothing was created -- sending both would "
+                    "email them twice. If this is genuinely a different email, "
+                    "use a different subject."
+                ),
             }
 
         draft = EmailLog(

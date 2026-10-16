@@ -1,9 +1,23 @@
-"""Email management API routes."""
+"""Email management API routes.
+
+Sending is the one operation here that cannot be undone, so it is guarded at
+three levels -- see ``app/services/email_claims.py`` for the reasoning:
+
+* the row's own status is the lock (``pending -> sending`` is one atomic
+  ``UPDATE ... WHERE status = pending``);
+* ``tracking_id`` is the idempotency key, so a replay of the same request is
+  answered from the record instead of sending again;
+* a process-local lock refuses an obviously concurrent second send early, with a
+  readable error, before any work happens.
+
+A draft is only sendable from ``pending``. That single rule is what makes
+"the same draft cannot go out twice" true rather than hoped for.
+"""
 import threading
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, Header, HTTPException, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,7 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models.customer import Customer, CustomerContact
 from app.models.email_template import EmailTemplate
-from app.models.email_log import EmailLog, EmailStatus
+from app.models.email_log import EmailLog, EmailStatus, SETTLED_SEND_STATES
 from app.schemas.email_template import (
     EmailTemplateCreate, EmailTemplateUpdate, EmailTemplateResponse,
     AIGenerateRequest, AIGenerateResponse,
@@ -19,6 +33,14 @@ from app.schemas.email_template import (
 from app.schemas.email_log import (
     EmailSendRequest, EmailBatchSendRequest,
     EmailLogResponse, EmailStatsResponse,
+)
+from app.services.email_claims import (
+    already_handled,
+    claim,
+    idempotency_tracking_id,
+    mark_stale_sends,
+    release,
+    as_replay,
 )
 from app.utils.email_sender import send_email, send_batch_emails, render_template, generate_tracking_id
 from app.services.ai_service import generate_cold_email
@@ -111,8 +133,24 @@ async def generate_email(data: AIGenerateRequest):
 
 # --- Send Email ---
 @router.post("/send", response_model=EmailLogResponse)
-async def send_single_email(data: EmailSendRequest, db: AsyncSession = Depends(get_db)):
-    """Send a single email."""
+async def send_single_email(
+    data: EmailSendRequest,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+):
+    """Send a single email.
+
+    Pass ``Idempotency-Key`` and the same request twice sends one email: the
+    tracking id is derived from the key, so the second call finds the first
+    call's row and answers from the record instead of sending again. Without a
+    key there is nothing to recognise a replay by, and the row is still claimed
+    before the send so a concurrent double-click cannot fire twice.
+
+    The row is written **before** the mail is handed to SMTP. That ordering is
+    the point: a crash between "sent" and "logged" used to be invisible and the
+    mail was sent again on the next attempt.
+    """
     subject = data.subject
     body = data.body
 
@@ -145,8 +183,56 @@ async def send_single_email(data: EmailSendRequest, db: AsyncSession = Depends(g
     if not subject or not body:
         raise HTTPException(status_code=400, detail="Subject and body are required (either directly or via template)")
 
-    # Create tracking ID
-    tracking_id = generate_tracking_id()
+    # The idempotency key, if given, decides the tracking id -- and therefore
+    # decides that a replay is recognisable.
+    tracking_id = (
+        idempotency_tracking_id(idempotency_key)
+        if (idempotency_key or "").strip()
+        else generate_tracking_id()
+    )
+
+    seen = await already_handled(db, tracking_id)
+    if seen is not None:
+        if seen.status in SETTLED_SEND_STATES:
+            response.status_code = 200
+            return as_replay(seen)
+        if seen.status == EmailStatus.SENDING:
+            # In flight, or abandoned mid-flight. Either way the outcome is not
+            # knowable from here, and sending again is the one thing that could
+            # make it worse.
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"an attempt for this key is already in flight (email log "
+                    f"{seen.id}, status sending). Its outcome is not known yet; "
+                    "wait for it, or check the mailbox before retrying."
+                ),
+            )
+        if seen.status == EmailStatus.FAILED:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"a previous attempt with this key failed (email log {seen.id}): "
+                    f"{seen.error_message}. Retry with a new Idempotency-Key once you "
+                    "have decided it is safe to send again."
+                ),
+            )
+
+    # Claim before sending. The row exists (status `sending`) before the mail is
+    # handed over, so a crash in between leaves evidence instead of a hole.
+    claim_row = EmailLog(
+        customer_id=data.customer_id,
+        template_id=data.template_id,
+        to_email=data.to_email,
+        to_name=data.to_name,
+        subject=subject,
+        body=body,
+        tracking_id=tracking_id,
+        status=EmailStatus.SENDING,
+    )
+    db.add(claim_row)
+    await db.commit()
+    await db.refresh(claim_row)
 
     # Send email
     send_result = await send_email(
@@ -157,23 +243,15 @@ async def send_single_email(data: EmailSendRequest, db: AsyncSession = Depends(g
         tracking_id=tracking_id,
     )
 
-    # Log the email
-    email_log = EmailLog(
-        customer_id=data.customer_id,
-        template_id=data.template_id,
-        to_email=data.to_email,
-        to_name=data.to_name,
-        subject=subject,
-        body=body,
-        tracking_id=tracking_id,
-        status=EmailStatus.SENT if send_result["success"] else EmailStatus.FAILED,
-        error_message=send_result.get("error"),
-        sent_at=datetime.utcnow() if send_result["success"] else None,
+    await release(
+        db,
+        claim_row.id,
+        sent=bool(send_result["success"]),
+        error=send_result.get("error"),
     )
-    db.add(email_log)
-    await db.flush()
-    await db.refresh(email_log)
-    return email_log
+    await db.refresh(claim_row)
+
+    return claim_row
 
 
 # --- Email Logs ---
@@ -318,9 +396,29 @@ async def api_send_pending(db: AsyncSession = Depends(get_db)):
 
         sent_count = 0
         failed_count = 0
+        skipped_count = 0
         details = []
 
         for email_log in pending:
+            # Claim this row, and commit the claim, *before* sending it.
+            #
+            # The old loop sent every draft and committed once at the end. A
+            # crash in the middle therefore lost the status of every mail that
+            # had already gone out, leaving them all as `pending` for the next
+            # run to send again -- ten customers, twenty emails. The claim is
+            # what makes a crash cost at most the one in-flight attempt, whose
+            # outcome mark_stale_sends then reports as unknown rather than
+            # guessing.
+            if not await claim(db, email_log.id):
+                skipped_count += 1
+                details.append({
+                    "to_email": email_log.to_email,
+                    "subject": email_log.subject,
+                    "success": False,
+                    "error": "claimed by another send",
+                })
+                continue
+
             send_result = await send_email(
                 to_email=email_log.to_email,
                 to_name=email_log.to_name or "",
@@ -329,13 +427,16 @@ async def api_send_pending(db: AsyncSession = Depends(get_db)):
                 tracking_id=email_log.tracking_id,
             )
 
+            await release(
+                db,
+                email_log.id,
+                sent=bool(send_result["success"]),
+                error=send_result.get("error"),
+            )
+
             if send_result["success"]:
-                email_log.status = EmailStatus.SENT
-                email_log.sent_at = datetime.utcnow()
                 sent_count += 1
             else:
-                email_log.status = EmailStatus.FAILED
-                email_log.error_message = send_result.get("error", "Unknown error")
                 failed_count += 1
 
             details.append({
@@ -345,11 +446,10 @@ async def api_send_pending(db: AsyncSession = Depends(get_db)):
                 "error": send_result.get("error"),
             })
 
-        await db.commit()
-
         return {
             "sent": sent_count,
             "failed": failed_count,
+            "skipped": skipped_count,
             "total": len(pending),
             "details": details,
         }
@@ -357,7 +457,11 @@ async def api_send_pending(db: AsyncSession = Depends(get_db)):
 
 @router.post("/send-pending/{email_id}")
 async def api_send_single_pending(email_id: int, db: AsyncSession = Depends(get_db)):
-    """Send a single pending draft email by its ID."""
+    """Send a single pending draft email by its ID.
+
+    A second click on the same draft is refused rather than queued: the button
+    is a request to send *this* email, and it is already being sent.
+    """
     async with _exclusive_send("this email"):
         result = await db.execute(select(EmailLog).where(EmailLog.id == email_id))
         email_log = result.scalar_one_or_none()
@@ -365,7 +469,22 @@ async def api_send_single_pending(email_id: int, db: AsyncSession = Depends(get_
         if not email_log:
             raise HTTPException(status_code=404, detail="Email log not found")
         if email_log.status != EmailStatus.PENDING:
-            raise HTTPException(status_code=400, detail=f"Email is not pending (status: {email_log.status})")
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Email is not pending (status: {email_log.status}). "
+                    "A draft can only be sent from pending, which is what makes "
+                    "sending it twice impossible."
+                ),
+            )
+
+        # Same claim as the batch path, so the two cannot both send this row --
+        # the check above is a readable error, this is the guarantee.
+        if not await claim(db, email_log.id):
+            raise HTTPException(
+                status_code=409,
+                detail="this draft was claimed by another send",
+            )
 
         send_result = await send_email(
             to_email=email_log.to_email,
@@ -375,14 +494,12 @@ async def api_send_single_pending(email_id: int, db: AsyncSession = Depends(get_
             tracking_id=email_log.tracking_id,
         )
 
-        if send_result["success"]:
-            email_log.status = EmailStatus.SENT
-            email_log.sent_at = datetime.utcnow()
-        else:
-            email_log.status = EmailStatus.FAILED
-            email_log.error_message = send_result.get("error", "Unknown error")
-
-        await db.commit()
+        await release(
+            db,
+            email_log.id,
+            sent=bool(send_result["success"]),
+            error=send_result.get("error"),
+        )
         await db.refresh(email_log)
         return email_log
 

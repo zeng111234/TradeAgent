@@ -10,20 +10,30 @@ from app.database import Base
 class EmailStatus(str, enum.Enum):
     """Email sending status.
 
-    Three of these are not about delivery:
+    Four of these are not about delivery:
 
     ``PENDING``   written, not sent -- **a proposal waiting for a human**. The
                   one state in this application where work is suspended.
+    ``SENDING``   **an attempt is in flight and its outcome is unknown.** It is
+                  not a claim that the mail was sent, and not a claim that it
+                  was not -- it is a claim on the row, so that a second worker
+                  (or a retry after a crash) cannot start a second attempt on
+                  the same row. Only one state change can move a row out of
+                  ``PENDING``, so the claim is atomic.
+                  A row left here by a crash is resolved by ``mark_stale_sends``
+                  at the next start, never left as a permanent promise.
     ``REJECTED``  a human decided against it. Kept rather than deleted, because
                   the next proposal needs to know this one was turned down, and
                   a deletion carries no information.
-    ``FAILED``    the attempt was made and it did not arrive.
+    ``FAILED``    the attempt was made and it did not arrive -- or, when the
+                  error says so, it is not known whether it arrived.
 
     Adding a member is safe for an existing database: SQLite stores this as a
     plain VARCHAR with no CHECK constraint, and SQLAlchemy writes the enum
     *name*, not its value.
     """
     PENDING = "pending"        # 待发送（= 等人工确认的建议）
+    SENDING = "sending"        # 已被某次发送尝试占用，结果未知
     SENT = "sent"              # 已发送
     DELIVERED = "delivered"    # 已送达
     OPENED = "opened"          # 已打开
@@ -31,6 +41,16 @@ class EmailStatus(str, enum.Enum):
     REJECTED = "rejected"      # 人工否决（保留记录）
     BOUNCED = "bounced"        # 退信
     FAILED = "failed"          # 发送失败
+
+
+#: The states a send attempt can finish in. Used to decide whether a replay of
+#: the same request should be answered from the record instead of sending again.
+SETTLED_SEND_STATES = (
+    EmailStatus.SENT,
+    EmailStatus.DELIVERED,
+    EmailStatus.OPENED,
+    EmailStatus.REPLIED,
+)
 
 
 class EmailLog(Base):

@@ -26,6 +26,10 @@ async def lifespan(app: FastAPI):
     # never finish, and a poller cannot tell it from one that is still working,
     # so it waits forever for an answer that is not coming.
     await _fail_abandoned_runs()
+    # Resolve email sends a previous process claimed but never finished. Whether
+    # those mails arrived is not knowable, so they are failed with that said out
+    # loud rather than re-queued and risked twice.
+    await _resolve_abandoned_sends()
     # Insert demo data if empty
     await _insert_demo_data()
     # Start the scheduler
@@ -54,6 +58,17 @@ async def _fail_abandoned_runs() -> None:
             await mark_stale_runs(db)
     except Exception as exc:  # noqa: BLE001 - never block startup for housekeeping
         logger.warning("could not sweep abandoned agent runs: %s", exc)
+
+
+async def _resolve_abandoned_sends() -> None:
+    try:
+        from app.database import async_session
+        from app.services.email_claims import mark_stale_sends
+
+        async with async_session() as db:
+            await mark_stale_sends(db)
+    except Exception as exc:  # noqa: BLE001 - never block startup for housekeeping
+        logger.warning("could not resolve abandoned email claims: %s", exc)
 
 
 app = FastAPI(
