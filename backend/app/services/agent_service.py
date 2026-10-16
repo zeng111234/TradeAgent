@@ -1,5 +1,6 @@
 """AI Agent service - deep AI integration for foreign trade."""
 import logging
+import threading
 
 from app.llm import (
     LLMTruncated,
@@ -275,6 +276,26 @@ def _basic_reply_analysis(email_content: str) -> dict:
     }
 
 
+#: One plan run at a time, for the whole process.
+#:
+#: The cron job and a human clicking "daily intelligence" both call this, and
+#: nothing stopped them overlapping -- APScheduler's ``max_instances`` applies to
+#: the job it owns, and the manual trigger calls the function directly, so it
+#: bypasses that. Two overlapping runs write the same ``next_follow_up_at``
+#: values, which is harmless, and each generates its own drafts for the top of
+#: the list, which is not: the same five customers, twice, for real money.
+#:
+#: A ``threading.Lock`` acquired non-blockingly, for the same three reasons as
+#: the send lock: atomic test-and-set, no blocking of the event loop, and **no
+#: event-loop affinity**. An ``asyncio.Lock`` binds to the loop that first
+#: contends on it; here that turned a held lock from one loop into a run that
+#: was silently skipped in another.
+#:
+#: As with the send lock, this is one process. ``uvicorn --workers 2`` would need
+#: a claim in the database rather than an object in memory.
+_PLAN_LOCK = threading.Lock()
+
+
 async def daily_follow_up_intelligence(
     db_session=None,
     *,
@@ -293,9 +314,46 @@ async def daily_follow_up_intelligence(
     ``due_only`` is what the scheduled job uses -- a commitment made today is due
     later, so it does not come back today. A human reviewing the plan passes
     False and sees the whole queue with its dates.
+
+    Reading never takes the lock: only the run that commits does. Two readers
+    cannot disturb a schedule, and blocking a read behind a slow write is how a
+    dashboard starts timing out.
     """
     if not db_session:
         return {"error": "Database session required", "actions": []}
+
+    if not persist:
+        return await _build_follow_up_plan(db_session, due_only=due_only, persist=False)
+
+    if not _PLAN_LOCK.acquire(blocking=False):
+        # A skip, not an exception: the scheduled job firing while a human is
+        # looking at the same thing is not an error, and failing the job would
+        # log a traceback for normal operation.
+        logger.info("follow-up plan run skipped: another run is in progress")
+        return {
+            "skipped": True,
+            "reason": "another plan run is in progress",
+            "as_of": None,
+            "due_only": due_only,
+            "total_actions": 0,
+            "commitments": 0,
+            "high_priority": 0,
+            "medium_priority": 0,
+            "deferred": 0,
+            "by_kind": {},
+            "actions": [],
+        }
+
+    try:
+        return await _build_follow_up_plan(db_session, due_only=due_only, persist=True)
+    finally:
+        _PLAN_LOCK.release()
+
+
+async def _build_follow_up_plan(
+    db_session, *, due_only: bool, persist: bool
+) -> dict:
+    from collections import defaultdict
 
     from sqlalchemy import select
     from app.models.customer import Customer, CustomerContact
@@ -317,19 +375,48 @@ async def daily_follow_up_intelligence(
         select(Customer).where(Customer.stage.in_(list(plan_policy_stages())))
     )
     customers = result.scalars().all()
+    customer_ids = [c.id for c in customers]
 
     def _status(value) -> str:
         return value.value if hasattr(value, "value") else str(value or "")
 
     failed_states = ("failed", "bounced")
+
+    # Three queries for the whole book, not three per customer. The previous
+    # shape issued one email query and one contact query per customer, so a
+    # hundred customers meant three hundred round trips inside one transaction --
+    # which is both slow and, on SQLite, a long window during which the other
+    # scheduled job finds the database locked.
+    #
+    # Grouped into dicts **keyed by customer id**, never by position: pairing two
+    # result lists by index is how one customer's history ends up in another
+    # customer's plan.
+    emails_by_customer: dict[int, list] = defaultdict(list)
+    contacts_by_customer: dict[int, object] = {}
+    if customer_ids:
+        rows = await db_session.execute(
+            select(EmailLog)
+            .where(EmailLog.customer_id.in_(customer_ids))
+            .order_by(EmailLog.customer_id, EmailLog.created_at.desc())
+        )
+        for row in rows.scalars().all():
+            emails_by_customer[row.customer_id].append(row)
+
+        contacts = await db_session.execute(
+            select(CustomerContact).where(
+                CustomerContact.customer_id.in_(customer_ids),
+                CustomerContact.is_primary == 1,
+            )
+        )
+        for contact in contacts.scalars().all():
+            # First primary wins; a customer with two flagged primaries is bad
+            # data, and picking deterministically is better than picking by
+            # whatever order the database returned.
+            contacts_by_customer.setdefault(contact.customer_id, contact)
+
     inputs = []
     for c in customers:
-        email_result = await db_session.execute(
-            select(EmailLog)
-            .where(EmailLog.customer_id == c.id)
-            .order_by(EmailLog.created_at.desc())
-        )
-        all_emails = email_result.scalars().all()
+        all_emails = emails_by_customer.get(c.id, [])
         thread = derive_thread_state(all_emails, now)
 
         # A failed send is not an unanswered email. If the newest thing we tried
@@ -341,12 +428,7 @@ async def daily_follow_up_intelligence(
             last_failed_at = last_attempt.sent_at or last_attempt.created_at
             last_failed_reason = (last_attempt.error_message or "").strip()[:200]
 
-        contact_result = await db_session.execute(
-            select(CustomerContact)
-            .where(CustomerContact.customer_id == c.id, CustomerContact.is_primary == 1)
-            .limit(1)
-        )
-        contact = contact_result.scalar_one_or_none()
+        contact = contacts_by_customer.get(c.id)
 
         inputs.append(CustomerPlanInput(
             customer_id=c.id,
@@ -753,6 +835,8 @@ async def customer_churn_alerts(db_session=None) -> dict:
     from app.models.email_log import EmailLog, EmailStatus
     from datetime import datetime, timedelta
 
+    from collections import defaultdict
+
     from sqlalchemy import select
     from app.models.customer import Customer, CustomerContact
     from app.models.email_log import EmailLog
@@ -773,20 +857,39 @@ async def customer_churn_alerts(db_session=None) -> dict:
         select(Customer).where(Customer.stage.notin_(list(("completed", "lost"))))
     )
     customers = result.scalars().all()
+    customer_ids = [c.id for c in customers]
 
-    for c in customers:
-        email_result = await db_session.execute(
+    def _status(value) -> str:
+        return value.value if hasattr(value, "value") else str(value or "")
+
+    # Batched for the same reason the plan is: this job runs every six hours over
+    # every customer, and one query per customer each for emails and contacts is
+    # a hundred round trips at a hundred customers.
+    emails_by_customer: dict[int, list] = defaultdict(list)
+    contacts_by_customer: dict[int, object] = {}
+    if customer_ids:
+        rows = await db_session.execute(
             select(EmailLog)
-            .where(EmailLog.customer_id == c.id)
-            .order_by(EmailLog.created_at.desc())
+            .where(EmailLog.customer_id.in_(customer_ids))
+            .order_by(EmailLog.customer_id, EmailLog.created_at.desc())
         )
-        all_emails = email_result.scalars().all()
+        for row in rows.scalars().all():
+            emails_by_customer[row.customer_id].append(row)
+
+        contacts = await db_session.execute(
+            select(CustomerContact).where(
+                CustomerContact.customer_id.in_(customer_ids),
+                CustomerContact.is_primary == 1,
+            )
+        )
+        for contact in contacts.scalars().all():
+            contacts_by_customer.setdefault(contact.customer_id, contact)
+
+    sent_states = ("sent", "delivered", "opened", "replied")
+    for c in customers:
+        all_emails = emails_by_customer.get(c.id, [])
         last_email = all_emails[0] if all_emails else None
 
-        def _status(value) -> str:
-            return value.value if hasattr(value, "value") else str(value or "")
-
-        sent_states = ("sent", "delivered", "opened", "replied")
         total_sent = len([e for e in all_emails if _status(e.status) in sent_states])
         total_replies = len([e for e in all_emails if _status(e.status) == "replied"])
 
@@ -813,12 +916,7 @@ async def customer_churn_alerts(db_session=None) -> dict:
         if not assessment.at_risk:
             continue
 
-        contact_result = await db_session.execute(
-            select(CustomerContact)
-            .where(CustomerContact.customer_id == c.id, CustomerContact.is_primary == 1)
-            .limit(1)
-        )
-        contact = contact_result.scalar_one_or_none()
+        contact = contacts_by_customer.get(c.id)
 
         alerts.append({
             "customer_id": c.id,

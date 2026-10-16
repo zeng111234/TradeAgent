@@ -1,4 +1,6 @@
 """Email management API routes."""
+import threading
+from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Response
@@ -233,6 +235,68 @@ async def get_email_stats(db: AsyncSession = Depends(get_db)):
     )
 
 
+# --- Sending is serialised -------------------------------------------------
+
+#: One send at a time, for the whole process.
+#:
+#: Both send endpoints do read -> ``await send_email(...)`` -> write, with
+#: nothing claimed in between: the read and the write are separated by the whole
+#: SMTP round trip, and the ``status == PENDING`` check happens *before* that
+#: await, so it guards nothing. Two overlapping calls therefore both read the
+#: same PENDING rows and both send them. Observed: ten drafts, two concurrent
+#: calls, twenty SMTP calls, every customer emailed the same thing twice --
+#: while both calls reported success and every row ended up ``sent``, so the
+#: duplication left no trace in the record.
+#:
+#: That observation does not reproduce on demand: whether the second call's read
+#: lands inside the first call's send window is a matter of scheduling. The
+#: *mechanism* is unconditional, which is the part that matters -- the exposure
+#: is real whenever two sends overlap, not only when a stopwatch cooperates.
+#:
+#: A ``threading.Lock`` acquired non-blockingly, not an ``asyncio.Lock``. Three
+#: reasons, and the third is the one that bit:
+#:
+#: * ``acquire(blocking=False)`` is a single atomic test-and-set, so there is no
+#:   gap between deciding the lock is free and taking it.
+#: * It never blocks the event loop, because the caller is refused rather than
+#:   queued.
+#: * An ``asyncio.Lock`` is **bound to the event loop that first contends on
+#:   it**, and raises ``RuntimeError`` when another loop does. That is invisible
+#:   in production, where one loop lives for the life of the process, and it is
+#:   a trap everywhere else -- in tests it turned into a silently skipped run.
+#:
+#: A lock rather than a "sending" status: a status set before the send and
+#: cleared after it is a lie when the process dies in between, and it can wedge
+#: a row forever. This keeps the database honest -- ``status`` only changes once
+#: the send has actually happened -- and buys at-most-once within one process.
+#: It does **not** coordinate across processes: ``uvicorn --workers 2`` would
+#: need a claim row in the database instead.
+_SEND_LOCK = threading.Lock()
+
+
+@asynccontextmanager
+async def _exclusive_send(what: str):
+    """Refuse a second concurrent send rather than queueing it.
+
+    Refusing is the honest answer: the caller asked to send these emails, and
+    they are already being sent. Queueing would hold the request open for the
+    length of a batch, which for a hundred customers is minutes.
+    """
+    if not _SEND_LOCK.acquire(blocking=False):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"another send is already in progress; {what} was not started. "
+                "Wait for it to finish -- sending the same drafts twice would "
+                "email those customers twice."
+            ),
+        )
+    try:
+        yield
+    finally:
+        _SEND_LOCK.release()
+
+
 # --- Batch Send Pending Drafts ---
 @router.post("/send-pending")
 async def api_send_pending(db: AsyncSession = Depends(get_db)):
@@ -241,19 +305,68 @@ async def api_send_pending(db: AsyncSession = Depends(get_db)):
     This sends draft emails that were imported from daily_scan.py
     to the actual customer email addresses.
     """
-    result = await db.execute(
-        select(EmailLog).where(EmailLog.status == EmailStatus.PENDING)
-    )
-    pending = list(result.scalars().all())
+    async with _exclusive_send("the batch send"):
+        # Re-read *inside* the lock. The set of pending drafts is the thing being
+        # claimed, so it has to be read after the claim, not before it.
+        result = await db.execute(
+            select(EmailLog).where(EmailLog.status == EmailStatus.PENDING)
+        )
+        pending = list(result.scalars().all())
 
-    if not pending:
-        return {"sent": 0, "failed": 0, "message": "No pending drafts to send."}
+        if not pending:
+            return {"sent": 0, "failed": 0, "message": "No pending drafts to send."}
 
-    sent_count = 0
-    failed_count = 0
-    details = []
+        sent_count = 0
+        failed_count = 0
+        details = []
 
-    for email_log in pending:
+        for email_log in pending:
+            send_result = await send_email(
+                to_email=email_log.to_email,
+                to_name=email_log.to_name or "",
+                subject=email_log.subject,
+                body=email_log.body,
+                tracking_id=email_log.tracking_id,
+            )
+
+            if send_result["success"]:
+                email_log.status = EmailStatus.SENT
+                email_log.sent_at = datetime.utcnow()
+                sent_count += 1
+            else:
+                email_log.status = EmailStatus.FAILED
+                email_log.error_message = send_result.get("error", "Unknown error")
+                failed_count += 1
+
+            details.append({
+                "to_email": email_log.to_email,
+                "subject": email_log.subject,
+                "success": send_result["success"],
+                "error": send_result.get("error"),
+            })
+
+        await db.commit()
+
+        return {
+            "sent": sent_count,
+            "failed": failed_count,
+            "total": len(pending),
+            "details": details,
+        }
+
+
+@router.post("/send-pending/{email_id}")
+async def api_send_single_pending(email_id: int, db: AsyncSession = Depends(get_db)):
+    """Send a single pending draft email by its ID."""
+    async with _exclusive_send("this email"):
+        result = await db.execute(select(EmailLog).where(EmailLog.id == email_id))
+        email_log = result.scalar_one_or_none()
+
+        if not email_log:
+            raise HTTPException(status_code=404, detail="Email log not found")
+        if email_log.status != EmailStatus.PENDING:
+            raise HTTPException(status_code=400, detail=f"Email is not pending (status: {email_log.status})")
+
         send_result = await send_email(
             to_email=email_log.to_email,
             to_name=email_log.to_name or "",
@@ -265,58 +378,13 @@ async def api_send_pending(db: AsyncSession = Depends(get_db)):
         if send_result["success"]:
             email_log.status = EmailStatus.SENT
             email_log.sent_at = datetime.utcnow()
-            sent_count += 1
         else:
             email_log.status = EmailStatus.FAILED
             email_log.error_message = send_result.get("error", "Unknown error")
-            failed_count += 1
 
-        details.append({
-            "to_email": email_log.to_email,
-            "subject": email_log.subject,
-            "success": send_result["success"],
-            "error": send_result.get("error"),
-        })
-
-    await db.commit()
-
-    return {
-        "sent": sent_count,
-        "failed": failed_count,
-        "total": len(pending),
-        "details": details,
-    }
-
-
-@router.post("/send-pending/{email_id}")
-async def api_send_single_pending(email_id: int, db: AsyncSession = Depends(get_db)):
-    """Send a single pending draft email by its ID."""
-    result = await db.execute(select(EmailLog).where(EmailLog.id == email_id))
-    email_log = result.scalar_one_or_none()
-
-    if not email_log:
-        raise HTTPException(status_code=404, detail="Email log not found")
-    if email_log.status != EmailStatus.PENDING:
-        raise HTTPException(status_code=400, detail=f"Email is not pending (status: {email_log.status})")
-
-    send_result = await send_email(
-        to_email=email_log.to_email,
-        to_name=email_log.to_name or "",
-        subject=email_log.subject,
-        body=email_log.body,
-        tracking_id=email_log.tracking_id,
-    )
-
-    if send_result["success"]:
-        email_log.status = EmailStatus.SENT
-        email_log.sent_at = datetime.utcnow()
-    else:
-        email_log.status = EmailStatus.FAILED
-        email_log.error_message = send_result.get("error", "Unknown error")
-
-    await db.commit()
-    await db.refresh(email_log)
-    return email_log
+        await db.commit()
+        await db.refresh(email_log)
+        return email_log
 
 
 @router.put("/logs/{email_id}")

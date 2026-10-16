@@ -56,17 +56,31 @@ app_config.settings.DATABASE_URL = os.environ["DATABASE_URL"]
 
 @pytest.fixture(scope="session", autouse=True)
 def _create_schema():
-    """Create every table once for the session.
+    """Create every table once for the session, and seed the demo data.
 
     The ``client`` fixture gets this for free from the app lifespan, but tests
     that only use ``db`` (repository, scan runner) would otherwise hit
     "no such table: agent_runs". Creating it here is idempotent.
+
+    The demo seed is here too, and that part is not housekeeping. ``main``'s
+    lifespan seeds only when the customer table is **empty**, so whichever test
+    file creates the first customer decides whether the demo customers exist at
+    all for the rest of the session -- and a file that only touches ``db`` never
+    runs the lifespan. Adding one such file was enough to make four tests in a
+    later file fail with "customer 4 not found", depending on the order pytest
+    happened to collect them in. Seeding where the schema is created removes the
+    ordering dependency instead of documenting it.
     """
     import asyncio
 
     from app.database import init_db
+    from app.main import _insert_demo_data
 
-    asyncio.run(init_db())
+    async def prepare():
+        await init_db()
+        await _insert_demo_data()
+
+    asyncio.run(prepare())
     yield
 
 
