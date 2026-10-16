@@ -3,6 +3,8 @@ import logging
 
 from app.llm import (
     LLMBadResponse,
+    LLMRateLimited,
+    LLMTransient,
     LLMTruncated,
     LLMUnavailable,
     complete_text,
@@ -87,8 +89,16 @@ BODY: [email body in HTML format]"""
         reason = "model response was cut off at the token cap"
     except LLMBadResponse as exc:
         reason = f"model returned nothing usable: {exc}"
-    except Exception as exc:                      # network, auth, rate limit
-        reason = f"model call failed: {exc}"
+    except LLMRateLimited:
+        reason = "model provider is rate limiting; try again shortly"
+    except LLMTransient as exc:
+        # The SDK has already retried this DEFAULT_MAX_RETRIES times.
+        reason = f"model call failed and did not recover: {exc}"
+    except Exception as exc:
+        # Not the model. A bug here must not be reported to a human as "the
+        # model call failed", which is how a real defect hides behind a
+        # friendly fallback -- so it says what it actually is.
+        reason = f"unexpected error preparing the email ({type(exc).__name__}): {exc}"
     else:
         subject = ""
         body = ""

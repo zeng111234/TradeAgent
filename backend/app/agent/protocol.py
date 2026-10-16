@@ -161,7 +161,20 @@ class OpenAICompatibleClient:
             kwargs["tools"] = tools
             kwargs["tool_choice"] = "auto"
 
-        response = await client.chat.completions.create(**kwargs)
+        try:
+            response = await client.chat.completions.create(**kwargs)
+        except Exception as exc:  # noqa: BLE001 - translated, not swallowed
+            # The other provider seam in this codebase, and it owed callers the
+            # same thing: the OpenAI SDK speaks in `openai.*` exceptions, and the
+            # loop above records `stop_reason`/`error` for a human to read. Both
+            # seams go through one translator so the vocabulary is the same --
+            # `LLMRateLimited` in a run's error means the same thing as in a
+            # fallback reason, and "retry this run later" can be decided from it
+            # instead of from an exception's class name.
+            from app.llm import translate_provider_error
+
+            raise translate_provider_error(exc) from exc
+
         if not response.choices:
             return LLMReply(content="", finish_reason="empty_choices")
 

@@ -19,10 +19,28 @@ The exceptions here are the point, not an implementation detail. Callers in
 this codebase fall back to a hardcoded template when the model cannot answer,
 which is a reasonable product decision -- but the caller has to be able to tell
 *why*, so that the fallback can be labelled rather than passed off as model
-output. ``LLMUnavailable`` (no key: the operator can fix it),
-``LLMTruncated`` (the cap was hit: the answer is incomplete) and
-``LLMBadResponse`` (the provider returned nothing usable) are three different
-things and are reported as three different things.
+output. ``LLMUnavailable`` (no key, or a rejected one: the operator can fix it),
+``LLMRateLimited`` (come back later), ``LLMTransient`` (the provider failed in a
+way that may not repeat), ``LLMTruncated`` (the cap was hit: the answer is
+incomplete) and ``LLMBadResponse`` (the provider returned nothing usable) are
+different things and are reported as different things.
+
+Why the OpenAI SDK and not a thin httpx wrapper
+-----------------------------------------------
+Because the part a hand-rolled wrapper would have to reimplement is the part that
+is actually hard: retry policy and the classification of a failed request. The
+SDK already distinguishes a timeout from a connection error from a rate limit
+from an auth rejection from a 5xx, retries the ones worth retrying with backoff,
+and pools connections. Wrapping httpx means owning all of that and re-deriving
+the taxonomy from status codes -- and it would still be *our* bug when a
+provider's edge case shows up.
+
+What the SDK does not do is tell callers in this codebase's vocabulary. That is
+this module's job, and until it did that job the seam leaked: every failure
+except "no key" arrived at the caller as ``openai.APITimeoutError`` or similar,
+so callers wrote ``except Exception`` and flattened five different situations
+into one string -- which is exactly what the fallback labelling exists to avoid.
+:func:`translate_provider_error` is where that ends.
 """
 from __future__ import annotations
 
@@ -38,6 +56,11 @@ logger = logging.getLogger(__name__)
 #: server and the browser has given up long before.
 DEFAULT_TIMEOUT_SECONDS = 120.0
 
+#: The SDK's own default is 2. Stated here rather than inherited, because
+#: "how many times will this retry, and what does it do between attempts" is a
+#: decision, and an undeclared default changes under you at upgrade time.
+DEFAULT_MAX_RETRIES = 2
+
 #: Providers disagree on the spelling. ``length`` is OpenAI/DeepSeek/MiMo.
 TRUNCATED_FINISH_REASONS = frozenset({"length", "max_tokens"})
 
@@ -47,7 +70,23 @@ class LLMError(RuntimeError):
 
 
 class LLMUnavailable(LLMError):
-    """No API key is configured. Retrying will not help."""
+    """No usable credentials: not configured, or the provider rejected the key.
+
+    Retrying will not help; an operator has to change something.
+    """
+
+
+class LLMRateLimited(LLMError):
+    """Too many requests. The call may succeed later, but not immediately."""
+
+
+class LLMTransient(LLMError):
+    """The provider failed in a way that may not repeat.
+
+    A timeout, a dropped connection, a 5xx. The SDK has already retried it
+    ``DEFAULT_MAX_RETRIES`` times by the time this is raised, so a caller that
+    retries again should mean it.
+    """
 
 
 class LLMTruncated(LLMError):
@@ -63,6 +102,38 @@ class LLMBadResponse(LLMError):
     """The provider returned no choices, no content, or unparseable JSON."""
 
 
+def translate_provider_error(exc: BaseException) -> LLMError:
+    """Turn a provider failure into one of this module's exceptions.
+
+    Deliberately duck-typed rather than importing the SDK's exception classes:
+    they are renamed and reorganised between releases, and a seam that breaks on
+    an upgrade because it enumerated a library's internals is not a seam. What is
+    checked is stable across providers -- the module the exception came from, and
+    the HTTP status it carries.
+
+    Anything that is **not** the provider's exception is re-raised untouched: a
+    ``TypeError`` from our own code must not be reported to a human as "the model
+    call failed", which is how a real bug gets hidden behind a friendly fallback.
+    """
+    origin = (type(exc).__module__ or "").split(".")[0]
+    if origin != "openai":
+        raise exc
+
+    status = getattr(exc, "status_code", None)
+    name = type(exc).__name__
+
+    if status in (401, 403) or name in ("AuthenticationError", "PermissionDeniedError"):
+        return LLMUnavailable(
+            f"the provider rejected the credentials ({name}"
+            + (f", HTTP {status}" if status else "") + ")"
+        )
+    if status == 429 or name == "RateLimitError":
+        return LLMRateLimited("the provider is rate limiting this key (HTTP 429)")
+    if status is not None and 500 <= int(status) < 600:
+        return LLMTransient(f"the provider returned HTTP {status} ({name})")
+    return LLMTransient(f"{name}: {exc}")
+
+
 _client: Any = None
 _client_signature: Optional[tuple] = None
 
@@ -75,6 +146,16 @@ def timeout_seconds() -> float:
     except (TypeError, ValueError):
         value = 0.0
     return value if value > 0 else DEFAULT_TIMEOUT_SECONDS
+
+
+def max_retries() -> int:
+    """How many times the SDK retries a failed request. Overridable."""
+    configured = getattr(settings, "OPENAI_MAX_RETRIES", None)
+    try:
+        value = int(configured)
+    except (TypeError, ValueError):
+        value = DEFAULT_MAX_RETRIES
+    return max(0, value)
 
 
 def is_configured() -> bool:
@@ -98,6 +179,7 @@ def get_client():
         settings.OPENAI_API_KEY,
         settings.OPENAI_BASE_URL,
         timeout_seconds(),
+        max_retries(),
     )
     if _client is None or _client_signature != signature:
         from openai import AsyncOpenAI
@@ -106,6 +188,8 @@ def get_client():
             api_key=signature[0],
             base_url=signature[1],
             timeout=signature[2],
+            # Stated rather than inherited; see DEFAULT_MAX_RETRIES.
+            max_retries=signature[3],
         )
         _client_signature = signature
     return _client
@@ -152,12 +236,22 @@ async def complete_text(
         messages.append({"role": "system", "content": system})
     messages.append({"role": "user", "content": prompt})
 
-    response = await client.chat.completions.create(
-        model=settings.OPENAI_MODEL,
-        messages=messages,
-        temperature=temperature,
-        max_tokens=max_tokens,
-    )
+    try:
+        response = await client.chat.completions.create(
+            model=settings.OPENAI_MODEL,
+            messages=messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+    except LLMError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - classified, not swallowed
+        # The seam's job: a caller here must never have to write
+        # `except Exception` to find out that the provider timed out. See
+        # translate_provider_error -- anything that is not the provider's own
+        # exception is re-raised untouched.
+        raise translate_provider_error(exc) from exc
+
     return text_of(response)
 
 

@@ -476,7 +476,16 @@ class AgentLoop:
             )
         except Exception as exc:  # noqa: BLE001 - surfaced as a run error
             logger.error("LLM call failed in run %s: %s", run.run_id, exc, exc_info=True)
-            raise AgentError(f"LLM call failed in round {round_index}: {exc}") from exc
+            # The class name is part of the message on purpose. The provider
+            # adapter translates a failure into one of ``LLMRateLimited`` /
+            # ``LLMTransient`` / ``LLMUnavailable`` before it gets here, and that
+            # word is the whole value of the translation -- dropping it leaves a
+            # run's ``stop_reason`` saying "the call failed" with no way to tell
+            # "come back later" from "an operator has to fix this".
+            raise AgentError(
+                f"LLM call failed in round {round_index} "
+                f"({type(exc).__name__}): {exc}"
+            ) from exc
 
     def _project_for_model(self, messages_owner, round_index: int) -> list[Message]:
         """Return the message list to send, compacting if it is too large."""
