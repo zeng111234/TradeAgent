@@ -1,6 +1,13 @@
 """AI service for email generation and customer analysis."""
 import logging
-from app.config import settings
+
+from app.llm import (
+    LLMBadResponse,
+    LLMTruncated,
+    LLMUnavailable,
+    complete_text,
+    is_configured,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -15,19 +22,23 @@ async def generate_cold_email(
     language: str = "en",
 ) -> dict:
     """Generate a cold outreach email using AI.
-    
-    Falls back to a template-based approach if OpenAI API is not configured.
+
+    Falls back to a template when the model cannot answer -- but says so. The
+    returned mapping always carries ``ai_powered`` and, when it is False,
+    ``fallback_reason``. Before this, a wrong API key produced a canned
+    template that was indistinguishable from model output, on the path that
+    ends in a real email to a real buyer.
     """
-    if settings.OPENAI_API_KEY:
-        return await _generate_with_openai(
-            product_name, target_industry, target_country,
-            company_name, selling_points, tone, language,
-        )
-    else:
+    if not is_configured():
         return _generate_with_template(
             product_name, target_industry, target_country,
             company_name, selling_points, tone, language,
+            reason="no_api_key",
         )
+    return await _generate_with_openai(
+        product_name, target_industry, target_country,
+        company_name, selling_points, tone, language,
+    )
 
 
 async def _generate_with_openai(
@@ -39,15 +50,8 @@ async def _generate_with_openai(
     tone: str,
     language: str,
 ) -> dict:
-    """Generate email using OpenAI API."""
-    try:
-        from openai import AsyncOpenAI
-        client = AsyncOpenAI(
-            api_key=settings.OPENAI_API_KEY,
-            base_url=settings.OPENAI_BASE_URL,
-        )
-
-        prompt = f"""You are an experienced foreign trade sales expert. Write a cold outreach email to a potential buyer.
+    """Generate email using the configured chat-completions provider."""
+    prompt = f"""You are an experienced foreign trade sales expert. Write a cold outreach email to a potential buyer.
 
 Product: {product_name}
 Target Industry: {target_industry or 'General'}
@@ -68,19 +72,24 @@ Output format:
 SUBJECT: [subject line]
 BODY: [email body in HTML format]"""
 
-        response = await client.chat.completions.create(
-            model=settings.OPENAI_MODEL,
-            messages=[
-                {"role": "system", "content": "You are a professional foreign trade email copywriter."},
-                {"role": "user", "content": prompt},
-            ],
+    try:
+        content = await complete_text(
+            prompt,
+            system="You are a professional foreign trade email copywriter.",
             temperature=0.7,
             max_tokens=500,
         )
-
-        content = response.choices[0].message.content
-        
-        # Parse response
+    except LLMUnavailable:
+        reason = "no_api_key"
+    except LLMTruncated:
+        # Half an email is not an email, and the caller offers this to a human
+        # as something to send.
+        reason = "model response was cut off at the token cap"
+    except LLMBadResponse as exc:
+        reason = f"model returned nothing usable: {exc}"
+    except Exception as exc:                      # network, auth, rate limit
+        reason = f"model call failed: {exc}"
+    else:
         subject = ""
         body = ""
         if "SUBJECT:" in content and "BODY:" in content:
@@ -99,13 +108,16 @@ BODY: [email body in HTML format]"""
                 "Add a specific reference to their recent orders",
                 "Include a time-limited offer to create urgency",
             ],
+            "ai_powered": True,
+            "fallback_reason": None,
         }
-    except Exception as e:
-        logger.error(f"OpenAI API error: {e}")
-        return _generate_with_template(
-            product_name, target_industry, target_country,
-            company_name, selling_points, tone, language,
-        )
+
+    logger.warning("cold email fell back to a template: %s", reason)
+    return _generate_with_template(
+        product_name, target_industry, target_country,
+        company_name, selling_points, tone, language,
+        reason=reason,
+    )
 
 
 def _generate_with_template(
@@ -116,8 +128,9 @@ def _generate_with_template(
     selling_points: str | None,
     tone: str,
     language: str,
+    reason: str = "template_requested",
 ) -> dict:
-    """Generate email using template (fallback when no API key)."""
+    """Generate email using template (fallback when the model is unavailable)."""
     company = company_name or "Our Company"
     industry = target_industry or "your industry"
     points = selling_points or "high quality products, competitive pricing, and reliable delivery"
@@ -159,39 +172,7 @@ def _generate_with_template(
             "Add specific references to the recipient's business if possible",
             "Consider adding a link to your product catalog or website",
         ],
+        "ai_powered": False,
+        "fallback_reason": reason,
     }
 
-
-async def analyze_customer_match(
-    customer_products: str,
-    your_products: str,
-) -> dict:
-    """Analyze how well a customer matches your product offering.
-    Returns a score and explanation.
-    """
-    # Simple keyword-based matching (can be enhanced with AI)
-    customer_keywords = set(customer_products.lower().split(",")) if customer_products else set()
-    your_keywords = set(your_products.lower().split(",")) if your_products else set()
-    
-    if not customer_keywords or not your_keywords:
-        return {"score": 50.0, "explanation": "Insufficient data for matching analysis"}
-    
-    # Clean up keywords
-    customer_keywords = {k.strip() for k in customer_keywords if k.strip()}
-    your_keywords = {k.strip() for k in your_keywords if k.strip()}
-    
-    # Calculate overlap
-    common = customer_keywords & your_keywords
-    if not common:
-        return {
-            "score": 20.0,
-            "explanation": f"No direct keyword match found. Customer products: {customer_products}",
-        }
-    
-    match_ratio = len(common) / max(len(customer_keywords), len(your_keywords))
-    score = min(100, match_ratio * 100 + 20)
-    
-    return {
-        "score": round(score, 1),
-        "explanation": f"Matched keywords: {', '.join(common)}. Match ratio: {match_ratio:.0%}",
-    }

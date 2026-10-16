@@ -13,49 +13,12 @@ from __future__ import annotations
 
 import pytest
 
-from app.services.ai_service import analyze_customer_match, generate_cold_email
+from app.services.ai_service import generate_cold_email
 from app.services.agent_service import (
     analyze_email_reply,
     analyze_inquiry,
     get_holiday_calendar,
 )
-
-
-# --------------------------------------------------------------------------
-# ai_service.analyze_customer_match — pure, deterministic, no branch on API key
-# --------------------------------------------------------------------------
-
-@pytest.mark.parametrize(
-    "customer_products,your_products,expected_score_bucket",
-    [
-        ("", "gold thread", "insufficient_data"),
-        ("gold thread", "", "insufficient_data"),
-        ("", "", "insufficient_data"),
-        ("gold thread", "gold thread", "full_match"),
-        ("gold thread", "silver yarn", "no_match"),
-    ],
-)
-async def test_analyze_customer_match_score_buckets(
-    customer_products, your_products, expected_score_bucket
-):
-    result = await analyze_customer_match(customer_products, your_products)
-    assert set(result) >= {"score", "explanation"}
-
-    if expected_score_bucket == "insufficient_data":
-        assert result["score"] == 50.0
-        assert "Insufficient data" in result["explanation"]
-    elif expected_score_bucket == "full_match":
-        # match_ratio 1.0 -> 100 + 20, capped at 100
-        assert result["score"] == 100
-    elif expected_score_bucket == "no_match":
-        assert result["score"] == 20.0
-        assert "No direct keyword match" in result["explanation"]
-
-
-async def test_analyze_customer_match_is_case_insensitive():
-    lower = await analyze_customer_match("gold thread", "gold thread")
-    upper = await analyze_customer_match("GOLD THREAD", "Gold Thread")
-    assert lower["score"] == upper["score"]
 
 
 # --------------------------------------------------------------------------
@@ -68,10 +31,15 @@ async def test_cold_email_falls_back_to_template_without_api_key():
         company_name="Ningbo Test Co",
         target_country="Germany",
     )
-    assert set(result) == {"subject", "body", "suggestions"}
+    assert set(result) == {
+        "subject", "body", "suggestions", "ai_powered", "fallback_reason",
+    }
     assert "gold metallic yarn" in result["subject"]
     assert "Ningbo Test Co" in result["body"]
     assert isinstance(result["suggestions"], list) and result["suggestions"]
+    # The template is not model output and the response says so.
+    assert result["ai_powered"] is False
+    assert result["fallback_reason"] == "no_api_key"
 
 
 async def test_cold_email_template_always_produces_non_empty_body():

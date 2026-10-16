@@ -31,6 +31,9 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str = ""
     OPENAI_BASE_URL: str = "https://api.xiaomimimo.com/v1"
     OPENAI_MODEL: str = "mimo-v2.5"
+    # One completion's request timeout. The SDK default is 600s, which lets a
+    # hung provider hold an HTTP request for ten minutes.
+    OPENAI_TIMEOUT_SECONDS: float = 120.0
 
     # CORS
     CORS_ORIGINS: list[str] = ["http://localhost:5173", "http://localhost:3000"]

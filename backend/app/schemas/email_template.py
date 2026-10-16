@@ -51,3 +51,9 @@ class AIGenerateResponse(BaseModel):
     subject: str
     body: str
     suggestions: Optional[list[str]] = None
+    #: False when the text below is the built-in template rather than model
+    #: output -- e.g. no API key, a failed call, or an answer cut off at the
+    #: token cap. Surfaced so the UI can label it instead of passing a canned
+    #: template off as a generated email.
+    ai_powered: bool = False
+    fallback_reason: Optional[str] = None

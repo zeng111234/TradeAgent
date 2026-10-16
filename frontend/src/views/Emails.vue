@@ -175,7 +175,19 @@
 
           <!-- AI Result -->
           <div v-if="aiResult" style="background: #f5f7fa; padding: 16px; border-radius: 8px; margin-top: 12px">
-            <h4 style="margin: 0 0 8px">Generated Email:</h4>
+            <h4 style="margin: 0 0 8px">
+              Generated Email:
+              <el-tag v-if="aiResult.ai_powered" type="success" size="small">AI 生成</el-tag>
+              <el-tag v-else type="warning" size="small">模板（非 AI）</el-tag>
+            </h4>
+            <el-alert
+              v-if="!aiResult.ai_powered && aiResult.fallback_reason"
+              type="warning"
+              :closable="false"
+              show-icon
+              style="margin-bottom: 8px"
+              :title="`以下内容是内置模板，不是模型写的。原因：${aiResult.fallback_reason}`"
+            />
             <p><strong>Subject:</strong> {{ aiResult.subject }}</p>
             <div v-html="aiResult.body" style="margin: 8px 0; color: #606266"></div>
             <el-button size="small" type="success" @click="useAiResult">

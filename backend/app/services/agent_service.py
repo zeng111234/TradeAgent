@@ -1,8 +1,12 @@
 """AI Agent service - deep AI integration for foreign trade."""
 import logging
-import json
-import re
-from app.config import settings
+
+from app.llm import (
+    LLMTruncated,
+    complete_json,
+    complete_text,
+    is_configured,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +37,7 @@ async def analyze_customer_website(url: str, your_products: str = "") -> dict:
         return {"error": f"Failed to fetch website: {str(e)}", "score": 0}
 
     # Step 2: AI Analysis
-    if settings.OPENAI_API_KEY:
+    if is_configured():
         return await _ai_analyze_website(page_text, title, url, your_products)
     else:
         return _basic_analyze_website(page_text, title, url)
@@ -42,9 +46,6 @@ async def analyze_customer_website(url: str, your_products: str = "") -> dict:
 async def _ai_analyze_website(page_text: str, title: str, url: str, your_products: str) -> dict:
     """Use LLM to deeply analyze a website."""
     try:
-        from openai import AsyncOpenAI
-        client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY, base_url=settings.OPENAI_BASE_URL)
-
         prompt = f"""You are an expert foreign trade analyst. Analyze this potential buyer's website and provide a detailed lead assessment.
 
 Website URL: {url}
@@ -73,29 +74,18 @@ Please analyze and return a JSON object with these fields:
 
 Return ONLY valid JSON, no other text."""
 
-        response = await client.chat.completions.create(
-            model=settings.OPENAI_MODEL,
-            messages=[
-                {"role": "system", "content": "You are a B2B trade intelligence analyst. Always respond with valid JSON only."},
-                {"role": "user", "content": prompt},
-            ],
+        result = await complete_json(
+            prompt,
+            system="You are a B2B trade intelligence analyst. Always respond with valid JSON only.",
             temperature=0.3,
             max_tokens=1500,
         )
-
-        content = response.choices[0].message.content.strip()
-        # Try to parse JSON
-        if content.startswith("```"):
-            content = content.split("```")[1]
-            if content.startswith("json"):
-                content = content[4:]
-        result = json.loads(content)
         result["ai_powered"] = True
         result["source_url"] = url
         return result
 
-    except json.JSONDecodeError:
-        logger.error("AI returned non-JSON response")
+    except LLMTruncated as e:
+        logger.error(f"website analysis hit the token cap, basic analysis used: {e}")
         return _basic_analyze_website(page_text, title, url)
     except Exception as e:
         logger.error(f"AI analysis error: {e}")
@@ -201,13 +191,10 @@ async def analyze_email_reply(email_content: str) -> dict:
     
     Classifies intent, extracts key info, suggests next steps.
     """
-    if not settings.OPENAI_API_KEY:
+    if not is_configured():
         return _basic_reply_analysis(email_content)
 
     try:
-        from openai import AsyncOpenAI
-        client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY, base_url=settings.OPENAI_BASE_URL)
-
         prompt = f"""You are an expert foreign trade email analyst. Analyze this customer reply and extract actionable intelligence.
 
 Customer Email:
@@ -235,25 +222,18 @@ Return a JSON object:
 
 Return ONLY valid JSON."""
 
-        response = await client.chat.completions.create(
-            model=settings.OPENAI_MODEL,
-            messages=[
-                {"role": "system", "content": "You are a B2B trade email analyst. Always respond with valid JSON."},
-                {"role": "user", "content": prompt},
-            ],
+        result = await complete_json(
+            prompt,
+            system="You are a B2B trade email analyst. Always respond with valid JSON.",
             temperature=0.3,
             max_tokens=1000,
         )
-
-        content = response.choices[0].message.content.strip()
-        if content.startswith("```"):
-            content = content.split("```")[1]
-            if content.startswith("json"):
-                content = content[4:]
-        result = json.loads(content)
         result["ai_powered"] = True
         return result
 
+    except LLMTruncated as e:
+        logger.error(f"reply analysis hit the token cap, keyword rules used: {e}")
+        return _basic_reply_analysis(email_content)
     except Exception as e:
         logger.error(f"Email analysis error: {e}")
         return _basic_reply_analysis(email_content)
@@ -367,7 +347,7 @@ async def daily_follow_up_intelligence(db_session=None) -> dict:
     actions.sort(key=lambda x: priority_order.get(x["priority"], 3))
 
     # Generate one-click follow-up emails for high priority
-    if settings.OPENAI_API_KEY and actions:
+    if is_configured() and actions:
         for action in actions[:5]:  # Top 5 high priority
             if action["priority"] == "high" and action["contact_email"]:
                 try:
@@ -380,9 +360,6 @@ async def daily_follow_up_intelligence(db_session=None) -> dict:
                     last = email_result.scalar_one_or_none()
                     last_subject = last.subject if last else "initial outreach"
 
-                    from openai import AsyncOpenAI
-                    client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY, base_url=settings.OPENAI_BASE_URL)
-
                     prompt = f"""Write a short follow-up email (under 100 words) for a foreign trade business.
 Company: {action['company_name']}
 Contact: {action['contact_name'] or 'Sir/Madam'}
@@ -392,16 +369,12 @@ Reason: {action['reason']}
 
 Write a warm, professional follow-up. Be specific to their situation. Return ONLY the email body (HTML)."""
 
-                    resp = await client.chat.completions.create(
-                        model=settings.OPENAI_MODEL,
-                        messages=[
-                            {"role": "system", "content": "You are a professional foreign trade email writer. Write concise, warm emails."},
-                            {"role": "user", "content": prompt},
-                        ],
+                    action["draft_email"] = await complete_text(
+                        prompt,
+                        system="You are a professional foreign trade email writer. Write concise, warm emails.",
                         temperature=0.7,
                         max_tokens=300,
                     )
-                    action["draft_email"] = resp.choices[0].message.content.strip()
                     action["draft_subject"] = f"Following up - {action['company_name']}"
                 except Exception as e:
                     logger.error(f"Draft email error: {e}")
@@ -426,11 +399,8 @@ async def batch_personalize_emails(
     for each customer based on their industry, country, and products.
     This is the killer feature for batch outreach.
     """
-    if not settings.OPENAI_API_KEY:
+    if not is_configured():
         return {"error": "API key required for batch email generation", "emails": []}
-
-    from openai import AsyncOpenAI
-    client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY, base_url=settings.OPENAI_BASE_URL)
 
     emails = []
     for cust in customers:
@@ -454,22 +424,12 @@ Requirements:
 
 Return JSON: {{"subject": "email subject", "body": "email body in HTML"}}"""
 
-            resp = await client.chat.completions.create(
-                model=settings.OPENAI_MODEL,
-                messages=[
-                    {"role": "system", "content": "Write B2B cold outreach emails. Return valid JSON only."},
-                    {"role": "user", "content": prompt},
-                ],
+            result = await complete_json(
+                prompt,
+                system="Write B2B cold outreach emails. Return valid JSON only.",
                 temperature=0.7,
                 max_tokens=400,
             )
-
-            content = resp.choices[0].message.content.strip()
-            if content.startswith("```"):
-                content = content.split("```")[1]
-                if content.startswith("json"):
-                    content = content[4:]
-            result = json.loads(content)
 
             emails.append({
                 "customer_id": cust.get("id"),
@@ -503,7 +463,7 @@ async def get_negotiation_advice(
     context: str = "",
 ) -> dict:
     """AI negotiation copilot - get real-time advice during price negotiations."""
-    if not settings.OPENAI_API_KEY:
+    if not is_configured():
         return {
             "strategies": [
                 {"type": "stand_firm", "reply": "Thank you for your feedback. Our price reflects the premium quality and after-sales service we provide."},
@@ -511,12 +471,10 @@ async def get_negotiation_advice(
                 {"type": "meet_halfway", "reply": "We value our partnership. For this order, we can offer a 5% discount if the quantity exceeds 1000 units."},
             ],
             "ai_powered": False,
+            "fallback_reason": "no_api_key",
         }
 
     try:
-        from openai import AsyncOpenAI
-        client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY, base_url=settings.OPENAI_BASE_URL)
-
         prompt = f"""You are an expert B2B negotiation coach for a Chinese foreign trade company.
 
 Customer said: "{customer_message}"
@@ -548,37 +506,38 @@ Return JSON:
 
 Return ONLY valid JSON."""
 
-        response = await client.chat.completions.create(
-            model=settings.OPENAI_MODEL,
-            messages=[
-                {"role": "system", "content": "You are an expert B2B negotiation coach. Always respond with valid JSON."},
-                {"role": "user", "content": prompt},
-            ],
+        result = await complete_json(
+            prompt,
+            system="You are an expert B2B negotiation coach. Always respond with valid JSON.",
             temperature=0.5,
             max_tokens=2000,
         )
-
-        content = response.choices[0].message.content.strip()
-        if content.startswith("```"):
-            content = content.split("```")[1]
-            if content.startswith("json"):
-                content = content[4:]
-        result = json.loads(content)
         result["ai_powered"] = True
         return result
 
+    except LLMTruncated as e:
+        logger.error(f"negotiation advice hit the token cap, canned strategies used: {e}")
+        return _canned_negotiation_advice(
+            "the model's answer was cut off at the token cap, so it is incomplete"
+        )
     except Exception as e:
         logger.error(f"Negotiation advice error: {e}")
-        return {
-            "customer_intent_analysis": "Customer wants a lower price",
-            "strategies": [
-                {"type": "stand_firm", "name": "Hold Price", "reply": "Thank you for your feedback. Our price reflects premium quality.", "pros": "Maintains margins", "cons": "May lose the deal"},
-                {"type": "offer_value", "name": "Add Value", "reply": "We can't reduce the price, but we can offer free samples and priority shipping.", "pros": "Adds value without cutting price", "cons": "Customer may still want lower price"},
-                {"type": "meet_halfway", "name": "Small Discount", "reply": "For this order, we offer 5% discount for quantities over 1000 units.", "pros": "Shows flexibility", "cons": "Reduces margin"},
-            ],
-            "recommended_strategy": "Start with offer_value, then negotiate to meet_halfway if needed",
-            "ai_powered": False,
-        }
+        return _canned_negotiation_advice(f"the model call failed: {e}")
+
+
+def _canned_negotiation_advice(reason: str) -> dict:
+    """Fixed strategies, labelled so nobody mistakes them for model output."""
+    return {
+        "customer_intent_analysis": "Customer wants a lower price",
+        "strategies": [
+            {"type": "stand_firm", "name": "Hold Price", "reply": "Thank you for your feedback. Our price reflects premium quality.", "pros": "Maintains margins", "cons": "May lose the deal"},
+            {"type": "offer_value", "name": "Add Value", "reply": "We can't reduce the price, but we can offer free samples and priority shipping.", "pros": "Adds value without cutting price", "cons": "Customer may still want lower price"},
+            {"type": "meet_halfway", "name": "Small Discount", "reply": "For this order, we offer 5% discount for quantities over 1000 units.", "pros": "Shows flexibility", "cons": "Reduces margin"},
+        ],
+        "recommended_strategy": "Start with offer_value, then negotiate to meet_halfway if needed",
+        "ai_powered": False,
+        "fallback_reason": reason,
+    }
 
 
 async def analyze_inquiry(email_content: str) -> dict:
@@ -587,13 +546,10 @@ async def analyze_inquiry(email_content: str) -> dict:
     Extracts products, quantities, requirements, urgency, and generates
     a suggested reply draft. This replaces manual reading and note-taking.
     """
-    if not settings.OPENAI_API_KEY:
+    if not is_configured():
         return _basic_inquiry_analysis(email_content)
 
     try:
-        from openai import AsyncOpenAI
-        client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY, base_url=settings.OPENAI_BASE_URL)
-
         prompt = f"""You are an expert foreign trade inquiry analyst. Parse this customer inquiry email into structured data.
 
 Customer Inquiry:
@@ -635,25 +591,18 @@ Return a JSON object:
 
 Return ONLY valid JSON."""
 
-        response = await client.chat.completions.create(
-            model=settings.OPENAI_MODEL,
-            messages=[
-                {"role": "system", "content": "You are a B2B trade inquiry analyst. Always respond with valid JSON."},
-                {"role": "user", "content": prompt},
-            ],
+        result = await complete_json(
+            prompt,
+            system="You are a B2B trade inquiry analyst. Always respond with valid JSON.",
             temperature=0.3,
             max_tokens=2000,
         )
-
-        content = response.choices[0].message.content.strip()
-        if content.startswith("```"):
-            content = content.split("```")[1]
-            if content.startswith("json"):
-                content = content[4:]
-        result = json.loads(content)
         result["ai_powered"] = True
         return result
 
+    except LLMTruncated as e:
+        logger.error(f"inquiry analysis hit the token cap, keyword rules used: {e}")
+        return _basic_inquiry_analysis(email_content)
     except Exception as e:
         logger.error(f"Inquiry analysis error: {e}")
         return _basic_inquiry_analysis(email_content)
@@ -812,13 +761,10 @@ async def customer_churn_alerts(db_session=None) -> dict:
     alerts.sort(key=lambda x: risk_order.get(x["risk_level"], 4))
 
     # Generate AI rescue emails for critical/high risk customers with API key
-    if settings.OPENAI_API_KEY and alerts:
+    if is_configured() and alerts:
         for alert in alerts[:5]:
             if alert["risk_level"] in ("critical", "high") and alert["contact_email"]:
                 try:
-                    from openai import AsyncOpenAI
-                    client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY, base_url=settings.OPENAI_BASE_URL)
-
                     prompt = f"""Write a rescue email for a customer at risk of being lost.
 
 Company: {alert['company_name']}
@@ -828,16 +774,12 @@ Days since last contact: {(now - datetime.fromisoformat(alert['last_contacted'])
 
 Write a warm, non-pushy email that re-engages the customer. Offer value (new products, special pricing, industry insights). Keep under 100 words. Return ONLY the email body in HTML."""
 
-                    resp = await client.chat.completions.create(
-                        model=settings.OPENAI_MODEL,
-                        messages=[
-                            {"role": "system", "content": "You are a professional foreign trade email writer. Write concise re-engagement emails."},
-                            {"role": "user", "content": prompt},
-                        ],
+                    alert["rescue_email"] = await complete_text(
+                        prompt,
+                        system="You are a professional foreign trade email writer. Write concise re-engagement emails.",
                         temperature=0.7,
                         max_tokens=300,
                     )
-                    alert["rescue_email"] = resp.choices[0].message.content.strip()
                     alert["rescue_subject"] = f"Something new for {alert['company_name']} - Let's reconnect"
                 except Exception as e:
                     logger.error(f"Rescue email error: {e}")
@@ -916,11 +858,8 @@ async def generate_holiday_emails(
             continue
 
         # AI or template-based email generation
-        if settings.OPENAI_API_KEY:
+        if is_configured():
             try:
-                from openai import AsyncOpenAI
-                client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY, base_url=settings.OPENAI_BASE_URL)
-
                 prompt = f"""Write a warm holiday greeting email for a business contact.
 
 Holiday: {holiday_info['name']}
@@ -942,22 +881,12 @@ Rules:
 
 Return JSON: {{"subject": "email subject", "body": "email body in HTML"}}"""
 
-                resp = await client.chat.completions.create(
-                    model=settings.OPENAI_MODEL,
-                    messages=[
-                        {"role": "system", "content": "Write professional B2B holiday greeting emails. Return valid JSON only."},
-                        {"role": "user", "content": prompt},
-                    ],
+                result_data = await complete_json(
+                    prompt,
+                    system="Write professional B2B holiday greeting emails. Return valid JSON only.",
                     temperature=0.7,
                     max_tokens=400,
                 )
-
-                content = resp.choices[0].message.content.strip()
-                if content.startswith("```"):
-                    content = content.split("```")[1]
-                    if content.startswith("json"):
-                        content = content[4:]
-                result_data = json.loads(content)
 
                 emails.append({
                     "customer_id": c.id,

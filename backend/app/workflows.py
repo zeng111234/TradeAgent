@@ -7,6 +7,7 @@ import logging
 import asyncio
 from datetime import datetime
 
+from app.llm import LLMTruncated, complete_json, is_configured
 from app.notification import send_notification
 
 logger = logging.getLogger(__name__)
@@ -19,7 +20,9 @@ async def scan_leads_draft_workflow(
 ) -> dict:
     """Step 1: Search for new customers and generate draft emails (no sending).
 
-    Returns a list of leads with AI-generated email drafts for human review.
+    Returns a list of leads with email drafts for human review. Each draft says
+    whether the model wrote it (``ai_powered``) or whether it is the built-in
+    template (``fallback_reason`` explains why).
     """
     from app.services.agent_service import auto_lead_scanner
     from app.config import settings
@@ -71,6 +74,13 @@ async def scan_leads_draft_workflow(
                 if existing.scalar_one_or_none():
                     exists = True
 
+            # Actually write the draft. This used to read `lead["draft_email"]`,
+            # a key the scanner has never set, so every "AI-generated draft"
+            # here was a fixed one-line template and every subject was the same
+            # string -- while the endpoint docstring promised AI drafts, and
+            # the UI offered them as something to approve and send.
+            draft = await _generate_lead_draft_email(lead, product_keywords)
+
             reviewed_leads.append({
                 "company_name": company_name,
                 "country": country,
@@ -78,8 +88,10 @@ async def scan_leads_draft_workflow(
                 "email": to_email,
                 "relevance_score": lead.get("relevance_score", 0),
                 "snippet": lead.get("snippet", "")[:200],
-                "draft_subject": f"Partnership Inquiry - {product_keywords.split(',')[0].strip()} from China",
-                "draft_body": lead.get("draft_email", "") or f"Dear {company_name},\n\nI noticed your company in {country} and thought our products might be a good fit.\n\nBest regards",
+                "draft_subject": draft["subject"],
+                "draft_body": draft["body"],
+                "ai_powered": draft.get("ai_powered", False),
+                "fallback_reason": draft.get("fallback_reason"),
                 "already_exists": exists,
             })
 
@@ -401,12 +413,13 @@ async def _generate_lead_draft_email(lead: dict, product_keywords: str) -> dict:
     if not emails:
         return None
 
-    try:
-        from app.config import settings
-        if settings.OPENAI_API_KEY:
-            from openai import AsyncOpenAI
-            client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY, base_url=settings.OPENAI_BASE_URL)
-
+    # A missing key is the same situation as a failed call: the caller has to
+    # be able to tell the human reviewer that this is not model output. The
+    # prompt above says "Don't sound like a template" and the fallback below is
+    # one, which is why the result carries `ai_powered`.
+    reason = None
+    if is_configured():
+        try:
             prompt = f"""Write a personalized cold outreach email (120-180 words) for a foreign trade business.
 
 Target company: {company_name}
@@ -427,23 +440,12 @@ Requirements:
 
 Return JSON: {{"subject": "email subject", "body": "email body in plain text"}}"""
 
-            resp = await client.chat.completions.create(
-                model=settings.OPENAI_MODEL,
-                messages=[
-                    {"role": "system", "content": "You write personalized B2B cold emails for a Chinese textile supplier. Each email must be 120-180 words, reference specific details, include product benefits, and a concrete next step. Return valid JSON only."},
-                    {"role": "user", "content": prompt},
-                ],
+            result = await complete_json(
+                prompt,
+                system="You write personalized B2B cold emails for a Chinese textile supplier. Each email must be 120-180 words, reference specific details, include product benefits, and a concrete next step. Return valid JSON only.",
                 temperature=0.7,
                 max_tokens=500,
             )
-
-            import json
-            content = resp.choices[0].message.content.strip()
-            if content.startswith("```"):
-                content = content.split("```")[1]
-                if content.startswith("json"):
-                    content = content[4:]
-            result = json.loads(content)
 
             return {
                 "company_name": company_name,
@@ -451,9 +453,16 @@ Return JSON: {{"subject": "email subject", "body": "email body in plain text"}}"
                 "subject": result.get("subject", f"Business inquiry - {product_keywords}"),
                 "body": result.get("body", ""),
                 "body_preview": result.get("body", "")[:100] + "...",
+                "ai_powered": True,
+                "fallback_reason": None,
             }
-    except Exception as e:
-        logger.error(f"Draft email generation failed for {company_name}: {e}")
+        except LLMTruncated:
+            reason = "model response was cut off at the token cap"
+        except Exception as e:
+            reason = f"model call failed: {e}"
+        logger.warning("draft email for %s fell back to a template: %s", company_name, reason)
+    else:
+        reason = "no_api_key"
 
     # Fallback: simple template
     return {
@@ -462,4 +471,6 @@ Return JSON: {{"subject": "email subject", "body": "email body in plain text"}}"
         "subject": f"Quality {product_keywords} supplier - let's connect",
         "body": f"Dear {company_name},\n\nI noticed your company in {country} and thought our {product_keywords} might be a good fit for your business.\n\nWould you be open to a quick chat about how we can work together?\n\nBest regards",
         "body_preview": f"Dear {company_name}, I noticed your company in {country}...",
+        "ai_powered": False,
+        "fallback_reason": reason or "template_requested",
     }
