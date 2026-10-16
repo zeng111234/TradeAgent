@@ -4,22 +4,29 @@ Adds goal-driven runs on top of the existing ``/agent/*`` endpoints. The
 existing routes are untouched: they are the reviewed, human-triggered tools,
 and this is the autonomous path.
 
-One deliberate limitation: ``POST /agent/run`` is synchronous. A run can take
-up to its wall-clock budget, so a caller holds the connection for that long.
-That is fine for an operator clicking a button or for the CLI, and it keeps the
-trace in the response where it is useful. A production deployment would queue
-the run and poll ``GET /agent/runs/{run_id}``; the storage for that already
-exists, so the change is additive rather than a redesign.
+A run can take minutes, so ``POST /agent/run`` supports two shapes:
 
-"Up to its wall-clock budget" is enforced across the whole run tree, not per
-loop: sub-agents inherit the run's deadline, so spawning five of them cannot
-extend the task past ``max_seconds``.
+* ``wait=false`` (the default) starts the run in the background and answers
+  ``202`` with the run id and a poll URL. The row is written *before* any work
+  happens, so polling works immediately rather than 404-ing until it finishes.
+* ``wait=true`` keeps the connection open and returns the finished trace. That
+  is what the CLI and the tests use, and it is what an operator clicking a
+  button wants when the run is short.
+
+Neither blocks the process: the work is asynchronous, and the tools that do
+blocking I/O (page fetches, web search, parsing) run on worker threads. That
+second part is not optional -- measured, three blocking page fetches delayed
+every other coroutine in the process by 2950 ms, and moving them to a thread
+brought that to 12 ms with no increase in wall-clock time.
 """
 from __future__ import annotations
 
+import asyncio
+import logging
+import uuid
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -36,7 +43,16 @@ from app.agent.service import (
 )
 from app.database import get_db
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/agent", tags=["AI Agent"])
+
+#: How many runs may be in flight at once. Past this a new one is refused with
+#: 429 rather than queued: an unbounded queue is a backlog nobody can see, and
+#: each run holds a model connection and writes to the same SQLite file.
+MAX_CONCURRENT_RUNS = 3
+
+_in_flight: set[str] = set()
 
 
 class AgentRunRequest(BaseModel):
@@ -45,6 +61,23 @@ class AgentRunRequest(BaseModel):
     max_rounds: Optional[int] = Field(None, ge=1, le=30)
     max_tool_calls: Optional[int] = Field(None, ge=1, le=60)
     max_seconds: Optional[float] = Field(None, gt=0, le=900)
+    wait: bool = Field(
+        False,
+        description=(
+            "false: return 202 with the run id immediately and let it finish in "
+            "the background. true: hold the connection and return the full trace."
+        ),
+    )
+
+
+class AgentRunStarted(BaseModel):
+    """What a caller gets when the run is still going."""
+    run_id: str
+    status: str
+    goal: str
+    poll: str
+    trace_url: str
+    max_seconds: float
 
 
 class AgentRunSummary(BaseModel):
@@ -107,12 +140,13 @@ async def api_agent_capabilities():
     }
 
 
-@router.post("/run", response_model=AgentRunSummary)
-async def api_agent_run(data: AgentRunRequest):
-    """Run the agent against a goal and return the trace.
+@router.post("/run", response_model=None)
+async def api_agent_run(data: AgentRunRequest, response: Response):
+    """Run the agent against a goal.
 
-    The full trace is returned so the caller can render the path the agent took
-    rather than only its conclusion.
+    Returns the full trace when ``wait`` is true, and a run id with a poll URL
+    (HTTP 202) when it is false. The run row exists either way before any work
+    starts.
     """
     if not is_configured():
         raise HTTPException(
@@ -133,6 +167,9 @@ async def api_agent_run(data: AgentRunRequest):
             max_tokens=DEFAULT_BUDGET.max_tokens,
         )
 
+    if not data.wait:
+        return await _start_in_background(data, budget)
+
     try:
         result = await execute(data.goal, context=data.context, budget=budget)
     except AgentUnavailable as exc:            # pragma: no cover - guarded above
@@ -145,6 +182,122 @@ async def api_agent_run(data: AgentRunRequest):
     payload["mermaid_sequence"] = result.mermaid_sequence
     payload["mermaid_flowchart"] = result.mermaid_flowchart
     return payload
+
+
+async def _start_in_background(data: AgentRunRequest, budget: AgentBudget) -> AgentRunStarted:
+    """Write the row, hand out the id, and let the work happen elsewhere."""
+    if len(_in_flight) >= MAX_CONCURRENT_RUNS:
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                f"{len(_in_flight)} analyses are already running and the limit is "
+                f"{MAX_CONCURRENT_RUNS}. Poll /agent/runs for the ones in flight "
+                "rather than starting another; each one holds a model connection "
+                "and writes to the same database."
+            ),
+        )
+
+    from app.agent.service import _persist
+    from app.database import async_session
+    from app.agent.repository import save_run, start_run
+
+    run_id = uuid.uuid4().hex
+
+    # The row goes in first. Without it a poller gets 404 for the whole run,
+    # which is exactly how "queue it and poll" failed to be true before.
+    async with async_session() as db:
+        from app.agent.loop import AgentRun as AgentRunResult
+
+        await start_run(db, AgentRunResult(goal=data.goal, run_id=run_id))
+
+    _in_flight.add(run_id)
+
+    def _on_step(step, run) -> None:
+        """Write progress while the run is still going.
+
+        Called synchronously from the loop, so the write is scheduled rather
+        than awaited: the loop must not wait on the database between rounds. A
+        three-minute analysis that writes nothing is indistinguishable from one
+        that died, which is the complaint this whole endpoint exists to fix.
+        """
+        task = asyncio.create_task(_persist_progress(run_id, run))
+        _background_tasks.add(task)
+        task.add_done_callback(_background_tasks.discard)
+
+    async def _runner() -> None:
+        try:
+            result = await execute(
+                data.goal, context=data.context, budget=budget,
+                run_id=run_id, persist=False, on_step=_on_step,
+            )
+            async with async_session() as db:
+                await save_run(db, result.run)
+        except Exception as exc:  # noqa: BLE001 - a background failure must be visible
+            logger.exception("background agent run %s failed", run_id)
+            try:
+                async with async_session() as db:
+                    row = await get_run(db, run_id)
+                    if row is not None:
+                        row.status = "error"
+                        row.error = f"{type(exc).__name__}: {exc}"
+                        row.stop_reason = "background task failed"
+                        await db.commit()
+            except Exception:  # noqa: BLE001
+                logger.exception("could not record the failure of run %s", run_id)
+        finally:
+            _in_flight.discard(run_id)
+
+    # Held in a module-level set as well as the task, because a task that is not
+    # referenced can be garbage collected mid-flight.
+    task = asyncio.create_task(_runner())
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+
+    return AgentRunStarted(
+        run_id=run_id,
+        status="running",
+        goal=data.goal,
+        poll=f"/api/v1/agent/runs/{run_id}",
+        trace_url=f"/api/v1/agent/runs/{run_id}/trace.html",
+        max_seconds=budget.max_seconds,
+    )
+
+
+#: Strong references to in-flight tasks. asyncio only keeps weak ones.
+_background_tasks: set[asyncio.Task] = set()
+
+
+async def drain_background_runs(timeout: float = 5.0) -> int:
+    """Wait for in-flight background runs, briefly.
+
+    Called on shutdown, so a run is not killed in the middle of writing its
+    result. Whatever does not finish is left as ``running`` and swept up by
+    ``mark_stale_runs`` on the next start -- which is why that sweep exists.
+
+    Returns how many tasks were still running when the wait ended.
+    """
+    pending = {t for t in _background_tasks if not t.done()}
+    if pending:
+        done, still_running = await asyncio.wait(pending, timeout=timeout)
+        if still_running:
+            logger.warning(
+                "%d agent run(s) still going after %.0fs; they will be marked "
+                "abandoned on the next start", len(still_running), timeout,
+            )
+        return len(still_running)
+    return 0
+
+
+async def _persist_progress(run_id: str, run) -> None:
+    """Update a running row with what it has done so far. Best effort."""
+    try:
+        from app.database import async_session
+        from app.agent.repository import save_run
+
+        async with async_session() as db:
+            await save_run(db, run)
+    except Exception:  # noqa: BLE001 - progress must never break the run
+        logger.debug("could not persist progress for run %s", run_id, exc_info=True)
 
 
 @router.get("/runs")

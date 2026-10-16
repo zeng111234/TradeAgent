@@ -1,4 +1,5 @@
 """AI Agent service - deep AI integration for foreign trade."""
+import asyncio
 import logging
 import threading
 
@@ -19,12 +20,15 @@ async def analyze_customer_website(url: str, your_products: str = "") -> dict:
     1. Fetch and extract text from the website
     2. Use AI to analyze the company
     3. Score the lead and provide recommendations
+
+    The fetch and the parse run on a worker thread: this is an ``async def``
+    reached from a request handler, and ``requests.get`` blocking inside it
+    freezes every other request in the process for up to its 15-second timeout.
     """
     import requests
     from bs4 import BeautifulSoup
 
-    # Step 1: Fetch website content
-    try:
+    def _fetch() -> tuple[str, str]:
         resp = requests.get(url, timeout=15, verify=False, headers={
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
         })
@@ -33,7 +37,11 @@ async def analyze_customer_website(url: str, your_products: str = "") -> dict:
         for tag in soup(["script", "style", "nav", "footer", "header"]):
             tag.decompose()
         page_text = soup.get_text(separator="\n", strip=True)[:3000]
-        title = soup.title.string if soup.title else ""
+        return page_text, (soup.title.string if soup.title else "")
+
+    # Step 1: Fetch website content
+    try:
+        page_text, title = await asyncio.to_thread(_fetch)
     except Exception as e:
         return {"error": f"Failed to fetch website: {str(e)}", "score": 0}
 

@@ -260,7 +260,7 @@ class AgentLoop:
         *,
         budget: Optional[AgentBudget] = None,
         system_prompt: str = DEFAULT_SYSTEM_PROMPT,
-        on_step: Optional[Callable[[TraceStep], None]] = None,
+        on_step: Optional[Callable[["TraceStep", "AgentRun"], None]] = None,
         spill_dir: Optional[Path] = None,
     ) -> None:
         self.llm = llm
@@ -291,8 +291,8 @@ class AgentLoop:
 
             self.registry.register(build_recall_tool(self.spill))
 
-    async def run(self, goal: str, *, context: str = "") -> AgentRun:
-        run = AgentRun(goal=goal)
+    async def run(self, goal: str, *, context: str = "", run_id: Optional[str] = None) -> AgentRun:
+        run = AgentRun(goal=goal) if run_id is None else AgentRun(goal=goal, run_id=run_id)
         started = time.monotonic()
 
         # One clock for the whole task. A sub-agent inherits this absolute
@@ -383,7 +383,7 @@ class AgentLoop:
                     )
                     run.messages.append(Message.tool_result(call, observation))
                 if self.on_step:
-                    self.on_step(step)
+                    self.on_step(step, run)
                 continue
 
             # --- Invariant 2: every tool call the assistant message declared
@@ -447,7 +447,7 @@ class AgentLoop:
                 return self._finish(run, started, "truncated", "token budget exhausted")
 
             if self.on_step:
-                self.on_step(step)
+                self.on_step(step, run)
 
         return self._finish(run, started, "truncated", "round budget exhausted")
 
@@ -566,7 +566,7 @@ class AgentLoop:
         # answered. Fire the callback so those answers are observable rather than
         # existing only in the message history.
         if step is not None and self.on_step:
-            self.on_step(step)
+            self.on_step(step, run)
         return run
 
 
@@ -579,17 +579,25 @@ async def run_agent(
     context: str = "",
     system_prompt: str = DEFAULT_SYSTEM_PROMPT,
     spill_dir: Optional[Path] = None,
+    run_id: Optional[str] = None,
+    on_step: Optional[Callable[["TraceStep", "AgentRun"], None]] = None,
 ) -> AgentRun:
     """Convenience wrapper. ``AgentError`` is converted into a failed run.
 
     Pass ``spill_dir`` to make compaction lossless: trimmed observations are
     written there and stay retrievable by name. Without it compaction still
     bounds the request, but the trimmed detail is gone for good.
+
+    ``run_id`` lets a caller name the run before it starts, which is what makes
+    it possible to write a "running" row first and let someone poll it.
+    ``on_step`` fires after each round -- a long analysis reports progress
+    through it rather than going silent until the end.
     """
     loop = AgentLoop(llm, registry, budget=budget, system_prompt=system_prompt,
-                     spill_dir=spill_dir)
+                     spill_dir=spill_dir, on_step=on_step)
     try:
-        return await loop.run(goal, context=context)
+        return await loop.run(goal, context=context, run_id=run_id)
     except AgentError as exc:
-        run = AgentRun(goal=goal, status="error", stop_reason=str(exc), error=str(exc))
+        run = AgentRun(goal=goal, run_id=run_id or uuid.uuid4().hex,
+                       status="error", stop_reason=str(exc), error=str(exc))
         return run

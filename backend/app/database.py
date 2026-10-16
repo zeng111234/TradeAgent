@@ -4,7 +4,15 @@ from sqlalchemy.orm import DeclarativeBase
 
 from app.config import settings
 
-engine = create_async_engine(settings.DATABASE_URL, echo=settings.DEBUG)
+# A long analysis now writes its progress while requests are being served, and
+# SQLite admits one writer at a time. The default is to give up after five
+# seconds with "database is locked"; waiting longer is the right trade for a
+# single-process deployment, because the alternative is silently losing a write.
+engine = create_async_engine(
+    settings.DATABASE_URL,
+    echo=settings.DEBUG,
+    connect_args={"timeout": 30} if settings.DATABASE_URL.startswith("sqlite") else {},
+)
 
 async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 

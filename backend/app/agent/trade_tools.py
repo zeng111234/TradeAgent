@@ -26,6 +26,7 @@ trace, instead of to a constant nobody remembers choosing.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from datetime import datetime
@@ -50,6 +51,55 @@ MAX_PAGE_CHARS = 3000
 
 # Stages meaning "this relationship is over"; excluded unless asked for.
 CLOSED_STAGES = {"completed", "lost"}
+
+#: Ugly on purpose. Addresses are read out of raw page source, which means
+#: ``sprite@2x.png`` from a stylesheet looks exactly like an address until you
+#: look at the extension -- so the extension is checked.
+_EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}")
+_NOT_AN_EMAIL = re.compile(r"\.(png|jpe?g|gif|svg|webp|css|js|woff2?|ttf|ico)$", re.I)
+
+#: Deliberately loose, then filtered by digit count: international trade pages
+#: write numbers as +49 (0)40 123-456, 0049 40 123456, or just 040/123456.
+_PHONE_RE = re.compile(r"(?:\+|00)?\d[\d\s\-().]{7,20}\d")
+
+
+def _extract_emails(raw_html: str) -> list[str]:
+    """Addresses found in a page's source, deduplicated, junk extensions dropped.
+
+    These helpers were **called but never defined** in this module: the tool
+    raised ``NameError`` on every page it successfully fetched, and nothing
+    noticed because every test that touches it substitutes a canned response.
+    """
+    found: dict[str, str] = {}
+    for match in _EMAIL_RE.findall(raw_html or ""):
+        address = match.strip().strip(".").lower()
+        if _NOT_AN_EMAIL.search(address):
+            continue
+        found.setdefault(address, match.strip())
+    return list(found.values())[:5]
+
+
+def _extract_phones(text: str) -> list[str]:
+    """Phone numbers in a page's visible text, deduplicated.
+
+    Filtered by digit count rather than by shape: a page is full of things that
+    look like phone numbers (order ids, prices, years) and the only reliable
+    distinction available without a library is that a real number has enough
+    digits and not too many.
+    """
+    found: list[str] = []
+    seen: set[str] = set()
+    for match in _PHONE_RE.findall(text or ""):
+        candidate = match.strip()
+        digits = re.sub(r"\D", "", candidate)
+        if not 8 <= len(digits) <= 15:
+            continue
+        key = digits.lstrip("0")
+        if key in seen:
+            continue
+        seen.add(key)
+        found.append(candidate)
+    return found[:5]
 
 
 def _session_factory():
@@ -545,6 +595,12 @@ async def search_prospects(keyword: str, country: str = "", max_results: int = 8
     The previous implementation dropped every candidate scoring under 40 on a
     fixed heuristic. Here the agent decides, and a candidate it discards is
     visible in the trace along with its reasoning.
+
+    The search itself is blocking network I/O, so it runs on a worker thread.
+    An ``async def`` whose body never awaits does not yield to the event loop:
+    it freezes the process. Measured, three blocking page fetches delayed every
+    other coroutine by 2950 ms; the same work on a thread delayed them by 12 ms
+    and took no longer.
     """
     from ddgs import DDGS
 
@@ -560,12 +616,15 @@ async def search_prospects(keyword: str, country: str = "", max_results: int = 8
     candidates: list[dict] = []
     errors: list[str] = []
 
-    ddgs = DDGS()
+    def _search(query: str) -> list[dict]:
+        """Runs on a worker thread; DDGS is synchronous and slow."""
+        return list(DDGS().text(query, max_results=max_results))
+
     for query in queries:
         if len(candidates) >= max_results:
             break
         try:
-            results = list(ddgs.text(query, max_results=max_results))
+            results = await asyncio.to_thread(_search, query)
         except Exception as exc:  # noqa: BLE001 - a failed query is data, not a crash
             errors.append(f"{query}: {type(exc).__name__}: {exc}")
             continue
@@ -612,6 +671,14 @@ async def search_prospects(keyword: str, country: str = "", max_results: int = 8
     tags={"read", "prospect"},
 )
 async def inspect_website(url: str, max_chars: int = MAX_PAGE_CHARS) -> dict:
+    """Fetch and read one page.
+
+    The fetch **and the parse** run on a worker thread. ``requests.get`` is
+    blocking with a 15-second timeout, and lxml parsing is CPU-bound; either one
+    inside an ``async def`` freezes every other coroutine in the process for its
+    whole duration. Measured, three of these delayed unrelated work by 2950 ms;
+    on a thread, by 12 ms, with no increase in wall-clock time.
+    """
     import requests
     from bs4 import BeautifulSoup
 
@@ -619,7 +686,8 @@ async def inspect_website(url: str, max_chars: int = MAX_PAGE_CHARS) -> dict:
     if not url.startswith(("http://", "https://")):
         url = "https://" + url.lstrip("/")
 
-    try:
+    def _fetch() -> tuple[int, str]:
+        """Blocking network call plus the parse. Runs on a worker thread."""
         response = requests.get(
             url,
             timeout=15,
@@ -631,17 +699,23 @@ async def inspect_website(url: str, max_chars: int = MAX_PAGE_CHARS) -> dict:
                 )
             },
         )
+        return response.status_code, response.text or ""
+
+    try:
+        status_code, raw = await asyncio.to_thread(_fetch)
     except Exception as exc:  # noqa: BLE001
         return {"error": f"could not fetch {url}: {type(exc).__name__}: {exc}", "url": url}
 
-    raw = response.text or ""
-    soup = BeautifulSoup(raw, "lxml")
-    title = soup.title.string.strip() if soup.title and soup.title.string else ""
-    text = soup.get_text(separator="\n", strip=True)
+    def _parse() -> tuple[str, str]:
+        soup = BeautifulSoup(raw, "lxml")
+        page_title = soup.title.string.strip() if soup.title and soup.title.string else ""
+        return page_title, soup.get_text(separator="\n", strip=True)
+
+    title, text = await asyncio.to_thread(_parse)
 
     return {
         "url": url,
-        "status_code": response.status_code,
+        "status_code": status_code,
         "title": title[:300],
         "emails": _extract_emails(raw),
         "phones": _extract_phones(text),

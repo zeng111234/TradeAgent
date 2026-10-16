@@ -23,7 +23,7 @@ import tempfile
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from app.config import settings
 
@@ -131,6 +131,8 @@ async def execute(
     persist: bool = True,
     spill_dir: Optional[Path] = None,
     allow_delegation: bool = True,
+    run_id: Optional[str] = None,
+    on_step: Optional[Callable[[Any], None]] = None,
 ) -> AgentResult:
     """Run the agent and return a displayable result.
 
@@ -141,6 +143,11 @@ async def execute(
     from it, because ``spawn_researcher`` binds a per-run delegation record and
     the loop adds ``recall_observation``; both used to be written into whatever
     registry was passed in, which broke the moment one registry served two runs.
+
+    ``run_id`` lets the caller know the id before the run starts, so the row can
+    be created up front and a poller can find it while the work is happening.
+    ``on_step`` is called after every round, which is how a long analysis reports
+    progress instead of going quiet.
     """
     if not (goal or "").strip():
         raise ValueError("goal must not be empty")
@@ -168,6 +175,8 @@ async def execute(
         budget=budget or DEFAULT_BUDGET,
         context=context,
         spill_dir=spill,
+        run_id=run_id,
+        on_step=on_step,
     )
 
     if persist:

@@ -459,7 +459,7 @@ async def test_run_id_is_unique_per_run(registry):
 async def test_on_step_callback_fires_per_round(registry):
     seen: list[int] = []
     llm = FakeLLM([tool_reply("list_customers", {}), tool_reply("list_customers", {}), final("done")])
-    loop = AgentLoop(llm, registry, on_step=lambda step: seen.append(step.round))
+    loop = AgentLoop(llm, registry, on_step=lambda step, run: seen.append(step.round))
     await loop.run("go")
     assert seen == [1, 2]
 

@@ -22,15 +22,38 @@ async def lifespan(app: FastAPI):
     # Initialize database
     await init_db()
     logger.info("Database initialized.")
+    # Fail the runs a previous process abandoned. A row left as "running" can
+    # never finish, and a poller cannot tell it from one that is still working,
+    # so it waits forever for an answer that is not coming.
+    await _fail_abandoned_runs()
     # Insert demo data if empty
     await _insert_demo_data()
     # Start the scheduler
     start_scheduler()
     logger.info("TradeAgent is ready!")
     yield
+    # Let a run in flight finish rather than killing it mid-write. Anything that
+    # does not make it stays "running" and is failed on the next start.
+    try:
+        from app.routers.agent_runs import drain_background_runs
+
+        await drain_background_runs(timeout=5.0)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("could not drain background runs: %s", exc)
     # Stop scheduler on shutdown
     stop_scheduler()
     logger.info("Shutting down TradeAgent...")
+
+
+async def _fail_abandoned_runs() -> None:
+    try:
+        from app.agent.repository import mark_stale_runs
+        from app.database import async_session
+
+        async with async_session() as db:
+            await mark_stale_runs(db)
+    except Exception as exc:  # noqa: BLE001 - never block startup for housekeeping
+        logger.warning("could not sweep abandoned agent runs: %s", exc)
 
 
 app = FastAPI(

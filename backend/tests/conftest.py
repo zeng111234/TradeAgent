@@ -22,6 +22,7 @@ Two seams make the whole app testable without network access:
 """
 from __future__ import annotations
 
+import asyncio
 import os
 import sys
 import tempfile
@@ -97,9 +98,27 @@ def client():
 
     The scheduler is started by the lifespan too; it only registers jobs and
     is torn down on exit, so it does not interfere.
+
+    Background agent runs are drained before the client goes away. A run left
+    in flight keeps writing rows after its test has finished, which is how a
+    test that asserts "the list is empty" starts failing depending on the order
+    pytest happened to pick.
     """
     with TestClient(app) as c:
         yield c
+        try:
+            from app.routers.agent_runs import drain_background_runs
+
+            if _background_tasks_pending():
+                asyncio.run(drain_background_runs(timeout=10.0))
+        except Exception:  # noqa: BLE001 - teardown must not fail a test
+            pass
+
+
+def _background_tasks_pending() -> bool:
+    from app.routers.agent_runs import _background_tasks
+
+    return any(not task.done() for task in _background_tasks)
 
 
 @pytest.fixture
