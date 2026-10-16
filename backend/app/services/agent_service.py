@@ -293,6 +293,7 @@ async def daily_follow_up_intelligence(db_session=None) -> dict:
         FollowUpPolicy,
         assess_follow_up,
         days_between,
+        derive_thread_state,
     )
 
     policy = FollowUpPolicy()
@@ -309,14 +310,20 @@ async def daily_follow_up_intelligence(db_session=None) -> dict:
             select(EmailLog)
             .where(EmailLog.customer_id == c.id)
             .order_by(EmailLog.created_at.desc())
-            .limit(1)
         )
-        last_email = email_result.scalar_one_or_none()
+        all_emails = email_result.scalars().all()
+        last_email = all_emails[0] if all_emails else None
+
+        # The follow-up path used to decide purely on "days since our last
+        # email", so a customer who replied yesterday was reported as
+        # "No reply in 8 days" and chased as if they had gone quiet.
+        thread = derive_thread_state(all_emails, now)
 
         decision = assess_follow_up(
             stage=c.stage.value if hasattr(c.stage, "value") else str(c.stage),
             days_since_last_email=days_between(now, last_email.created_at) if last_email else None,
             has_any_email=last_email is not None,
+            thread=thread,
             policy=policy,
         )
         if decision is None:
@@ -341,6 +348,7 @@ async def daily_follow_up_intelligence(db_session=None) -> dict:
             "contact_email": contact.email if contact else None,
             "contact_name": contact.name if contact else None,
             "last_contacted": last_email.created_at.isoformat() if last_email else None,
+            "conversation": thread.as_dict(),
         })
 
     priority_order = {"high": 0, "medium": 1, "low": 2}
@@ -690,6 +698,7 @@ async def customer_churn_alerts(db_session=None) -> dict:
         ChurnPolicy,
         assess_churn,
         days_between,
+        derive_thread_state,
     )
 
     policy = ChurnPolicy()
@@ -717,6 +726,11 @@ async def customer_churn_alerts(db_session=None) -> dict:
         total_sent = len([e for e in all_emails if _status(e.status) in sent_states])
         total_replies = len([e for e in all_emails if _status(e.status) == "replied"])
 
+        # Judge the conversation, not the message count. Two emails the customer
+        # overtook by answering the third are not evidence that the approach is
+        # failing, and a reply we have not answered is not silence on their part.
+        thread = derive_thread_state(all_emails, now)
+
         last_contact = c.last_contacted_at or (last_email.created_at if last_email else None)
         stage_ref = c.updated_at or c.created_at
 
@@ -729,6 +743,7 @@ async def customer_churn_alerts(db_session=None) -> dict:
             emails_replied=total_replies,
             last_email_unopened=bool(last_email) and _status(last_email.status) == "sent",
             last_email_days_ago=days_between(now, last_email.created_at) if last_email else None,
+            thread=thread,
             policy=policy,
         )
         if not assessment.at_risk:
@@ -754,6 +769,7 @@ async def customer_churn_alerts(db_session=None) -> dict:
             "last_contacted": last_contact.isoformat() if last_contact else None,
             "emails_sent": total_sent,
             "emails_replied": total_replies,
+            "conversation": thread.as_dict(),
             "days_in_stage": days_between(now, stage_ref) or 0,
         })
 

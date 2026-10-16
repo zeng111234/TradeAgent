@@ -48,6 +48,9 @@ export const emailApi = {
   sendSinglePending: (id) => api.post(`/emails/send-pending/${id}`),
   updateLog: (id, data) => api.put(`/emails/logs/${id}`, data),
   deleteLog: (id) => api.delete(`/emails/logs/${id}`),
+  // The only write path into the 'replied' state. Without it, every "no reply"
+  // rule described a state the app could not tell apart from an answered one.
+  recordReply: (id, data) => api.post(`/emails/logs/${id}/reply`, data || {}),
 }
 
 // --- Tasks ---

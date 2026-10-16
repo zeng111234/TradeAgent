@@ -213,6 +213,20 @@
             <el-table-column label="Time" width="160">
               <template #default="{ row }">{{ formatDate(row.created_at) }}</template>
             </el-table-column>
+            <el-table-column label="Reply" width="130">
+              <template #default="{ row }">
+                <span v-if="row.status === 'replied'" style="color: #909399; font-size: 12px">
+                  {{ formatDate(row.replied_at) }}
+                </span>
+                <el-button
+                  v-else-if="row.status === 'sent' || row.status === 'opened' || row.status === 'delivered'"
+                  size="small"
+                  @click="markReplied(row)"
+                >
+                  Mark replied
+                </el-button>
+              </template>
+            </el-table-column>
           </el-table>
         </el-card>
       </el-col>
@@ -316,6 +330,23 @@ const handleSend = async () => {
     ElMessage.error('Failed to send email')
   } finally {
     sending.value = false
+  }
+}
+
+const markReplied = async (row) => {
+  try {
+    const result = await emailApi.recordReply(row.id)
+    const conversation = result.conversation || {}
+    if (result.already_recorded) {
+      ElMessage.info('This reply was already recorded')
+    } else if (conversation.they_wrote_last) {
+      ElMessage.success('Reply recorded - you owe them an answer')
+    } else {
+      ElMessage.success('Reply recorded')
+    }
+    loadData()
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.detail || 'Could not record the reply')
   }
 }
 

@@ -46,12 +46,15 @@ EXPECTED_ROUTES: dict[str, set[str]] = {
     "/api/v1/customers/{customer_id}": {"get", "put", "delete"},
     "/api/v1/customers/{customer_id}/contacts": {"get", "post"},
     "/api/v1/customers/{customer_id}/notes": {"get", "post"},
-    # --- emails router (10) ---
+    # --- emails router (11) ---
     "/api/v1/emails/generate": {"post"},
     "/api/v1/emails/logs": {"get"},
     # NOTE: no GET here. Ordering was mis-read from the router initially;
     # ``emails.py`` only defines PUT (320) and DELETE (341) for this path.
     "/api/v1/emails/logs/{email_id}": {"put", "delete"},
+    # The only write path into EmailStatus.REPLIED. Without it, "the customer
+    # replied" was unrepresentable and reply_rate was 0 by construction.
+    "/api/v1/emails/logs/{email_id}/reply": {"post"},
     "/api/v1/emails/send": {"post"},
     "/api/v1/emails/send-pending": {"post"},
     "/api/v1/emails/send-pending/{email_id}": {"post"},

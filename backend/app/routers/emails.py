@@ -1,6 +1,8 @@
 """Email management API routes."""
 from datetime import datetime
+from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Response
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -349,6 +351,122 @@ async def api_delete_email_log(email_id: int, db: AsyncSession = Depends(get_db)
 
     await db.delete(email_log)
     await db.flush()
+
+
+# --- Recording a reply ---
+
+class ReplyRecordRequest(BaseModel):
+    """When the customer answered, if it is not now."""
+    replied_at: Optional[datetime] = Field(
+        None, description="When they replied. Defaults to now."
+    )
+
+
+@router.post("/logs/{email_id}/reply")
+async def api_record_reply(
+    email_id: int,
+    data: Optional[ReplyRecordRequest] = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """Record that the customer answered **this** email.
+
+    The only write path into ``EmailStatus.REPLIED``. Until it existed the state
+    was declared, counted by ``/emails/stats`` as ``reply_rate``, read by the
+    agent's tools, and impossible to enter: no endpoint, workflow or agent tool
+    ever set ``replied_at``. So ``reply_rate`` was 0.0% by construction, and
+    every "3 emails, no reply" alert described a state the system could not tell
+    apart from a customer who had written back.
+
+    Two properties worth knowing:
+
+    * **Idempotent.** Recording the same reply twice does not move the
+      timestamp. A reply happened once; a second call is a no-op that says so.
+    * **It does not change the customer's stage.** A reply is contact, not a
+      stage transition, and moving ``contacted`` to ``interested`` on the
+      system's own initiative would be a different guess dressed as a fact.
+    """
+    result = await db.execute(select(EmailLog).where(EmailLog.id == email_id))
+    email_log = result.scalar_one_or_none()
+    if email_log is None:
+        raise HTTPException(status_code=404, detail="Email log not found")
+
+    if email_log.status in (EmailStatus.PENDING, EmailStatus.FAILED, EmailStatus.BOUNCED):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"this email was never delivered (status '{email_log.status.value}'), "
+                "so it cannot have been answered"
+            ),
+        )
+
+    when = (data.replied_at if data else None) or datetime.utcnow()
+    if when > datetime.utcnow():
+        raise HTTPException(
+            status_code=422,
+            detail="replied_at cannot be in the future",
+        )
+    was_sent_at = email_log.sent_at or email_log.created_at
+    if was_sent_at is not None and when < was_sent_at:
+        # Refused rather than stored: a reply older than the email it answers
+        # makes the whole conversation derivation nonsense -- every message
+        # would look like it was sent after the reply, so none of them would
+        # count as awaiting one, and the thread would read as settled.
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"replied_at ({when.isoformat()}) is before this email was sent "
+                f"({was_sent_at.isoformat()}); a reply cannot answer an email that "
+                "had not been sent yet"
+            ),
+        )
+
+    already = email_log.replied_at is not None
+    if not already:
+        email_log.replied_at = when
+        email_log.status = EmailStatus.REPLIED
+
+        # Contact happened, so the silence clock restarts: whoever spoke last,
+        # the gap since the last exchange is now measured from here. The fact
+        # that we still owe them an answer is carried by the thread state
+        # below, not by leaving this timestamp stale.
+        if email_log.customer_id is not None:
+            customer = (
+                await db.execute(
+                    select(Customer).where(Customer.id == email_log.customer_id)
+                )
+            ).scalar_one_or_none()
+            if customer is not None:
+                if customer.last_contacted_at is None or customer.last_contacted_at < when:
+                    customer.last_contacted_at = when
+                # The chase is over; whether a new one starts is a decision, not
+                # a timestamp left over from before they answered.
+                customer.next_follow_up_at = None
+        await db.commit()
+        await db.refresh(email_log)
+
+    return {
+        "email_id": email_log.id,
+        "recorded": not already,
+        "already_recorded": already,
+        "replied_at": email_log.replied_at.isoformat() if email_log.replied_at else None,
+        "status": email_log.status.value,
+        "customer_id": email_log.customer_id,
+        "conversation": await _conversation_for(db, email_log),
+    }
+
+
+async def _conversation_for(db: AsyncSession, email_log: EmailLog) -> dict:
+    """The derived thread state, so the caller sees the effect immediately."""
+    if email_log.customer_id is None:
+        return {}
+    from app.services.follow_up_policy import derive_thread_state
+
+    rows = (
+        await db.execute(
+            select(EmailLog).where(EmailLog.customer_id == email_log.customer_id)
+        )
+    ).scalars().all()
+    return derive_thread_state(rows, datetime.utcnow()).as_dict()
 
 
 # --- Tracking Pixel ---

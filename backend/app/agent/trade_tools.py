@@ -101,6 +101,7 @@ async def get_customer_assessment(customer_id: int) -> dict:
         assess_churn,
         assess_follow_up,
         days_between,
+        derive_thread_state,
     )
 
     now = datetime.utcnow()
@@ -128,6 +129,8 @@ async def get_customer_assessment(customer_id: int) -> dict:
     last_contact = customer.last_contacted_at or (last_email.created_at if last_email else None)
     stage_ref = customer.updated_at or customer.created_at
 
+    thread = derive_thread_state(emails, now)
+
     churn = assess_churn(
         stage=stage,
         created_days_ago=days_between(now, customer.created_at),
@@ -137,6 +140,7 @@ async def get_customer_assessment(customer_id: int) -> dict:
         emails_replied=len([e for e in emails if _status(e.status) == "replied"]),
         last_email_unopened=bool(last_email) and _status(last_email.status) == "sent",
         last_email_days_ago=days_between(now, last_email.created_at) if last_email else None,
+        thread=thread,
         policy=churn_policy,
     )
 
@@ -144,6 +148,7 @@ async def get_customer_assessment(customer_id: int) -> dict:
         stage=stage,
         days_since_last_email=days_between(now, last_email.created_at) if last_email else None,
         has_any_email=last_email is not None,
+        thread=thread,
         policy=follow_policy,
     )
 
@@ -161,6 +166,11 @@ async def get_customer_assessment(customer_id: int) -> dict:
             {"priority": follow[0], "reason": follow[1], "suggested_action": follow[2]}
             if follow else None
         ),
+        # Who spoke last, and whether an answer is owed. This is the field to
+        # read before concluding anything from a count of emails: three sent and
+        # zero replies looks identical whether the customer is ignoring you or
+        # you are ignoring them.
+        "conversation": thread.as_dict(),
         "inputs": {
             "days_since_contact": days_between(now, last_contact),
             "days_in_stage": days_between(now, stage_ref),
@@ -168,6 +178,9 @@ async def get_customer_assessment(customer_id: int) -> dict:
             "emails_total": len(emails),
             "emails_sent": len([e for e in emails if _status(e.status) in sent_states]),
             "emails_replied": len([e for e in emails if _status(e.status) == "replied"]),
+            "emails_awaiting_reply": thread.awaiting_reply,
+            "emails_superseded_by_a_reply": thread.superseded,
+            "they_wrote_last": thread.they_wrote_last,
             "never_contacted_per_log": last_contact is None,
         },
         "thresholds_applied": {
@@ -176,6 +189,7 @@ async def get_customer_assessment(customer_id: int) -> dict:
             "silent_contacted_after_days": churn_policy.silent_contacted_after_days,
             "stuck_quoting_after_days": churn_policy.stuck_quoting_after_days,
             "untouched_new_after_days": churn_policy.untouched_new_after_days,
+            "reply_owed_critical_after_days": churn_policy.reply_owed_critical_after_days,
             "follow_up_no_reply_after_days": follow_policy.contacted_no_reply_after_days,
             "follow_up_quoting_is_always": follow_policy.quoting_always_priority,
         },
@@ -184,7 +198,10 @@ async def get_customer_assessment(customer_id: int) -> dict:
             "are conventions that may not fit this case. Where you disagree, say so "
             "and give your reason — and note that the churn rule and the follow-up "
             "rule answer different questions, so they can disagree with each other "
-            "about the same customer."
+            "about the same customer. Read `conversation` before reading the counts: "
+            "`awaiting_reply` counts emails sent after their last reply, and "
+            "`superseded` counts the ones their reply overtook, which are not "
+            "evidence that they are ignoring you."
         ),
     }
 
