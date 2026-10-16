@@ -37,8 +37,10 @@ TradeAgent's needs are simpler:
 """
 from __future__ import annotations
 
+import asyncio
 import logging
-from dataclasses import dataclass, field
+import time
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Optional
 
@@ -63,6 +65,12 @@ CHILD_BUDGET = AgentBudget(
 
 DEFAULT_MAX_DEPTH = 1
 DEFAULT_MAX_CHILDREN = 5
+
+# A child must stop *before* the parent's call ceiling, not at the same instant.
+# The parent's timer cancels the call, and a cancelled coroutine cannot report;
+# it loses the findings it was one step away from returning. This is the margin
+# the child gets to unwind and hand back what it has.
+DEFAULT_UNWIND_SECONDS = 0.25
 
 CHILD_SYSTEM_PROMPT = """You are a research assistant working on one specific question.
 
@@ -104,6 +112,11 @@ class Delegation:
             "status": self.run.status if self.run else None,
             "tool_sequence": self.run.tool_sequence if self.run else [],
             "rounds": len(self.run.steps) if self.run else 0,
+            "tool_calls": self.run.tool_call_count if self.run else 0,
+            "tokens": (
+                self.run.prompt_tokens + self.run.completion_tokens if self.run else 0
+            ),
+            "elapsed": round(self.run.elapsed, 3) if self.run else 0.0,
         }
 
 
@@ -114,11 +127,27 @@ class DelegationRecord:
     children: list[Delegation] = field(default_factory=list)
     refused: int = 0
 
+    def _child_runs(self) -> list[AgentRun]:
+        return [c.run for c in self.children if c.run is not None]
+
     def as_dict(self) -> dict:
+        """The parent's view, **plus the task totals**.
+
+        A delegated tool call is work this task did, and the parent's own
+        counters cannot see it: ``max_tool_calls=25`` bound the parent while its
+        children spent another 60 calls and 150k tokens. Reporting only the
+        parent's numbers understates what one task costs, so the totals are
+        computed here rather than left to be added up by hand.
+        """
+        runs = self._child_runs()
         return {
             "spawned": len(self.children),
             "refused": self.refused,
             "children": [c.as_dict() for c in self.children],
+            "tool_calls": sum(r.tool_call_count for r in runs),
+            "rounds": sum(len(r.steps) for r in runs),
+            "tokens": sum(r.prompt_tokens + r.completion_tokens for r in runs),
+            "elapsed": round(sum(r.elapsed for r in runs), 3),
         }
 
 
@@ -165,9 +194,7 @@ def build_spawn_tool(
     Closure-bound rather than module-level because it needs the model, the
     parent's tools, and the per-run delegation record.
     """
-    budget = child_budget or CHILD_BUDGET
     parent_depth = parent_registry.depth
-
     @tool(
         name="spawn_researcher",
         description=(
@@ -179,7 +206,12 @@ def build_spawn_tool(
         ),
         tags={"read", "delegation"},
     )
-    async def spawn_researcher(question: str, focus: str = "") -> dict:
+    async def spawn_researcher(
+        question: str,
+        focus: str = "",
+        _deadline: Optional[float] = None,
+        _tool_timeout: Optional[float] = None,
+    ) -> dict:
         question = (question or "").strip()
         if not question:
             return {"error": "question is required"}
@@ -206,6 +238,39 @@ def build_spawn_tool(
                 "reason": "max_children_reached",
             }
 
+        # The task's clock, not this loop's. A child inherits the parent's
+        # absolute deadline and gets at most what is left of it, so the coarse
+        # statement "a run takes at most max_seconds" stays true no matter how
+        # many children it spawns. Before this, each child got a fresh
+        # CHILD_BUDGET on its own clock, and five delegations in one round could
+        # run 180 + 5 x 90 = 630 seconds for a task advertised as 180.
+        #
+        # It is also capped by the parent's per-call ceiling, because that is the
+        # wall the parent will actually enforce: a child allowed 90s behind a
+        # 60s call cap was always cancelled at 60s, losing everything it had
+        # found. Given the smaller number, it stops itself and reports.
+        allowance = replace(child_budget or CHILD_BUDGET)
+        ceilings = [allowance.max_seconds]
+        if _tool_timeout is not None and _tool_timeout > 0:
+            ceilings.append(_tool_timeout)
+        if _deadline is not None:
+            remaining = _deadline - time.monotonic()
+            if remaining <= 0:
+                record.refused += 1
+                return {
+                    "error": (
+                        "cannot delegate: this run's time budget is exhausted. "
+                        "Report what you have established so far and say what is "
+                        "still unverified."
+                    ),
+                    "reason": "deadline_reached",
+                }
+            ceilings.append(remaining)
+            allowance.deadline = _deadline
+        # Minus the unwind margin, so the child returns something rather than
+        # being cancelled at the same instant its ceiling expires.
+        allowance.max_seconds = max(0.05, min(ceilings) - DEFAULT_UNWIND_SECONDS)
+
         child_registry = build_child_registry(parent_registry, read_only=read_only)
         if len(child_registry) == 0:
             record.refused += 1
@@ -222,11 +287,19 @@ def build_spawn_tool(
             child = AgentLoop(
                 llm,
                 child_registry,
-                budget=budget,
+                budget=allowance,
                 system_prompt=CHILD_SYSTEM_PROMPT,
                 spill_dir=spill_dir,
             )
             run = await child.run(prompt)
+        except asyncio.CancelledError:
+            # The parent's own call ceiling cut this child off mid-flight. Record
+            # that, then let the cancellation continue: swallowing it would make
+            # the parent's wait_for believe the call had succeeded. Without this
+            # the record showed a spawned child with no run and no reason.
+            delegation.ok = False
+            delegation.error = "cancelled: the parent run's call ceiling was reached"
+            raise
         except Exception as exc:  # noqa: BLE001 - a child must not abort the parent
             logger.warning("sub-agent failed: %s", exc, exc_info=True)
             delegation.ok = False

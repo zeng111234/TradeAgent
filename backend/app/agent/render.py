@@ -491,10 +491,21 @@ def derive_stats(steps: list[dict], meta: Optional[dict] = None) -> dict:
     refused = sum(
         1 for step in steps for call in step.get("tool_calls", []) if call.get("refused_reason")
     )
+    # A sub-agent's work happens in its own run, so it is not in any of the
+    # counts above. Saying nothing would let the header understate the task.
+    delegated = sum(
+        1
+        for step in steps
+        for call in step.get("tool_calls", [])
+        if call.get("name") == "spawn_researcher"
+        and not call.get("refused_reason")
+        and call.get("ok")
+    )
     return {
         "rounds": meta.get("rounds") or len(steps),
         "tool_calls": meta.get("tool_calls") or len(executed),
         "refused_calls": meta.get("refused_calls") or refused,
+        "delegated": delegated,
         "tool_sequence": meta.get("tool_sequence") or executed,
         "prompt_tokens": meta.get("prompt_tokens", 0),
         "completion_tokens": meta.get("completion_tokens", 0),
@@ -570,6 +581,15 @@ def render_html(run: Any, *, title: Optional[str] = None) -> str:
     ]
     if stats_data["refused_calls"]:
         stats.insert(4, ("refused", stats_data["refused_calls"]))
+    if stats_data["delegated"]:
+        # Spelled out rather than left as a bare number: the counts above are the
+        # parent loop's, and a reader who does not know that will under-read the
+        # task's real size.
+        stats.append((
+            "sub-agents",
+            f"{stats_data['delegated']} "
+            f"(their own calls are not in the counts above)",
+        ))
     stats_html = "".join(
         f"<div><dt>{html.escape(str(k))}</dt><dd>{html.escape(str(v))}</dd></div>" for k, v in stats
     )

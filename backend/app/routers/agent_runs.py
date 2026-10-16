@@ -10,6 +10,10 @@ That is fine for an operator clicking a button or for the CLI, and it keeps the
 trace in the response where it is useful. A production deployment would queue
 the run and poll ``GET /agent/runs/{run_id}``; the storage for that already
 exists, so the change is additive rather than a redesign.
+
+"Up to its wall-clock budget" is enforced across the whole run tree, not per
+loop: sub-agents inherit the run's deadline, so spawning five of them cannot
+extend the task past ``max_seconds``.
 """
 from __future__ import annotations
 
@@ -59,6 +63,14 @@ class AgentRunSummary(BaseModel):
     steps: list[dict[str, Any]] = []
     mermaid_sequence: str = ""
     mermaid_flowchart: str = ""
+    # Delegated work is work this task did, and the parent's counters cannot see
+    # it. Without these a task that spawned five sub-agents looks like it made
+    # one tool call.
+    delegations: int = 0
+    delegations_refused: int = 0
+    delegated_tool_calls: int = 0
+    tool_calls_total: int = 0
+    tokens_total: int = 0
 
 
 @router.get("/capabilities")

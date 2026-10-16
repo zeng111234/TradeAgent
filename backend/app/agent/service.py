@@ -203,8 +203,16 @@ async def _persist(run: AgentRun) -> None:
 
 
 def summarise(result: AgentResult) -> dict[str, Any]:
-    """Compact shape for logs, CI output and API responses."""
+    """Compact shape for logs, CI output and API responses.
+
+    Includes the delegated totals. ``tool_calls`` and ``*_tokens`` are what the
+    parent loop spent; the ``*_total`` fields are what **the task** spent. The
+    two differ whenever a sub-agent ran, and the difference is easy to miss.
+    """
     run = result.run
+    delegations = result.delegations or {}
+    delegated_calls = delegations.get("tool_calls", 0)
+    delegated_tokens = delegations.get("tokens", 0)
     return {
         "run_id": run.run_id,
         "status": run.status,
@@ -218,4 +226,9 @@ def summarise(result: AgentResult) -> dict[str, Any]:
         "completion_tokens": run.completion_tokens,
         "final_output": run.final_output,
         "error": run.error,
+        "delegations": delegations.get("spawned", 0),
+        "delegations_refused": delegations.get("refused", 0),
+        "delegated_tool_calls": delegated_calls,
+        "tool_calls_total": run.tool_call_count + delegated_calls,
+        "tokens_total": run.prompt_tokens + run.completion_tokens + delegated_tokens,
     }

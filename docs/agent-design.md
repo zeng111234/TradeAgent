@@ -78,6 +78,46 @@ Adding a parameter is the only step.
 stops one round from firing twenty calls, and each tool has its own timeout.
 An agent that can run forever is an outage with a nice user interface.
 
+### One task is a run tree, not a loop
+
+The unit of work is **one goal, one run id, one deadline**. Everything the run
+spawns belongs to it.
+
+That distinction has teeth, because each loop carries its own ceilings and a
+loop that delegates starts more of them. Measured with a one-second parent
+budget and two delegations in one round, before this was fixed:
+
+| | value |
+|---|---|
+| parent `max_seconds` | 1.0 |
+| parent `run.elapsed` | **2.42** |
+| what the parent reported | 1 tool call, 230 tokens |
+| what the task actually did | 3 tool calls, 1150 tokens |
+
+A round is charged against the parent's clock only at its start, so every
+delegation inside it is free. Scaled to the presets, `180 + 5 x 90 = 630`
+seconds for a task the API promised would take at most 180.
+
+So the deadline is inherited rather than re-derived:
+
+* The loop computes one absolute deadline, `start + max_seconds`, and a child
+  that already has one keeps the earlier of the two.
+* The parent passes it to tools as a **host parameter** (`_deadline`), invisible
+  in the schema and unforgeable in the model's arguments — a deadline the model
+  could write is not a deadline.
+* A child's allowance is the smallest of its own ceiling, what the parent has
+  left, and the parent's per-call ceiling — the last of which it previously
+  exceeded, so a 90-second allowance behind a 60-second call cap was always
+  cancelled at 60 and lost everything it had found.
+* A tool's own timeout is clamped to what remains, and a call left in a round
+  after the deadline is refused with `run_deadline_reached` rather than run.
+* Cancellation, if it still happens, is recorded as cancellation instead of
+  leaving a spawned child with no run and no reason.
+
+The counts stay per loop, because that is what each number means; the **task**
+totals are reported alongside them (`tool_calls_total`, `tokens_total`), and the
+trace header says when sub-agents are excluded from the figures above it.
+
 ### Failure is data, not an exception
 
 This is the property that matters most in practice:

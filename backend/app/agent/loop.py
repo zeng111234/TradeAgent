@@ -114,6 +114,13 @@ class AgentBudget:
     context_budget_tokens: int = 24_000
     # Recent messages never compacted: they are what the model is reasoning over.
     keep_recent_messages: int = 6
+    # Absolute ``time.monotonic()`` deadline for the **whole task**, inherited by
+    # every sub-agent. ``max_seconds`` alone bounds one loop, and one loop can
+    # contain up to ``max_calls_per_round`` delegations, each with its own
+    # ceiling: 180s + 5 x 90s = 630s for a task advertised as 180s. With a
+    # deadline the tree shares one clock, and a child's allowance is capped by
+    # what the parent has left. ``None`` means "start counting when I start".
+    deadline: Optional[float] = None
 
 
 @dataclass
@@ -288,6 +295,13 @@ class AgentLoop:
         run = AgentRun(goal=goal)
         started = time.monotonic()
 
+        # One clock for the whole task. A sub-agent inherits this absolute
+        # deadline, so "the run takes at most max_seconds" stays true however
+        # many children it spawns.
+        deadline = started + self.budget.max_seconds
+        if self.budget.deadline is not None:
+            deadline = min(deadline, self.budget.deadline)
+
         run.messages = [Message.system(self.system_prompt)]
         if context:
             run.messages.append(Message.system(context))
@@ -297,8 +311,7 @@ class AgentLoop:
         idle_rounds = 0
 
         for round_index in range(1, self.budget.max_rounds + 1):
-            remaining = self.budget.max_seconds - (time.monotonic() - started)
-            if remaining <= 0:
+            if deadline - time.monotonic() <= 0:
                 return self._finish(run, started, "truncated", "time budget exceeded")
 
             # Check the round budget *before* spending a model call on it.
@@ -393,10 +406,13 @@ class AgentLoop:
 
             next_to_execute = 0
             for call in reply.tool_calls:
-                still_allowed = next_to_execute < len(to_execute)
+                # Re-checked per call, because executing the previous one may
+                # have consumed the rest of the task's time.
+                out_of_time = deadline - time.monotonic() <= 0
+                still_allowed = next_to_execute < len(to_execute) and not out_of_time
                 if still_allowed and to_execute[next_to_execute].id == call.id:
                     next_to_execute += 1
-                    invocation = await self._execute(call)
+                    invocation = await self._execute(call, deadline)
                     step.tool_calls.append(invocation)
                     run.messages.append(Message.tool_result(call, invocation.observation))
                     logger.info(
@@ -406,14 +422,24 @@ class AgentLoop:
                     )
                     continue
 
-                observation = (
-                    "NOT EXECUTED: this run's tool-call budget is exhausted, so the "
-                    "call was not made. Nothing was sent and nothing was changed. "
-                    "Report what you have established so far and say what is still "
-                    "unverified."
-                )
+                if out_of_time:
+                    observation = (
+                        "NOT EXECUTED: this run's time budget ran out, so the call "
+                        "was not made. Nothing was sent and nothing was changed. "
+                        "Report what you have established so far and say what is "
+                        "still unverified."
+                    )
+                    refusal_reason = "run_deadline_reached"
+                else:
+                    observation = (
+                        "NOT EXECUTED: this run's tool-call budget is exhausted, so the "
+                        "call was not made. Nothing was sent and nothing was changed. "
+                        "Report what you have established so far and say what is still "
+                        "unverified."
+                    )
+                    refusal_reason = "tool_budget_exhausted"
                 step.tool_calls.append(
-                    _refused(call, observation, reason="tool_budget_exhausted")
+                    _refused(call, observation, reason=refusal_reason)
                 )
                 run.messages.append(Message.tool_result(call, observation))
 
@@ -469,19 +495,46 @@ class AgentLoop:
             )
         return view
 
-    async def _execute(self, call: ToolCall) -> ToolInvocation:
+    async def _execute(self, call: ToolCall, deadline: Optional[float] = None) -> ToolInvocation:
         started = time.monotonic()
+
+        # A tool's own ceiling must not outlive the task's. Without this clamp a
+        # 60-second tool called with 3 seconds left would overrun the budget by
+        # 57, which is the same class of gap the deadline itself closes.
+        timeout = self.budget.tool_timeout_seconds
+        if deadline is not None:
+            timeout = max(0.001, min(timeout, deadline - started))
+
         try:
             result, _ = await asyncio.wait_for(
-                self.registry.call(call.name, call.arguments),
-                timeout=self.budget.tool_timeout_seconds,
+                # ``_deadline`` and ``_tool_timeout`` are host-injected: invisible
+                # in the schema, unforgeable in the arguments. They are how a tool
+                # that starts new work learns what the *task* has left, rather than
+                # inventing its own clock.
+                self.registry.call(
+                    call.name,
+                    call.arguments,
+                    host={
+                        "_deadline": deadline,
+                        "_tool_timeout": self.budget.tool_timeout_seconds,
+                    },
+                ),
+                timeout=timeout,
             )
         except asyncio.TimeoutError:
             from .tools import ToolResult
 
-            result = ToolResult.failure(
-                f"tool '{call.name}' timed out after {self.budget.tool_timeout_seconds}s"
-            )
+            if timeout < self.budget.tool_timeout_seconds:
+                message = (
+                    f"tool '{call.name}' did not finish before the run's time "
+                    f"budget ran out ({timeout:.2f}s were left)"
+                )
+            else:
+                message = (
+                    f"tool '{call.name}' timed out after "
+                    f"{self.budget.tool_timeout_seconds}s"
+                )
+            result = ToolResult.failure(message)
         elapsed = time.monotonic() - started
         return ToolInvocation(
             name=call.name,
