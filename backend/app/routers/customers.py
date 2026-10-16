@@ -100,6 +100,26 @@ async def get_notes(customer_id: int, db: AsyncSession = Depends(get_db)):
     return await customer_service.get_notes(db, customer_id)
 
 
+# --- Debug ---
+@router.get("/{customer_id}/debug")
+async def debug_customer(customer_id: int, db: AsyncSession = Depends(get_db)):
+    """Everything needed to answer "what happened to this customer, and why".
+
+    Read-only, and deliberately so: the POST form of the follow-up plan *writes*
+    the commitments it computes, so investigating with it would change the thing
+    under investigation. This builds the plan with ``persist=False``.
+
+    The interesting half is ``findings``: the same facts, in plain language,
+    most likely cause first. The rest is the evidence behind them.
+    """
+    from app.services.customer_debug import debug_customer as build_debug_view
+
+    view = await build_debug_view(db, customer_id)
+    if view is None:
+        raise HTTPException(status_code=404, detail="Customer not found")
+    return view
+
+
 # --- Import ---
 @router.post("/import")
 async def import_customers(

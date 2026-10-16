@@ -48,6 +48,8 @@ EXPECTED_ROUTES: dict[str, set[str]] = {
     "/api/v1/customers/{customer_id}": {"get", "put", "delete"},
     "/api/v1/customers/{customer_id}/contacts": {"get", "post"},
     "/api/v1/customers/{customer_id}/notes": {"get", "post"},
+    # One customer's whole story, read-only: see app/services/customer_debug.py.
+    "/api/v1/customers/{customer_id}/debug": {"get"},
     # --- emails router (11) ---
     "/api/v1/emails/generate": {"post"},
     "/api/v1/emails/logs": {"get"},

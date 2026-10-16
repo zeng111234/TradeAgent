@@ -390,8 +390,17 @@ def send_three(client, customer_id=4, to_email="y@e.jp"):
 
 
 def customer_row(client, customer_id):
-    items = client.get("/api/v1/customers/").json()["items"]
-    return next(item for item in items if item["id"] == customer_id)
+    """One customer, by id.
+
+    Not by paging the list: ``GET /customers/`` defaults to 20 per page, so this
+    helper silently depended on the whole book staying under twenty rows. It
+    broke the moment another test file created enough customers to push id 4 off
+    the first page -- ``StopIteration``, from a helper, about a page size. The
+    book grows in production too, so the direct route is the honest one.
+    """
+    response = client.get(f"/api/v1/customers/{customer_id}")
+    assert response.status_code == 200, response.text
+    return response.json()
 
 
 def plan_for(client, customer_id):
