@@ -177,14 +177,13 @@ async def debug_customer(db: AsyncSession, customer_id: int) -> Optional[dict]:
     thread = derive_thread_state(emails, now)
 
     # The decision, from the same code path the scheduler uses -- with
-    # persist=False, so looking does not write the commitment it looked at.
-    from app.services.agent_service import daily_follow_up_intelligence
+    # persist=False, so looking does not write the commitment it looked at, and
+    # computed for **this customer only**. Asking for the whole book and picking
+    # one out of it cost 125 ms per debug request at a thousand customers and
+    # grew with the book, which is the wrong shape for a page somebody opens.
+    from app.services.agent_service import plan_for_one_customer
 
-    plan = await daily_follow_up_intelligence(db, due_only=False, persist=False)
-    action = next(
-        (a for a in plan.get("actions", []) if a.get("customer_id") == customer.id),
-        None,
-    )
+    action = await plan_for_one_customer(db, customer, now)
 
     stage = _status(customer.stage)
     sent = [e for e in emails if _status(e.status) in SENT_STATES]
@@ -259,7 +258,11 @@ async def debug_customer(db: AsyncSession, customer_id: int) -> Optional[dict]:
         ],
         "emails_shown": len(emails),
         "plan": action,
-        "plan_deferred_past_cap": plan.get("deferred"),
+        # The backlog, so a customer who is not in today's bounded list can be
+        # told *that* rather than looking as though nothing is owed. The plan
+        # handles twenty a day by default; on a book of a thousand that is a
+        # fifty-day queue, and it should not be invisible.
+        "backlog": await _backlog(db, now),
         # Same field names as customer_churn_alerts uses, so the two views of the
         # same customer cannot drift into describing the same thing differently.
         "churn": {
@@ -275,6 +278,46 @@ async def debug_customer(db: AsyncSession, customer_id: int) -> Optional[dict]:
             for n in notes
         ],
         "findings": findings,
+    }
+
+
+async def _backlog(db: AsyncSession, now: datetime) -> Optional[dict]:
+    """How deep the queue is, so "not today" can be distinguished from "never".
+
+    Cheap on purpose: the counts come from two queries rather than from building
+    the whole plan, because this sits inside a request somebody is waiting for.
+    ``today`` is the plan's own daily cap, read from the policy rather than
+    repeated here -- if the two ever disagreed the view would lie.
+    """
+    from app.models.email_log import EmailStatus
+    from app.services.agent_service import plan_policy_stages
+    from app.services.follow_up_plan import DEFAULT_FOLLOW_UP_PLAN_POLICY
+    from sqlalchemy import func
+
+    waiting = (
+        await db.execute(
+            select(func.count(Customer.id)).where(
+                Customer.stage.in_(list(plan_policy_stages()))
+            )
+        )
+    ).scalar_one()
+
+    drafts = (
+        await db.execute(
+            select(func.count(EmailLog.id)).where(EmailLog.status == EmailStatus.PENDING)
+        )
+    ).scalar_one()
+
+    per_day = DEFAULT_FOLLOW_UP_PLAN_POLICY.max_actions_per_day
+    return {
+        "customers_in_play": waiting,
+        "pending_drafts": drafts,
+        "max_actions_per_day": per_day,
+        # A rough drain estimate, and labelled as one: it assumes every customer
+        # ends up owing an action, which is an upper bound on the queue.
+        "days_to_clear_if_all_waiting": (
+            -(-waiting // per_day) if per_day else None
+        ),
     }
 
 

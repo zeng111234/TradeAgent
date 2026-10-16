@@ -90,7 +90,10 @@ export const emailApi = {
   getLogs: (params) => api.get('/emails/logs', { params }),
   getStats: () => api.get('/emails/stats'),
   // Pending draft management
-  sendPending: () => api.post('/emails/send-pending'),
+  // Bounded batch: the server sends at most limit drafts and reports what is
+  // left, so a backed-up queue drains in visible steps instead of one request
+  // that runs for minutes and times out.
+  sendPending: (limit = 25) => api.post('/emails/send-pending', null, { params: { limit } }),
   sendSinglePending: (id) => api.post(`/emails/send-pending/${id}`),
   updateLog: (id, data) => api.put(`/emails/logs/${id}`, data),
   deleteLog: (id) => api.delete(`/emails/logs/${id}`),

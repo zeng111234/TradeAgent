@@ -45,7 +45,8 @@
             <el-button size="small" @click="loadData" :loading="false">
               <el-icon><Refresh /></el-icon> Refresh
             </el-button>
-            <el-button type="success" size="small" @click="sendAllPending" :loading="sendingAll" :disabled="!pendingEmails.length">
+            <span v-if="batchProgress" style="margin-right: 8px; font-size: 12px; color: #909399">{{ batchProgress }}</span>
+          <el-button type="success" size="small" @click="sendAllPending" :loading="sendingAll" :disabled="!pendingEmails.length">
               <el-icon><Promotion /></el-icon> Send All ({{ pendingEmails.length }})
             </el-button>
           </div>
@@ -255,6 +256,7 @@ const editSubject = ref('')
 const editBody = ref('')
 const sendingId = ref(null)
 const sendingAll = ref(false)
+const batchProgress = ref('')
 
 const emailStats = reactive({
   total_sent: 0,
@@ -470,19 +472,49 @@ const handleSendPending = async (email) => {
 }
 
 const sendAllPending = async () => {
+  // Drain in bounded batches, showing the queue shrink.
+  //
+  // Sending the whole queue in one request was one call that could run for
+  // minutes, hold the send lock throughout, and time out client-side with the
+  // operator none the wiser about how much went out. The server now takes a
+  // limit and reports what is left, so the loop belongs here -- and if it does
+  // stop early (a failure, a closed tab), the rows already sent stay sent and
+  // the next run continues from where this one stopped.
+  const BATCH = 25
+  const MAX_ROUNDS = 40
+  let sent = 0
+  let failed = 0
+  let remaining = pendingEmails.value.length
+
   sendingAll.value = true
   try {
-    const result = await emailApi.sendPending()
-    if (result.sent > 0) {
-      ElMessage.success(`Sent ${result.sent} emails! ${result.failed > 0 ? result.failed + ' failed.' : ''}`)
+    for (let round = 0; round < MAX_ROUNDS; round += 1) {
+      const result = await emailApi.sendPending(BATCH)
+      sent += result.sent || 0
+      failed += result.failed || 0
+      remaining = result.remaining || 0
+      batchProgress.value = `Sent ${sent}${failed ? `, ${failed} failed` : ''} - ${remaining} left`
+      if (!result.total || remaining === 0) break
+    }
+
+    if (sent > 0) {
+      ElMessage.success(`Sent ${sent} emails.${failed > 0 ? ` ${failed} failed.` : ''}`)
     } else {
-      ElMessage.info(`No emails sent. ${result.failed > 0 ? result.failed + ' failed.' : ''}`)
+      ElMessage.info(`No emails sent.${failed > 0 ? ` ${failed} failed.` : ''}`)
+    }
+    if (remaining > 0) {
+      ElMessage.warning(`${remaining} still pending - send again to continue.`)
     }
     await loadData()
   } catch (e) {
-    ElMessage.error('Batch send failed: ' + (e.response?.data?.detail || e.message))
+    ElMessage.error(
+      `Stopped after ${sent} sent${failed ? `, ${failed} failed` : ''}: ` +
+      (e.response?.data?.detail || e.message)
+    )
+    await loadData()
   } finally {
     sendingAll.value = false
+    batchProgress.value = ''
   }
 }
 

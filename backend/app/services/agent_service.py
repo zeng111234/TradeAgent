@@ -368,47 +368,35 @@ async def daily_follow_up_intelligence(
         _PLAN_LOCK.release()
 
 
-async def _build_follow_up_plan(
-    db_session, *, due_only: bool, persist: bool
-) -> dict:
+async def _plan_inputs_for(db_session, customers, now) -> list:
+    """Build one plan input per customer. Shared by the whole book and by one.
+
+    The debug view needs the decision for **one** customer, and before this it
+    got it by computing the plan for every customer and looking one up: 125 ms at
+    a thousand customers, growing linearly, and a read transaction over the whole
+    book each time somebody opened a customer page. Extracting the derivation
+    means there is still exactly one implementation of "what does the plan know
+    about this customer" -- the single-customer path cannot drift from the bulk
+    one, because it is the same function with a shorter list.
+    """
     from collections import defaultdict
 
     from sqlalchemy import select
-    from app.models.customer import Customer, CustomerContact
+    from app.models.customer import CustomerContact
     from app.models.email_log import EmailLog
-    from datetime import datetime
 
-    from app.services.follow_up_plan import (
-        DEFAULT_FOLLOW_UP_PLAN_POLICY,
-        KIND_SEND_FOLLOW_UP,
-        CustomerPlanInput,
-        plan_follow_ups,
-    )
-    from app.services.follow_up_policy import days_between, derive_thread_state
+    from app.services.follow_up_plan import CustomerPlanInput
+    from app.services.follow_up_policy import derive_thread_state
 
-    plan_policy = DEFAULT_FOLLOW_UP_PLAN_POLICY
-    now = datetime.utcnow()
-
-    result = await db_session.execute(
-        select(Customer).where(Customer.stage.in_(list(plan_policy_stages())))
-    )
-    customers = result.scalars().all()
     customer_ids = [c.id for c in customers]
-
-    def _status(value) -> str:
-        return value.value if hasattr(value, "value") else str(value or "")
-
     failed_states = ("failed", "bounced")
 
-    # Three queries for the whole book, not three per customer. The previous
-    # shape issued one email query and one contact query per customer, so a
-    # hundred customers meant three hundred round trips inside one transaction --
-    # which is both slow and, on SQLite, a long window during which the other
-    # scheduled job finds the database locked.
-    #
-    # Grouped into dicts **keyed by customer id**, never by position: pairing two
-    # result lists by index is how one customer's history ends up in another
-    # customer's plan.
+    def status_of(value) -> str:
+        return value.value if hasattr(value, "value") else str(value or "")
+
+    # Two queries for the whole list, not two per customer. Grouped into dicts
+    # **keyed by customer id**, never by position: pairing two result lists by
+    # index is how one customer's history ends up in another customer's plan.
     emails_by_customer: dict[int, list] = defaultdict(list)
     contacts_by_customer: dict[int, object] = {}
     if customer_ids:
@@ -442,7 +430,7 @@ async def _build_follow_up_plan(
         last_attempt = all_emails[0] if all_emails else None
         last_failed_at = None
         last_failed_reason = ""
-        if last_attempt is not None and _status(last_attempt.status) in failed_states:
+        if last_attempt is not None and status_of(last_attempt.status) in failed_states:
             last_failed_at = last_attempt.sent_at or last_attempt.created_at
             last_failed_reason = (last_attempt.error_message or "").strip()[:200]
 
@@ -451,7 +439,7 @@ async def _build_follow_up_plan(
         inputs.append(CustomerPlanInput(
             customer_id=c.id,
             company_name=c.company_name,
-            stage=_status(c.stage),
+            stage=status_of(c.stage),
             thread=thread,
             last_failed_at=last_failed_at,
             last_failed_reason=last_failed_reason,
@@ -460,6 +448,67 @@ async def _build_follow_up_plan(
             contact_name=contact.name if contact else None,
             committed_for=c.next_follow_up_at,
         ))
+
+    return inputs
+
+
+async def plan_for_one_customer(db_session, customer, now=None):
+    """What the follow-up plan decides for this one customer.
+
+    Same code as the whole-book plan, with a one-element list. Returns ``None``
+    when the customer's stage is one the plan does not speak about -- the caller
+    is responsible for saying so rather than reporting "nothing owed".
+    """
+    from datetime import datetime
+
+    from app.services.follow_up_plan import (
+        DEFAULT_FOLLOW_UP_PLAN_POLICY,
+        plan_one,
+    )
+
+    stage = customer.stage.value if hasattr(customer.stage, "value") else str(customer.stage or "")
+    if stage not in plan_policy_stages():
+        return None
+
+    moment = now or datetime.utcnow()
+    inputs = await _plan_inputs_for(db_session, [customer], moment)
+    if not inputs:
+        return None
+    action = plan_one(
+        inputs[0], now=moment, policy=DEFAULT_FOLLOW_UP_PLAN_POLICY
+    )
+    if action is None:
+        return None
+
+    payload = action.as_dict()
+    delta = (moment - datetime.fromisoformat(payload["due_at"])).days
+    payload["days_overdue"] = max(0, delta)
+    payload["due_in_days"] = max(0, -delta)
+    return payload
+
+
+async def _build_follow_up_plan(
+    db_session, *, due_only: bool, persist: bool
+) -> dict:
+    from sqlalchemy import select
+    from app.models.customer import Customer
+    from datetime import datetime
+
+    from app.services.follow_up_plan import (
+        DEFAULT_FOLLOW_UP_PLAN_POLICY,
+        KIND_SEND_FOLLOW_UP,
+        plan_follow_ups,
+    )
+
+    plan_policy = DEFAULT_FOLLOW_UP_PLAN_POLICY
+    now = datetime.utcnow()
+
+    result = await db_session.execute(
+        select(Customer).where(Customer.stage.in_(list(plan_policy_stages())))
+    )
+    customers = result.scalars().all()
+
+    inputs = await _plan_inputs_for(db_session, customers, now)
 
     plan = plan_follow_ups(inputs, now=now, due_only=due_only, policy=plan_policy)
     by_id = {c.id: c for c in customers}

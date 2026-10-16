@@ -19,7 +19,7 @@ from datetime import datetime
 from typing import Optional
 from fastapi import APIRouter, Depends, Header, HTTPException, Response
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -343,12 +343,10 @@ async def get_email_stats(db: AsyncSession = Depends(get_db)):
 #:   in production, where one loop lives for the life of the process, and it is
 #:   a trap everywhere else -- in tests it turned into a silently skipped run.
 #:
-#: A lock rather than a "sending" status: a status set before the send and
-#: cleared after it is a lie when the process dies in between, and it can wedge
-#: a row forever. This keeps the database honest -- ``status`` only changes once
-#: the send has actually happened -- and buys at-most-once within one process.
-#: It does **not** coordinate across processes: ``uvicorn --workers 2`` would
-#: need a claim row in the database instead.
+#: A claim row in the database is what actually protects a send (the
+#: ``pending -> sending`` transition in ``app/services/email_claims.py``); this
+#: lock is a courtesy that refuses an obviously concurrent second send before any
+#: work is done. It does not coordinate across processes -- the claim does.
 _SEND_LOCK = threading.Lock()
 
 
@@ -376,23 +374,64 @@ async def _exclusive_send(what: str):
 
 
 # --- Batch Send Pending Drafts ---
+#: How many drafts one batch send will attempt. A knob, not a discovery: it is
+#: set so a single request finishes inside a normal HTTP timeout for the SMTP
+#: server this is built against (roughly a second per message), and it is the
+#: number to raise if the mail server is faster.
+DEFAULT_BATCH_LIMIT = 50
+
+
 @router.post("/send-pending")
-async def api_send_pending(db: AsyncSession = Depends(get_db)):
-    """Send all pending draft emails to their recipients (the customers).
-    
-    This sends draft emails that were imported from daily_scan.py
-    to the actual customer email addresses.
+async def api_send_pending(
+    limit: int = DEFAULT_BATCH_LIMIT,
+    db: AsyncSession = Depends(get_db),
+):
+    """Send pending drafts, oldest first, in a bounded batch.
+
+    This used to send **every** pending draft in one request. With a queue of a
+    thousand that is one request holding the send lock for as long as the mail
+    server takes -- minutes -- during which every other send is refused with a
+    409, the client times out, and the operator has no idea how far it got. The
+    work is resumable (each row is claimed and committed before its own send, see
+    ``app/services/email_claims.py``), so the honest shape is a bounded batch:
+    the caller repeats until ``remaining`` is zero, and sees the queue shrink.
+
+    Ordered by ``created_at``, oldest first, so a backlog drains in the order it
+    built up instead of whatever order the database felt like returning.
     """
+    if limit < 1:
+        raise HTTPException(status_code=422, detail="limit must be at least 1")
+    limit = min(limit, 500)
+
     async with _exclusive_send("the batch send"):
         # Re-read *inside* the lock. The set of pending drafts is the thing being
         # claimed, so it has to be read after the claim, not before it.
+        #
+        # `remaining` is counted before claiming anything, so the caller learns
+        # the queue depth from the same request that drains part of it instead of
+        # needing a second call to find out.
+        remaining_before = (
+            await db.execute(
+                select(func.count(EmailLog.id)).where(
+                    EmailLog.status == EmailStatus.PENDING
+                )
+            )
+        ).scalar_one()
+
+        if not remaining_before:
+            return {
+                "sent": 0, "failed": 0, "skipped": 0,
+                "total": 0, "remaining": 0, "limit": limit,
+                "message": "No pending drafts to send.",
+            }
+
         result = await db.execute(
-            select(EmailLog).where(EmailLog.status == EmailStatus.PENDING)
+            select(EmailLog)
+            .where(EmailLog.status == EmailStatus.PENDING)
+            .order_by(EmailLog.created_at, EmailLog.id)
+            .limit(limit)
         )
         pending = list(result.scalars().all())
-
-        if not pending:
-            return {"sent": 0, "failed": 0, "message": "No pending drafts to send."}
 
         sent_count = 0
         failed_count = 0
@@ -446,11 +485,24 @@ async def api_send_pending(db: AsyncSession = Depends(get_db)):
                 "error": send_result.get("error"),
             })
 
+        remaining_after = (
+            await db.execute(
+                select(func.count(EmailLog.id)).where(
+                    EmailLog.status == EmailStatus.PENDING
+                )
+            )
+        ).scalar_one()
+
         return {
             "sent": sent_count,
             "failed": failed_count,
             "skipped": skipped_count,
             "total": len(pending),
+            "limit": limit,
+            # The queue depth *after* this batch, so a caller can loop until it
+            # reaches zero instead of guessing how many calls it needs.
+            "remaining": remaining_after,
+            "queue_before": remaining_before,
             "details": details,
         }
 
