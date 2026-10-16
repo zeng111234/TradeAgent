@@ -43,7 +43,10 @@ async def analyze_customer_website(url: str, your_products: str = "") -> dict:
     try:
         page_text, title = await asyncio.to_thread(_fetch)
     except Exception as e:
-        return {"error": f"Failed to fetch website: {str(e)}", "score": 0}
+        # No score. A page that could not be fetched has not been assessed, and
+        # `score: 0` reads as "this lead is worthless" -- an assessment nobody
+        # made, in a field a human sorts by.
+        return {"error": f"Failed to fetch website: {str(e)}", "score": None}
 
     # Step 2: AI Analysis
     if is_configured():
@@ -273,14 +276,21 @@ def _basic_reply_analysis(email_content: str) -> dict:
     return {
         "intent": intent,
         "sentiment": sentiment,
-        "urgency": "medium",
+        # Not "medium". Urgency is a judgement, and this fallback has no way to
+        # make one -- a constant here is a label a human will act on, produced
+        # by nobody. The keyword rules above are the same class of problem, but
+        # they are at least derived from the text; this was not derived from
+        # anything. `not_assessed` is the honest value, and it is the same
+        # vocabulary `_basic_analyze_website` uses.
+        "urgency": "not_assessed",
         "extracted_info": {"products_mentioned": [], "quantity_mentioned": "", "budget_mentioned": ""},
-        "customer_mood": "Neutral",
+        "customer_mood": "not_assessed",
         "recommended_action": "Follow up with more product details",
         "suggested_reply_points": ["Thank them for their reply", "Address their specific questions"],
         "deal_stage_update": "warm" if intent in ("inquiry", "sample_request") else "prospect",
         "risks": [],
         "ai_powered": False,
+        "judgement_source": "keyword_rules",
     }
 
 
@@ -813,14 +823,24 @@ def _basic_inquiry_analysis(email_content: str) -> dict:
         },
         "urgency": urgency,
         "urgency_reason": "Basic keyword analysis",
-        "customer_intent_score": 50,
-        "intent_score_reason": "Add API key for deeper AI analysis",
+        # Was 50. A number in a score field is read as an assessment, and this
+        # one was a constant: every inquiry scored exactly 50 whether it was a
+        # one-line "hello" or a firm order with a deadline. The honest value for
+        # "nobody assessed this" is that there is no number, with the reason
+        # said out loud.
+        "customer_intent_score": None,
+        "intent_score_reason": (
+            "not assessed: no model configured, and a keyword rule cannot "
+            "produce a score. Set OPENAI_API_KEY, or read `urgency` and "
+            "`inquiry_type`, which are derived from the text."
+        ),
         "key_concerns": [],
         "missing_info": ["Product specifications", "Quantity", "Delivery requirements"],
         "suggested_reply_draft": "<p>Dear Sir/Madam,</p><p>Thank you for your inquiry. We would be happy to assist you. Could you please provide more details about your requirements?</p><p>Best regards</p>",
         "suggested_reply_subject": "Re: Your Inquiry",
         "follow_up_strategy": "Reply promptly with product details and ask for missing specifications",
         "ai_powered": False,
+        "judgement_source": "keyword_rules",
     }
 
 

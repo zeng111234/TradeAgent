@@ -110,9 +110,15 @@ async def test_reply_response_shape_is_stable():
         "deal_stage_update",
         "risks",
         "ai_powered",
+        # Added when the boundary between deterministic code and the model was
+        # made explicit: this response is keyword rules, and it says so.
+        "judgement_source",
     }
     assert result["ai_powered"] is False  # no API key in tests
+    assert result["judgement_source"] == "keyword_rules"
     assert isinstance(result["extracted_info"], dict)
+    # `urgency` used to be the constant "medium" for every message.
+    assert result["urgency"] == "not_assessed"
 
 
 @pytest.mark.parametrize(
@@ -201,7 +207,26 @@ async def test_inquiry_response_shape_is_stable():
         "suggested_reply_subject",
         "follow_up_strategy",
         "ai_powered",
+        # Added when the boundary between deterministic code and the model was
+        # made explicit: this response is keyword rules, and it says so.
+        "judgement_source",
     }
+    assert result["judgement_source"] == "keyword_rules"
+
+
+async def test_the_inquiry_fallback_stops_scoring_intent():
+    """It used to return 50 for every inquiry, from a constant.
+
+    A number in a score field is read as an assessment. Two different inquiries
+    -- one a one-line hello, one a firm order with a deadline -- got the same
+    number, because the number was never derived from anything.
+    """
+    hello = await analyze_inquiry("hello")
+    order = await analyze_inquiry("we need 5000 units urgently, our deadline is Friday")
+
+    assert hello["customer_intent_score"] is None
+    assert order["customer_intent_score"] is None
+    assert "not assessed" in hello["intent_score_reason"]
 
 
 # --------------------------------------------------------------------------

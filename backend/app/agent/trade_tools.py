@@ -783,6 +783,12 @@ async def classify_prospect(page_text: str, target_products: str, extra_evidence
         ],
         "page_text": (page_text or "")[:MAX_PAGE_CHARS],
         "extra_evidence": extra_evidence or "",
+        # judgement-boundary: contract -- this dict is not an assessment, it is
+        # the *shape of the answer we are asking the model for*. The constants
+        # are descriptions of what the model must produce, which is the opposite
+        # of deterministic code answering a judgement question. The one guard in
+        # tests/test_judgement_boundary.py allows a constant judgement value only
+        # when it means "not assessed", or when the statement carries this mark.
         "required_output": {
             "company_summary": "one sentence describing what they actually do",
             "score": "integer 0-100, your judgement against the rubric above",

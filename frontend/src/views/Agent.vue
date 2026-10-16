@@ -166,18 +166,26 @@
                 </el-col>
                 <el-col :span="8">
                   <div style="text-align: center; padding: 12px; background: #f5f7fa; border-radius: 8px">
-                    <el-tag :type="urgencyColor(inquiryResult.urgency)" size="large">{{ inquiryResult.urgency }}</el-tag>
+                    <el-tag :type="urgencyColor(inquiryResult.urgency)" size="large">{{ urgencyLabel(inquiryResult.urgency) }}</el-tag>
                     <p style="margin-top: 4px; font-size: 12px; color: #909399">Urgency</p>
                   </div>
                 </el-col>
                 <el-col :span="8">
                   <div style="text-align: center; padding: 12px; background: #f5f7fa; border-radius: 8px">
-                    <el-progress type="dashboard" :percentage="inquiryResult.customer_intent_score || 0"
-                      :color="scoreColor(inquiryResult.customer_intent_score || 0)" :width="60" />
+                    <!-- A gauge with no number behind it is the same fabrication
+                         the backend just stopped making: `|| 0` turned "nobody
+                         assessed this" into a 0% score, which reads as a verdict. -->
+                    <el-progress v-if="typeof inquiryResult.customer_intent_score === 'number'"
+                      type="dashboard" :percentage="inquiryResult.customer_intent_score"
+                      :color="scoreColor(inquiryResult.customer_intent_score)" :width="60" />
+                    <el-tag v-else type="info" size="large">n/a</el-tag>
                     <p style="margin-top: 4px; font-size: 12px; color: #909399">Intent Score</p>
                   </div>
                 </el-col>
               </el-row>
+              <el-alert v-if="inquiryResult.customer_intent_score == null && inquiryResult.intent_score_reason"
+                type="info" :closable="false" show-icon style="margin-bottom: 16px"
+                :title="`Intent score: ${inquiryResult.intent_score_reason}`" />
               <el-descriptions v-if="inquiryResult.customer_info" :column="2" border size="small" style="margin-bottom: 16px">
                 <el-descriptions-item label="Name">{{ inquiryResult.customer_info.name }}</el-descriptions-item>
                 <el-descriptions-item label="Company">{{ inquiryResult.customer_info.company }}</el-descriptions-item>
@@ -376,8 +384,11 @@
                 </div>
               </template>
               <div style="text-align: center; margin-bottom: 20px">
-                <el-progress type="dashboard" :percentage="webResult.lead_score || 0"
-                  :color="scoreColor(webResult.lead_score || 0)" :width="120" />
+                <!-- `not_analyzed` means no score exists; `|| 0` would invent one. -->
+                <el-progress v-if="typeof webResult.lead_score === 'number'"
+                  type="dashboard" :percentage="webResult.lead_score"
+                  :color="scoreColor(webResult.lead_score)" :width="120" />
+                <el-tag v-else type="info" size="large">not analysed</el-tag>
                 <p style="margin-top: 8px; color: #909399; font-size: 13px">Lead Score</p>
               </div>
               <el-descriptions :column="2" border size="small">
@@ -460,7 +471,7 @@
                 </el-col>
                 <el-col :span="8">
                   <div style="text-align: center; padding: 12px">
-                    <el-tag :type="urgencyColor(emailResult.urgency)" size="large">{{ emailResult.urgency }}</el-tag>
+                    <el-tag :type="urgencyColor(emailResult.urgency)" size="large">{{ urgencyLabel(emailResult.urgency) }}</el-tag>
                     <p style="margin-top: 4px; font-size: 12px; color: #909399">Urgency</p>
                   </div>
                 </el-col>
@@ -930,5 +941,6 @@ const emailPI = async () => {
 const scoreColor = (s) => s >= 70 ? '#67c23a' : s >= 40 ? '#e6a23c' : '#f56c6c'
 const intentColor = (i) => ({ inquiry: 'success', price_negotiation: 'warning', sample_request: '', rejection: 'danger', order: 'success', follow_up: 'info' }[i] || '')
 const sentimentColor = (s) => ({ positive: 'success', neutral: '', negative: 'danger' }[s] || '')
-const urgencyColor = (u) => ({ high: 'danger', medium: 'warning', low: 'info' }[u] || '')
+const urgencyColor = (u) => ({ high: 'danger', medium: 'warning', low: 'info', not_assessed: 'info' }[u] || '')
+const urgencyLabel = (u) => (u === 'not_assessed' ? 'not assessed' : u)
 </script>
