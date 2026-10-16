@@ -103,3 +103,73 @@ def test_edited_files_do_not_show_a_whole_file_diff():
         if index == "crlf" and path in watched
     }
     assert not stored_crlf, f"stored as CRLF again: {sorted(stored_crlf)}"
+
+
+#: Everything above checks files git already treats as *text*. Three files in
+#: ``app/models`` were none of those, and the whole suite stayed green.
+
+
+def test_no_text_file_is_mistaken_for_binary():
+    """A text file git classifies as binary is a file nothing will ever fix.
+
+    ``text=auto`` only converts files it believes are text. Three files in
+    ``app/models`` had every line ending in CR CR LF, which is enough for git to
+    call them binary (``-text``) -- and then:
+
+    * git never normalises them,
+    * ``git status`` reports them clean, because the working tree matches the
+      blob byte for byte,
+    * every line-ending test above skips them, because they only look at files
+      git already calls text,
+    * and Python does not complain, because CR CR LF is whitespace to the
+      tokenizer.
+
+    So the corruption was invisible to the repository, to the tests, and to the
+    interpreter at the same time.
+    """
+    text_extensions = {
+        ".py", ".md", ".txt", ".json", ".yml", ".yaml", ".toml", ".cfg", ".ini",
+        ".js", ".vue", ".css", ".html", ".mmd", ".sh", ".bat", ".cmd",
+    }
+    offenders = []
+    for index, _worktree, path in _ls_files_eol():
+        if index != "-text":
+            continue
+        candidate = ROOT / path
+        if not candidate.is_file():
+            continue
+        if Path(path).suffix.lower() not in text_extensions:
+            continue
+        if b"\x00" in candidate.read_bytes()[:8000]:
+            continue                       # genuinely binary, leave it alone
+        offenders.append(path)
+
+    assert not offenders, (
+        "git treats these as binary, so nothing will ever normalise them; "
+        "rewrite them so they are plain text again:\n  " + "\n  ".join(offenders)
+    )
+
+
+def test_no_file_has_a_doubled_carriage_return():
+    """CR CR LF: a shell that turned every LF into CRLF on top of an existing CRLF.
+
+    Checked directly on disk for every tracked text file, because git cannot
+    report it: for a file it calls binary, the working tree and the blob agree.
+    """
+    text_extensions = {
+        ".py", ".md", ".txt", ".json", ".yml", ".yaml", ".toml", ".cfg", ".ini",
+        ".js", ".vue", ".css", ".html", ".mmd", ".sh",
+    }
+    offenders = []
+    for _index, _worktree, path in _ls_files_eol():
+        candidate = ROOT / path
+        if not candidate.is_file() or Path(path).suffix.lower() not in text_extensions:
+            continue
+        doubled = candidate.read_bytes().count(b"\r\r\n")
+        if doubled:
+            offenders.append(f"{path}: {doubled} line(s)")
+
+    assert not offenders, (
+        "doubled carriage returns; `scripts/repair_line_endings.py` fixes these:\n  "
+        + "\n  ".join(offenders)
+    )

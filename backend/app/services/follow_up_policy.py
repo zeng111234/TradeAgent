@@ -136,6 +136,13 @@ DEFAULT_FOLLOW_UP_POLICY = FollowUpPolicy()
 #: Statuses that mean "this email left the building".
 SENT_STATES = ("sent", "delivered", "opened", "replied")
 
+#: Written, not sent: a proposal waiting for a human to approve it.
+PENDING_STATES = ("pending",)
+
+#: A human decided against it. The row is kept rather than deleted, because a
+#: rejection is information the next proposal needs and a deletion is not.
+REJECTED_STATES = ("rejected",)
+
 
 @dataclass(frozen=True)
 class ThreadState:
@@ -175,6 +182,16 @@ class ThreadState:
     they_wrote_last: bool = False
     #: How long we have owed it. None when we do not.
     reply_owed_days: Optional[int] = None
+    #: Drafts written but not sent: a proposal waiting on a human decision.
+    pending_proposals: int = 0
+    #: When the oldest of them was written.
+    oldest_pending_at: Optional[datetime] = None
+    #: How long the oldest has been waiting.
+    pending_proposal_days: Optional[int] = None
+    #: Drafts a human decided against. Kept, not deleted, so the next proposal
+    #: can know that this one was already turned down.
+    rejected_proposals: int = 0
+    last_rejected_at: Optional[datetime] = None
 
     def as_dict(self) -> dict:
         return {
@@ -186,6 +203,12 @@ class ThreadState:
             "reply_owed_days": self.reply_owed_days,
             "days_since_our_last_email": self.days_since_our_last_email,
             "days_since_their_last_reply": self.days_since_their_last_reply,
+            "pending_proposals": self.pending_proposals,
+            "pending_proposal_days": self.pending_proposal_days,
+            "rejected_proposals": self.rejected_proposals,
+            "last_rejected_at": (
+                self.last_rejected_at.isoformat() if self.last_rejected_at else None
+            ),
             "first_reply_at": self.first_reply_at.isoformat() if self.first_reply_at else None,
             "last_reply_at": self.last_reply_at.isoformat() if self.last_reply_at else None,
         }
@@ -225,6 +248,17 @@ def derive_thread_state(emails, now: datetime) -> ThreadState:
         if when(e) is not None
     ]
     last_outbound_at = max(stamped) if stamped else None
+
+    # A proposal and a rejection are states of their own, and neither is an
+    # outbound email: one is waiting for a human, the other was turned down by
+    # one. Without them a draft in the approval queue is indistinguishable from
+    # no draft at all, which is how the plan came to tell a human to chase a
+    # customer whose email was already written and sitting in their inbox.
+    pending_rows = [e for e in rows if _status_of(e) in PENDING_STATES]
+    rejected_rows = [e for e in rows if _status_of(e) in REJECTED_STATES]
+    pending_times = [when(e) for e in pending_rows if when(e) is not None]
+    oldest_pending_at = min(pending_times) if pending_times else None
+    rejected_times = [when(e) for e in rejected_rows if when(e) is not None]
 
     replies = sorted(
         e.replied_at for e in rows if getattr(e, "replied_at", None) is not None
@@ -267,6 +301,11 @@ def derive_thread_state(emails, now: datetime) -> ThreadState:
         days_since_their_last_reply=days_between(now, last_reply_at),
         they_wrote_last=they_wrote_last,
         reply_owed_days=days_between(now, last_reply_at) if they_wrote_last else None,
+        pending_proposals=len(pending_rows),
+        oldest_pending_at=oldest_pending_at,
+        pending_proposal_days=days_between(now, oldest_pending_at),
+        rejected_proposals=len(rejected_rows),
+        last_rejected_at=max(rejected_times) if rejected_times else None,
     )
 
 

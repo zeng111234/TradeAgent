@@ -81,7 +81,10 @@
             <el-button size="small" @click="startEdit(email)">
               <el-icon><Edit /></el-icon> Edit
             </el-button>
-            <el-button type="danger" size="small" @click="handleDeletePending(email)" plain>
+            <el-button type="danger" size="small" @click="handleRejectPending(email)" plain>
+              <el-icon><CircleClose /></el-icon> Reject
+            </el-button>
+            <el-button size="small" @click="handleDeletePending(email)" plain>
               <el-icon><Delete /></el-icon> Delete
             </el-button>
           </template>
@@ -236,7 +239,7 @@
 
 <script setup>
 import { ref, reactive, onMounted } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { emailApi } from '../api'
 
 const sending = ref(false)
@@ -441,6 +444,33 @@ const handleDeletePending = async (email) => {
     ElMessage.success('Draft deleted.')
   } catch (e) {
     ElMessage.error('Failed to delete draft')
+  }
+}
+
+// Rejecting is a decision, not housekeeping: the row is kept so the agent's next
+// run can see that this approach was already turned down. Deleting is still
+// there for a draft you wrote yourself and simply do not want.
+const handleRejectPending = async (email) => {
+  try {
+    await ElMessageBox.confirm(
+      'Reject this draft? It is kept as a rejected proposal, so the next plan ' +
+      'knows this approach was turned down. It will not be sent.',
+      'Reject draft',
+      { type: 'warning', confirmButtonText: 'Reject', cancelButtonText: 'Cancel' },
+    )
+  } catch (e) {
+    return                              // the human cancelled
+  }
+  try {
+    const result = await emailApi.rejectDraft(email.id)
+    if (result.already_rejected) {
+      ElMessage.info('This draft was already rejected')
+    } else {
+      ElMessage.success('Rejected and recorded')
+    }
+    loadData()
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.detail || 'Could not reject the draft')
   }
 }
 

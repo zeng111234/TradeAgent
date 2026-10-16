@@ -537,6 +537,77 @@ async def _conversation_for(db: AsyncSession, email_log: EmailLog) -> dict:
     return derive_thread_state(rows, datetime.utcnow()).as_dict()
 
 
+# --- Rejecting a proposal ---
+
+class RejectRequest(BaseModel):
+    """Why the suggestion was turned down, if the human wants to say."""
+    reason: Optional[str] = Field(
+        None, max_length=500,
+        description="Optional. Recorded on the row so the next proposal can see it.",
+    )
+
+
+@router.post("/logs/{email_id}/reject")
+async def api_reject_draft(
+    email_id: int,
+    data: Optional[RejectRequest] = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """Turn down a draft that is waiting for approval.
+
+    **Kept, not deleted.** A draft sitting in `pending` is a proposal, and a
+    proposal that a human refused is information: the agent's next run needs to
+    know that this approach was already turned down, and a deleted row carries
+    none of that. Deleting is still available for a draft you wrote yourself and
+    simply do not want (`DELETE /logs/{id}`); rejecting is the decision, and it
+    leaves a record.
+
+    Idempotent: rejecting twice does not change the first decision, and a draft
+    that was already sent cannot be rejected.
+    """
+    result = await db.execute(select(EmailLog).where(EmailLog.id == email_id))
+    email_log = result.scalar_one_or_none()
+    if email_log is None:
+        raise HTTPException(status_code=404, detail="Email log not found")
+
+    if email_log.status == EmailStatus.REJECTED:
+        return {
+            "email_id": email_log.id,
+            "rejected": False,
+            "already_rejected": True,
+            "reason": email_log.error_message,
+            "customer_id": email_log.customer_id,
+            "conversation": await _conversation_for(db, email_log),
+        }
+
+    if email_log.status != EmailStatus.PENDING:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"only a draft waiting for approval can be rejected; this one is "
+                f"'{email_log.status.value}'"
+            ),
+        )
+
+    email_log.status = EmailStatus.REJECTED
+    # `error_message` is the row's only free-text field, and for a rejected
+    # proposal it holds the human's reason. Named for its other use, kept
+    # because adding a column is not possible here -- see the note in
+    # docs/问答记录.md Q7.
+    email_log.error_message = (data.reason if data else None) or "rejected by a human"
+    await db.commit()
+    await db.refresh(email_log)
+
+    return {
+        "email_id": email_log.id,
+        "rejected": True,
+        "already_rejected": False,
+        "reason": email_log.error_message,
+        "customer_id": email_log.customer_id,
+        "conversation": await _conversation_for(db, email_log),
+    }
+
+
 # --- Tracking Pixel ---
 @router.get("/track/{tracking_id}/pixel")
 async def track_email_open(tracking_id: str, db: AsyncSession = Depends(get_db)):

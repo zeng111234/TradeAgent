@@ -54,9 +54,10 @@ EXPECTED_ROUTES: dict[str, set[str]] = {
     # NOTE: no GET here. Ordering was mis-read from the router initially;
     # ``emails.py`` only defines PUT (320) and DELETE (341) for this path.
     "/api/v1/emails/logs/{email_id}": {"put", "delete"},
-    # The only write path into EmailStatus.REPLIED. Without it, "the customer
-    # replied" was unrepresentable and reply_rate was 0 by construction.
+    # The reply and the rejection: the two ways a human decides on a proposal.
+    # A rejection is kept rather than deleted, so the next proposal can see it.
     "/api/v1/emails/logs/{email_id}/reply": {"post"},
+    "/api/v1/emails/logs/{email_id}/reject": {"post"},
     "/api/v1/emails/send": {"post"},
     "/api/v1/emails/send-pending": {"post"},
     "/api/v1/emails/send-pending/{email_id}": {"post"},

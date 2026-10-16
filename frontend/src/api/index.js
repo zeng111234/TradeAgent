@@ -51,6 +51,8 @@ export const emailApi = {
   // The only write path into the 'replied' state. Without it, every "no reply"
   // rule described a state the app could not tell apart from an answered one.
   recordReply: (id, data) => api.post(`/emails/logs/${id}/reply`, data || {}),
+  // Turn down a waiting proposal. Kept, not deleted, so the next plan knows.
+  rejectDraft: (id, data) => api.post(`/emails/logs/${id}/reject`, data || {}),
 }
 
 // --- Tasks ---

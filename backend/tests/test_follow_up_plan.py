@@ -25,7 +25,9 @@ import pytest
 from app.services.follow_up_plan import (
     ACTION_KINDS,
     DEFAULT_FOLLOW_UP_PLAN_POLICY,
+    EMAILING_KINDS,
     KIND_ANSWER_THEM,
+    KIND_AWAITING_APPROVAL,
     KIND_CHANGE_CHANNEL,
     KIND_FIX_DELIVERY,
     KIND_REVIEW,
@@ -204,13 +206,89 @@ def test_an_interested_customer_is_due_after_the_interval_not_every_day():
     assert action.priority == "medium"
 
 
-def test_a_draft_that_was_never_sent_is_planned_for():
-    """Rows exist, none of them went out. Nothing is being waited on."""
+def test_a_draft_waiting_for_approval_suspends_the_customer():
+    """The state is *parked*, not due.
+
+    A draft in `pending` is a proposal waiting for a human. The plan says so,
+    stops proposing anything else for that customer, and does not treat the
+    customer as work the agent owes -- the next move is a person's.
+    """
     action = plan_one(state("quoting", emails=[row(status="pending")]), now=NOW)
 
+    assert action.kind == KIND_AWAITING_APPROVAL
+    assert action.kind not in EMAILING_KINDS, "you cannot propose a proposal"
+    assert action.due_at > NOW, "suspended: not due until the reminder window"
+    assert "waiting for your approval" in action.reason
+    assert action.suggested_action.startswith("Review the draft")
+
+    # Nothing due today, because nothing is owed by the agent today.
+    plan = plan_follow_ups(
+        [state("quoting", emails=[row(status="pending")])], now=NOW, due_only=True
+    )
+    assert len(plan) == 0
+
+
+def test_a_proposal_that_has_been_waiting_long_enough_reminds_the_human():
+    stale = plan_one(
+        state(emails=[row(sent_days_ago=9, status="pending")]), now=NOW
+    )
+    fresh = plan_one(
+        state(emails=[row(sent_days_ago=0, status="pending")]), now=NOW
+    )
+
+    assert stale.due_at <= NOW, "past the reminder window it is worth raising"
+    assert stale.priority == "high"
+    assert fresh.priority == "medium"
+
+
+def test_a_pending_proposal_outranks_answering_them_because_it_may_be_the_answer():
+    """They wrote last *and* a draft is waiting: the draft is probably the reply.
+
+    The entry keeps both facts, so the urgency is not lost -- but the next move
+    is still the human's, and the plan says that instead of proposing new
+    outreach on top of an unanswered proposal.
+    """
+    action = plan_one(
+        state(emails=[row(sent_days_ago=4, replied_days_ago=2, status="pending")]),
+        now=NOW,
+    )
+
+    assert action.kind == KIND_AWAITING_APPROVAL
+    assert "waiting for your approval" in action.reason
+    assert "they replied" in action.reason
+    assert action.priority == "high"
+
+
+def test_the_plan_stops_proposing_while_a_proposal_is_pending():
+    """The defect this replaces: the entry was identical to having no draft.
+
+    Measured: with one email sent ten days ago plus a pending draft, the plan
+    produced the same kind, the same due date and the same reason as with no
+    draft at all -- so the daily list told a human to chase a customer whose
+    email was already written and sitting in their approval queue.
+    """
+    with_proposal = plan_one(
+        state(emails=[row(sent_days_ago=10), row(status="pending")]), now=NOW
+    )
+    without = plan_one(state(emails=[row(sent_days_ago=10)]), now=NOW)
+
+    assert with_proposal.kind == KIND_AWAITING_APPROVAL
+    assert without.kind == KIND_SEND_FOLLOW_UP
+    assert with_proposal.kind != without.kind, (
+        "a proposal waiting for approval must not read as work still to do"
+    )
+    assert with_proposal.as_dict() != without.as_dict()
+
+
+def test_a_rejected_proposal_is_remembered_and_changes_the_advice():
+    action = plan_one(
+        state(emails=[row(sent_days_ago=3, status="rejected")]), now=NOW
+    )
+
     assert action.kind == KIND_SEND_FOLLOW_UP
-    assert action.due_at == TODAY
-    assert "draft" in action.reason.lower()
+    assert "rejected" in action.reason
+    assert action.evidence["rejected_proposals"] == 1
+    assert action.evidence["pending_proposals"] == 0
 
 
 def test_every_declared_action_kind_is_reachable():
@@ -223,6 +301,7 @@ def test_every_declared_action_kind_is_reachable():
     produced = {
         plan_one(state("contacted", has_any_email=False), now=NOW).kind,
         plan_one(state(emails=[row(sent_days_ago=4)]), now=NOW).kind,
+        plan_one(state(emails=[row(sent_days_ago=0, status="pending")]), now=NOW).kind,
         plan_one(state(emails=[row(sent_days_ago=20), row(sent_days_ago=14),
                                row(sent_days_ago=8)]), now=NOW).kind,
         plan_one(state(emails=[row(sent_days_ago=d) for d in (40, 34, 28, 22)]),

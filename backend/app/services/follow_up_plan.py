@@ -57,6 +57,9 @@ KIND_ANSWER_THEM = "answer_them"
 #: We spoke last and they have not answered; keep trying by email. Also the
 #: entry for a draft that has been sitting unsent.
 KIND_SEND_FOLLOW_UP = "send_follow_up"
+#: A proposal is written and waiting for a human to approve or reject it.
+#: Nothing further is proposed for this customer until that decision is made.
+KIND_AWAITING_APPROVAL = "awaiting_approval"
 #: Enough emails with no answer. Stop sending the same thing.
 KIND_CHANGE_CHANNEL = "change_channel"
 #: The last attempt never arrived, so nothing is awaiting a reply.
@@ -72,13 +75,15 @@ KIND_REVIEW = "review"
 ACTION_KINDS = (
     KIND_ANSWER_THEM,
     KIND_SEND_FOLLOW_UP,
+    KIND_AWAITING_APPROVAL,
     KIND_CHANGE_CHANNEL,
     KIND_FIX_DELIVERY,
     KIND_REVIEW,
 )
 
 #: Kinds that mean "write to them again". The caller uses this to decide whether
-#: a draft is wanted, so a quit decision cannot come with an email attached.
+#: a draft is wanted, so neither a quit decision nor a pending proposal comes
+#: with an email attached -- a proposal to approve a proposal is not a thing.
 EMAILING_KINDS = (KIND_SEND_FOLLOW_UP,)
 
 
@@ -109,6 +114,12 @@ class FollowUpPlanPolicy:
     #: Bounded day. Entries past this are dropped **and counted**, because a
     #: silently truncated list reads as a complete one.
     max_actions_per_day: int = 20
+
+    #: How long a proposal may sit before the human who owns it is reminded.
+    #: This is the suspension clock: while a proposal is younger than this the
+    #: customer is *parked*, not due, and the scheduled job does not mention
+    #: them. Past it, the reminder is about the decision, not about the customer.
+    approval_reminder_after_days: int = 2
 
 
 DEFAULT_FOLLOW_UP_PLAN_POLICY = FollowUpPlanPolicy()
@@ -264,8 +275,44 @@ def plan_one(
             "they_wrote_last": thread.they_wrote_last,
             "days_since_our_last_email": thread.days_since_our_last_email,
             "days_since_their_last_reply": thread.days_since_their_last_reply,
+            "pending_proposals": thread.pending_proposals,
+            "pending_proposal_days": thread.pending_proposal_days,
+            "rejected_proposals": thread.rejected_proposals,
             **extra,
         }
+
+    # 0. A proposal is written and waiting for a human. The state is *suspended*:
+    #    nothing further is proposed for this customer, and the entry is not due
+    #    until the decision has been outstanding long enough to remind anyone.
+    #    Checked before everything, including "they wrote last" -- the answer to
+    #    their message may well be the draft that is already waiting.
+    if thread.pending_proposals:
+        waiting = thread.pending_proposal_days or 0
+        stale = waiting >= policy.approval_reminder_after_days
+        reason = (
+            f"{thread.pending_proposals} draft(s) waiting for your approval "
+            f"(oldest {waiting} day(s))"
+        )
+        if thread.they_wrote_last:
+            reason += f"; they replied {thread.reply_owed_days} day(s) ago"
+        return PlannedAction(
+            **base,
+            kind=KIND_AWAITING_APPROVAL,
+            # A row with no timestamp is bad data; treating it as written today
+            # is better than refusing to plan for the customer at all.
+            due_at=(thread.oldest_pending_at or _today(now)) + timedelta(
+                days=policy.approval_reminder_after_days
+            ),
+            # Someone is waiting on the other end, so it matters -- but the next
+            # move is a person's, and the plan says that instead of proposing
+            # more outreach on top of an unanswered proposal.
+            priority=PRIORITY_HIGH if (thread.they_wrote_last or stale) else PRIORITY_MEDIUM,
+            reason=reason,
+            suggested_action="Review the draft: send it, edit it, or reject it",
+            attempt=thread.awaiting_reply,
+            evidence=evidence({"approval_reminder_after_days":
+                               policy.approval_reminder_after_days}),
+        )
 
     # 1. They spoke last. Due the moment they wrote, so it is overdue immediately.
     if thread.they_wrote_last and thread.last_reply_at is not None:
@@ -378,16 +425,27 @@ def plan_one(
                                + policy.backoff_step_days * max(0, attempt - 1)}),
         )
 
-    # 6. Rows exist but none of them went out: a draft is waiting to be sent.
-    #    Nothing is being waited on, so no follow-up interval applies.
+    # 6. Rows exist but none of them went out, and nothing is pending: the only
+    #    proposals on record were rejected. Say so, because "nothing has been
+    #    sent yet" and "your last three attempts were turned down" are different
+    #    situations and only one of them wants the same email again.
     if state.has_any_email and thread.outbound == 0:
+        if thread.rejected_proposals:
+            reason = (
+                f"{thread.rejected_proposals} proposal(s) rejected; nothing has "
+                "been sent to this customer"
+            )
+            action = "Write a different approach, or set the stage back"
+        else:
+            reason = "Nothing has been sent to this customer yet"
+            action = "Send the first email for this customer"
         return PlannedAction(
             **base,
             kind=KIND_SEND_FOLLOW_UP,
             due_at=_today(now),
             priority=PRIORITY_HIGH if state.stage == QUOTING_STAGE else PRIORITY_MEDIUM,
-            reason="A draft has been waiting to be sent",
-            suggested_action="Send the draft, or delete it and start again",
+            reason=reason,
+            suggested_action=action,
             attempt=0,
             evidence=evidence({"outbound": 0}),
         )

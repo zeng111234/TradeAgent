@@ -281,16 +281,19 @@ async def test_two_concurrent_batch_sends_do_not_email_anyone_twice(monkeypatch)
     release_first.set()
     results = await asyncio.gather(first, second)
 
-    assert len(sent) == 10, (
-        f"{len(sent)} SMTP calls for 10 drafts -- the second call sent emails the "
-        f"first had already claimed: {sent}"
+    # Scoped to this test's own drafts: other tests leave pending drafts in the
+    # shared database, and `send-pending` is entitled to send those too.
+    mine = [entry for entry in sent if entry[0].startswith("race")]
+    assert len(mine) == 10, (
+        f"{len(mine)} SMTP calls for this test's 10 drafts -- the second call "
+        f"sent emails the first had already claimed: {mine}"
     )
-    assert len(set(sent)) == len(sent), "the same customer was emailed twice"
+    assert len(set(mine)) == len(mine), "the same customer was emailed twice"
 
     refusals = [r for r in results if r.get("status") == 409]
     successes = [r for r in results if r.get("sent")]
     assert len(refusals) == 1 and len(successes) == 1, results
-    assert successes[0]["sent"] == 10
+    assert successes[0]["sent"] >= 10
 
 
 async def test_a_batch_send_and_a_single_send_cannot_overlap(monkeypatch):

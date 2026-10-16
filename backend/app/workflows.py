@@ -388,6 +388,13 @@ def _compile_morning_report(report: dict) -> str:
             kind = fu.get("kind", "")
             attempt = fu.get("attempt", 0)
             overdue = fu.get("days_overdue", 0)
+            if kind == "awaiting_approval":
+                # Not work for the agent: a draft is written and a person has to
+                # decide. Saying "follow up" here would send someone to chase a
+                # customer whose email is already waiting in their own queue.
+                lines.append(f"  - [waiting on you] {name}: {action}")
+                lines.append(f"      {fu.get('reason', '')}")
+                continue
             suffix = f" (attempt {attempt})" if attempt else ""
             lines.append(f"  - [{kind}] {name}{suffix}: {action}")
             if overdue:
