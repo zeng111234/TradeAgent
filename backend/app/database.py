@@ -36,7 +36,7 @@ async def get_db() -> AsyncSession:
 
 
 async def init_db():
-    """Create every table.
+    """Create every table, then bring an existing database up to date.
 
     Imports the models package first. Without it, ``Base.metadata`` contains
     only whatever the importing module happened to pull in — so calling this
@@ -44,8 +44,28 @@ async def init_db():
     database with no tables, and the failure would only surface later as
     "no such table". Registering the models explicitly makes the function mean
     what its name says.
+
+    ``create_all`` handles a database that does not exist. It does nothing at all
+    to one that does — no new columns, ever — which is why ``apply_migrations``
+    runs next: see ``app/migrations.py`` for what that constraint cost.
     """
+    import logging
+
     import app.models  # noqa: F401  (registers every table on Base.metadata)
+
+    from app.migrations import apply_migrations
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        report = await apply_migrations(conn)
+
+    logging.getLogger(__name__).info(
+        "schema: %d migration(s) applied, %d already present, %d pending",
+        len(report["applied"]), len(report["already_present"]), len(report["pending"]),
+    )
+    if report["pending"]:
+        # Loud, because it means a migration ran and did not take effect, or the
+        # guard and the version table disagree about the same database.
+        logging.getLogger(__name__).warning(
+            "schema migrations still pending after this run: %s", report["pending"]
+        )

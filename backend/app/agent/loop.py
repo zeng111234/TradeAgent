@@ -182,6 +182,10 @@ class AgentRun:
 
     goal: str
     run_id: str = field(default_factory=lambda: uuid.uuid4().hex)
+    #: The customer this run is about, when the caller named one. Carried on the
+    #: run so it reaches the row, where it can be indexed -- the debug view used
+    #: to find runs by searching their trace text instead.
+    customer_id: Optional[int] = None
     status: str = "running"      # running | succeeded | truncated | error | stalled
     final_output: str = ""
     stop_reason: str = ""
@@ -291,8 +295,13 @@ class AgentLoop:
 
             self.registry.register(build_recall_tool(self.spill))
 
-    async def run(self, goal: str, *, context: str = "", run_id: Optional[str] = None) -> AgentRun:
-        run = AgentRun(goal=goal) if run_id is None else AgentRun(goal=goal, run_id=run_id)
+    async def run(
+        self, goal: str, *, context: str = "", run_id: Optional[str] = None,
+        customer_id: Optional[int] = None,
+    ) -> AgentRun:
+        run = AgentRun(goal=goal, customer_id=customer_id)
+        if run_id is not None:
+            run.run_id = run_id
         started = time.monotonic()
 
         # One clock for the whole task. A sub-agent inherits this absolute
@@ -580,6 +589,7 @@ async def run_agent(
     system_prompt: str = DEFAULT_SYSTEM_PROMPT,
     spill_dir: Optional[Path] = None,
     run_id: Optional[str] = None,
+    customer_id: Optional[int] = None,
     on_step: Optional[Callable[["TraceStep", "AgentRun"], None]] = None,
 ) -> AgentRun:
     """Convenience wrapper. ``AgentError`` is converted into a failed run.
@@ -596,7 +606,7 @@ async def run_agent(
     loop = AgentLoop(llm, registry, budget=budget, system_prompt=system_prompt,
                      spill_dir=spill_dir, on_step=on_step)
     try:
-        return await loop.run(goal, context=context, run_id=run_id)
+        return await loop.run(goal, context=context, run_id=run_id, customer_id=customer_id)
     except AgentError as exc:
         run = AgentRun(goal=goal, run_id=run_id or uuid.uuid4().hex,
                        status="error", stop_reason=str(exc), error=str(exc))

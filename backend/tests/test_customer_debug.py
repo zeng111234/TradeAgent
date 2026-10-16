@@ -418,6 +418,61 @@ def test_a_run_that_touched_the_customer_is_found(client, db, temp_customer, tem
     assert run["trace_url"].startswith("/api/v1/agent/runs/")
 
 
+def test_a_run_started_with_a_customer_is_found_by_the_column(client, db, temp_customer, temp_run):
+    """The indexed path: no trace scanning, no guesswork.
+
+    Migration ``0001_agent_runs_customer_id`` added the column, and this asserts
+    it is actually used. The run's trace says nothing about the customer -- a run
+    can be *about* somebody without any tool call naming them -- and it is found
+    anyway, because the caller said who it was about.
+    """
+    customer_id = temp_customer("column")
+    temp_run(
+        goal="review this account and draft a follow-up",
+        status="succeeded",
+        customer_id=customer_id,
+        trace=json.dumps([{"round": 1, "tool_calls": []}]),
+        rounds=1,
+        tool_calls=0,
+    )
+
+    body = client.get(URL.format(customer_id)).json()
+
+    assert body["runs"], "a run that named the customer was not found"
+    assert body["runs"][0]["matched_by"] == "customer_id column"
+    assert body["runs_found_by_column"] == 1
+
+
+def test_a_legacy_run_is_still_found_by_its_trace(client, db, temp_customer, temp_run):
+    """Rows written before the column existed are real history.
+
+    They have no ``customer_id`` to read, so they are still found the old way.
+    Dropping them would make the view lie by omission. Both paths are exercised
+    so neither can be deleted as dead code.
+    """
+    customer_id = temp_customer("legacy")
+    temp_run(
+        goal="old style run",
+        status="succeeded",
+        customer_id=None,
+        trace=json.dumps([
+            {"round": 1, "tool_calls": [
+                {"name": "get_customer", "arguments": {"customer_id": customer_id},
+                 "ok": True},
+            ]},
+        ]),
+        rounds=1,
+        tool_calls=1,
+    )
+
+    body = client.get(URL.format(customer_id)).json()
+
+    assert body["runs"], "the legacy run was lost by the migration"
+    assert body["runs"][0]["matched_by"] == "tool arguments"
+    assert body["runs_found_by_column"] == 0
+    assert body["legacy_runs_searched"] >= 1
+
+
 def test_a_run_about_another_customer_is_not_shown(client, db, temp_customer, temp_run):
     customer_id = temp_customer("mine")
     other_id = temp_customer("theirs")

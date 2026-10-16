@@ -1,0 +1,376 @@
+"""Schema changes on a database that already exists.
+
+The decision this file is about: the schema used to be
+``Base.metadata.create_all`` and nothing else. Tables are created if missing, and
+an existing database is never touched again -- which is fine on day one and
+wrong forever after. It shaped a lot of this codebase:
+
+* ``EmailStatus.SENDING`` was only safe because SQLite stores the enum as a
+  VARCHAR with no CHECK constraint. A new *column* had nowhere to go.
+* The idempotency key is derived into ``tracking_id`` because there is no column
+  for the caller's key.
+* ``agent_runs`` correlated to a customer by scanning a JSON trace, because there
+  was no ``customer_id`` column -- unindexable, and blind to a run that named a
+  customer only in prose.
+
+So the tests here are mostly about the awkward case: a database that is *already
+in use*. A migration that only works on an empty file is not a migration.
+"""
+from __future__ import annotations
+
+import uuid
+from datetime import datetime
+
+import pytest
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import create_async_engine
+
+from app.migrations import MIGRATIONS, apply_migrations, schema_status
+
+LEGACY_AGENT_RUNS = """
+CREATE TABLE agent_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id VARCHAR(64) NOT NULL UNIQUE,
+    goal TEXT NOT NULL,
+    status VARCHAR(32) NOT NULL DEFAULT 'running',
+    stop_reason VARCHAR(300),
+    error TEXT,
+    final_output TEXT,
+    rounds INTEGER DEFAULT 0,
+    tool_calls INTEGER DEFAULT 0,
+    prompt_tokens INTEGER DEFAULT 0,
+    completion_tokens INTEGER DEFAULT 0,
+    elapsed INTEGER DEFAULT 0,
+    trace TEXT,
+    created_at DATETIME,
+    finished_at DATETIME
+)
+"""
+
+
+@pytest.fixture
+def scratch(tmp_path):
+    """A private database file, so a schema test cannot disturb the suite's."""
+    import asyncio
+
+    engine = create_async_engine(
+        f"sqlite+aiosqlite:///{(tmp_path / 'schema.db').as_posix()}"
+    )
+
+    class Scratch:
+        async def run(self, coro_factory):
+            async with engine.begin() as conn:
+                return await coro_factory(conn)
+
+        async def dispose(self):
+            await engine.dispose()
+
+    handle = Scratch()
+    yield handle
+    asyncio.run(handle.dispose())
+
+
+def as_legacy_database(scratch):
+    """Build the ``agent_runs`` table the way it looked before the migration."""
+    import asyncio
+
+    async def build(conn):
+        await conn.execute(text(LEGACY_AGENT_RUNS))
+        await conn.execute(
+            text(
+                "INSERT INTO agent_runs (run_id, goal, status, created_at) "
+                "VALUES (:run_id, :goal, 'succeeded', :created_at)"
+            ),
+            {"run_id": uuid.uuid4().hex, "goal": "an old run",
+             "created_at": datetime.utcnow()},
+        )
+
+    asyncio.run(scratch.run(build))
+
+
+def columns(scratch, table):
+    import asyncio
+
+    async def read(conn):
+        rows = await conn.execute(text(f"PRAGMA table_info({table})"))
+        return [row[1] for row in rows.fetchall()]
+
+    return asyncio.run(scratch.run(read))
+
+
+def indexes(scratch, table):
+    import asyncio
+
+    async def read(conn):
+        rows = await conn.execute(text(f"PRAGMA index_list({table})"))
+        return [row[1] for row in rows.fetchall()]
+
+    return asyncio.run(scratch.run(read))
+
+
+# --------------------------------------------------------------------------
+# The real case: a database that has been running
+# --------------------------------------------------------------------------
+
+def test_a_legacy_database_gains_the_column(scratch):
+    as_legacy_database(scratch)
+    assert "customer_id" not in columns(scratch, "agent_runs")
+
+    import asyncio
+
+    report = asyncio.run(scratch.run(apply_migrations))
+
+    assert "0001_agent_runs_customer_id" in report["applied"], report
+    assert "customer_id" in columns(scratch, "agent_runs")
+    assert any("customer_id" in name for name in indexes(scratch, "agent_runs")), (
+        "the column is only useful if finding runs by it does not scan the table"
+    )
+
+
+def test_a_legacy_row_survives_the_migration(scratch):
+    """The rows that were already there are the ones this exists for."""
+    import asyncio
+
+    as_legacy_database(scratch)
+    asyncio.run(scratch.run(apply_migrations))
+
+    async def read(conn):
+        rows = await conn.execute(
+            text("SELECT goal, customer_id FROM agent_runs")
+        )
+        return rows.fetchall()
+
+    rows = asyncio.run(scratch.run(read))
+
+    assert len(rows) == 1, "the migration lost a row"
+    assert rows[0][0] == "an old run"
+    assert rows[0][1] is None, (
+        "a legacy row has no customer to claim; inventing one would be a lie"
+    )
+
+
+def test_migrating_twice_changes_nothing(scratch):
+    import asyncio
+
+    as_legacy_database(scratch)
+    first = asyncio.run(scratch.run(apply_migrations))
+    second = asyncio.run(scratch.run(apply_migrations))
+
+    assert first["applied"], first
+    assert second["applied"] == [], "a migration ran twice"
+    assert second["already_present"] == []
+    assert second["pending"] == []
+
+
+# --------------------------------------------------------------------------
+# The fresh database, which must not break
+# --------------------------------------------------------------------------
+
+def test_a_fresh_database_records_the_migration_without_running_it(scratch):
+    """``create_all`` already produced the current schema.
+
+    The guard exists for this: a brand-new install has the column before any
+    migration runs, so trusting the version table alone would try to add a column
+    that is already there and fail on every first start.
+    """
+    import asyncio
+
+    from app.database import Base
+    import app.models  # noqa: F401
+
+    async def create(conn):
+        await conn.run_sync(Base.metadata.create_all)
+
+    asyncio.run(scratch.run(create))
+    assert "customer_id" in columns(scratch, "agent_runs")
+
+    report = asyncio.run(scratch.run(apply_migrations))
+
+    assert report["applied"] == []
+    assert report["already_present"] == ["0001_agent_runs_customer_id"], report
+    assert report["pending"] == []
+
+    status = asyncio.run(scratch.run(schema_status))
+    assert status["unapplied"] == []
+    assert status["applied"] == ["0001_agent_runs_customer_id"]
+
+
+def test_the_status_reports_what_the_database_thinks_it_is(scratch):
+    import asyncio
+
+    as_legacy_database(scratch)
+    before = asyncio.run(scratch.run(schema_status))
+    assert before["unapplied"] == ["0001_agent_runs_customer_id"]
+
+    asyncio.run(scratch.run(apply_migrations))
+    after = asyncio.run(scratch.run(schema_status))
+    assert after["unapplied"] == []
+    assert after["applied"] == ["0001_agent_runs_customer_id"]
+
+
+# --------------------------------------------------------------------------
+# The mechanism's own properties
+# --------------------------------------------------------------------------
+
+def test_a_failing_migration_stops_the_sequence(scratch):
+    """Half-applied is worse than not applied: it is invisible.
+
+    A migration that raises must not be recorded, and the ones behind it must
+    not run -- otherwise the version table claims a schema the database does not
+    have, and every later run believes it.
+    """
+    import asyncio
+
+    from app import migrations
+
+    broken = [
+        migrations.Migration(
+            id="9001_will_fail",
+            description="deliberately invalid",
+            statements=["ALTER TABLE agent_runs ADD COLUMN nope INTEGER",
+                        "THIS IS NOT SQL"],
+            guard=None,
+        ),
+        migrations.Migration(
+            id="9002_must_not_run",
+            description="behind the failure",
+            statements=["ALTER TABLE agent_runs ADD COLUMN later INTEGER"],
+            guard=None,
+        ),
+    ]
+
+    as_legacy_database(scratch)
+    original = migrations.MIGRATIONS
+    migrations.MIGRATIONS = broken
+    try:
+        with pytest.raises(Exception):
+            asyncio.run(scratch.run(apply_migrations))
+    finally:
+        migrations.MIGRATIONS = original
+
+    assert "later" not in columns(scratch, "agent_runs"), (
+        "a migration behind a failure ran anyway"
+    )
+
+
+def test_the_migration_list_is_ordered_and_identified_once():
+    """Order is the whole contract, and ids are what the version table trusts."""
+    ids = [migration.id for migration in MIGRATIONS]
+
+    assert ids == sorted(ids), f"migrations are not in order: {ids}"
+    assert len(ids) == len(set(ids)), f"duplicate migration id: {ids}"
+    for migration in MIGRATIONS:
+        assert migration.guard is not None, (
+            f"{migration.id} has no guard; a fresh database would try to apply it"
+        )
+        assert migration.description, f"{migration.id} does not say what it does"
+
+
+def test_a_run_naming_a_customer_that_does_not_exist_is_refused(client):
+    """SQLite will not enforce the foreign key unless it is switched on.
+
+    So a wrong id would be written and then quietly match nothing: a run recorded
+    as being about a customer who does not exist, which is worse than a rejected
+    request because it looks like data.
+    """
+    import app.routers.agent_runs as routes
+
+    response = client.post(
+        "/api/v1/agent/run",
+        json={"goal": "review this account", "customer_id": 987654},
+    )
+
+    # 503 first if no model is configured; the point is that it is not a 202/200
+    # that quietly recorded a run against a phantom customer.
+    assert response.status_code in (404, 503), response.text
+    if response.status_code == 404:
+        assert "no customer with id 987654" in response.json()["detail"]
+
+
+def test_the_customer_reference_reaches_the_run_row(client, db):
+    """End to end: the API field, the run, the row, the indexed lookup.
+
+    The agent is mocked at the model boundary -- the point is not that the agent
+    works, it is that naming a customer on a run is honoured all the way down and
+    can be read back **by the column**, without searching a trace.
+
+    Uses ``wait=false`` on purpose: that is the path that writes the row up
+    front, so the row exists whatever the fake run returns. With ``wait=true``
+    nothing is persisted by the fake and the assertion could quietly not run.
+    """
+    import asyncio
+    import uuid as uuidlib
+
+    from sqlalchemy import select
+
+    from app.agent.loop import AgentRun as RunResult
+    from app.agent.service import AgentResult
+    import app.routers.agent_runs as routes
+    from app.models.agent_run import AgentRun
+    from app.models.customer import Customer
+
+    suffix = uuidlib.uuid4().hex[:8]
+    customer = Customer(company_name=f"Migrated {suffix}", stage="completed",
+                        source="manual")
+    db.add(customer)
+    asyncio.run(db.commit())
+    asyncio.run(db.refresh(customer))
+
+    async def fake_execute(goal, *, customer_id=None, **kwargs):
+        run = RunResult(goal=goal, customer_id=customer_id, status="succeeded",
+                        stop_reason="final answer", final_output="done")
+        return AgentResult(run=run, mermaid_sequence="", mermaid_flowchart="", html="")
+
+    original_configured, original_execute = routes.is_configured, routes.execute
+    routes.is_configured = lambda: True
+    routes.execute = fake_execute
+    try:
+        response = client.post(
+            "/api/v1/agent/run",
+            json={"goal": "review this account", "customer_id": customer.id},
+        )
+        assert response.status_code in (200, 202), response.text
+        run_id = response.json()["run_id"]
+
+        # Let the background run settle, then read the row directly.
+        for _ in range(50):
+            async def read():
+                return (
+                    await db.execute(
+                        select(AgentRun).where(AgentRun.run_id == run_id)
+                    )
+                ).scalar_one_or_none()
+
+            row = asyncio.run(read())
+            if row is not None and row.status != "running":
+                break
+            import time
+            time.sleep(0.02)
+    finally:
+        routes.is_configured, routes.execute = original_configured, original_execute
+
+    assert row is not None, "the run row was never written"
+    assert row.customer_id == customer.id, (
+        "the customer named on the request never reached the row"
+    )
+
+    view = client.get(f"/api/v1/customers/{customer.id}/debug").json()
+    found = [r for r in view["runs"] if r["run_id"] == run_id]
+    assert found, "the debug view could not find the run"
+    assert found[0]["matched_by"] == "customer_id column"
+
+    # Clean up: this customer was created for the test.
+    asyncio.run(db.delete(customer))
+    asyncio.run(db.commit())
+
+
+def test_the_tracking_table_is_not_a_model():
+    """It is created by the runner, not by ``create_all``.
+
+    If it were a model, a fresh database would get it from ``create_all`` and an
+    existing one would not -- and the runner has to work on the existing one.
+    """
+    from app.database import Base
+    from app.migrations import TRACKING_TABLE
+
+    assert TRACKING_TABLE not in Base.metadata.tables

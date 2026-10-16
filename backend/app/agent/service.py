@@ -132,6 +132,7 @@ async def execute(
     spill_dir: Optional[Path] = None,
     allow_delegation: bool = True,
     run_id: Optional[str] = None,
+    customer_id: Optional[int] = None,
     on_step: Optional[Callable[[Any], None]] = None,
 ) -> AgentResult:
     """Run the agent and return a displayable result.
@@ -176,6 +177,7 @@ async def execute(
         context=context,
         spill_dir=spill,
         run_id=run_id,
+        customer_id=customer_id,
         on_step=on_step,
     )
 

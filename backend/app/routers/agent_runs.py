@@ -57,6 +57,10 @@ _in_flight: set[str] = set()
 
 class AgentRunRequest(BaseModel):
     goal: str = Field(..., min_length=1, description="What the agent should achieve")
+    # Named when the run is about one customer. Recorded on the run row, where
+    # it can be indexed -- without it, finding a customer's runs means reading
+    # every trace and looking for their id in the text.
+    customer_id: Optional[int] = Field(None, description="The customer this run is about")
     context: str = Field("", description="Optional background for this run")
     max_rounds: Optional[int] = Field(None, ge=1, le=30)
     max_tool_calls: Optional[int] = Field(None, ge=1, le=60)
@@ -141,7 +145,11 @@ async def api_agent_capabilities():
 
 
 @router.post("/run", response_model=None)
-async def api_agent_run(data: AgentRunRequest, response: Response):
+async def api_agent_run(
+    data: AgentRunRequest,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+):
     """Run the agent against a goal.
 
     Returns the full trace when ``wait`` is true, and a run id with a poll URL
@@ -158,6 +166,24 @@ async def api_agent_run(data: AgentRunRequest, response: Response):
             ),
         )
 
+    if data.customer_id is not None:
+        # Checked rather than stored blind. SQLite does not enforce the foreign
+        # key unless it is switched on, so a wrong id would be written and then
+        # quietly match nothing -- a run recorded as being about a customer who
+        # does not exist is worse than a rejected request.
+        from app.models.customer import Customer
+        from sqlalchemy import select
+
+        exists = (
+            await db.execute(
+                select(Customer.id).where(Customer.id == data.customer_id)
+            )
+        ).scalar_one_or_none()
+        if exists is None:
+            raise HTTPException(
+                status_code=404, detail=f"no customer with id {data.customer_id}"
+            )
+
     budget = DEFAULT_BUDGET
     if any((data.max_rounds, data.max_tool_calls, data.max_seconds)):
         budget = AgentBudget(
@@ -171,7 +197,10 @@ async def api_agent_run(data: AgentRunRequest, response: Response):
         return await _start_in_background(data, budget)
 
     try:
-        result = await execute(data.goal, context=data.context, budget=budget)
+        result = await execute(
+            data.goal, context=data.context, budget=budget,
+            customer_id=data.customer_id,
+        )
     except AgentUnavailable as exc:            # pragma: no cover - guarded above
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ValueError as exc:
@@ -208,7 +237,9 @@ async def _start_in_background(data: AgentRunRequest, budget: AgentBudget) -> Ag
     async with async_session() as db:
         from app.agent.loop import AgentRun as AgentRunResult
 
-        await start_run(db, AgentRunResult(goal=data.goal, run_id=run_id))
+        await start_run(db, AgentRunResult(
+            goal=data.goal, run_id=run_id, customer_id=data.customer_id,
+        ))
 
     _in_flight.add(run_id)
 
@@ -229,6 +260,7 @@ async def _start_in_background(data: AgentRunRequest, budget: AgentBudget) -> Ag
             result = await execute(
                 data.goal, context=data.context, budget=budget,
                 run_id=run_id, persist=False, on_step=_on_step,
+                customer_id=data.customer_id,
             )
             async with async_session() as db:
                 await save_run(db, result.run)

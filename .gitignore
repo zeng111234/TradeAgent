@@ -44,3 +44,5 @@ Thumbs.db
 
 # Logs
 *.log
+# Schema-migration backups: a copy of the database taken before a migration ran.
+*.backup-*

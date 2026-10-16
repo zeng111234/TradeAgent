@@ -38,8 +38,15 @@ async def save_run(
         await db.execute(select(AgentRun).where(AgentRun.run_id == run.run_id))
     ).scalar_one_or_none()
 
-    row = existing or AgentRun(run_id=run.run_id, goal=run.goal)
+    row = existing or AgentRun(
+        run_id=run.run_id, goal=run.goal,
+        customer_id=getattr(run, "customer_id", None),
+    )
     row.goal = run.goal
+    # Set, never cleared: progress writes re-save the run repeatedly, and a later
+    # save must not drop the customer the caller named.
+    if getattr(run, "customer_id", None) is not None:
+        row.customer_id = run.customer_id
     row.status = run.status
     row.stop_reason = run.stop_reason or None
     row.error = run.error
@@ -71,7 +78,10 @@ async def start_run(db: AsyncSession, run: AgentRunResult, *, commit: bool = Tru
     storage that was not actually written until the end.
     """
     run.status = "running"
-    row = AgentRun(run_id=run.run_id, goal=run.goal, status="running")
+    row = AgentRun(
+        run_id=run.run_id, goal=run.goal, status="running",
+        customer_id=getattr(run, "customer_id", None),
+    )
     row.trace = json.dumps([], ensure_ascii=False)
     row.rounds = 0
     row.tool_calls = 0

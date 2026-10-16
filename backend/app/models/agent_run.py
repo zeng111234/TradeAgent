@@ -7,7 +7,7 @@ reconstructed after the fact.
 """
 from datetime import datetime
 
-from sqlalchemy import Column, DateTime, Integer, String, Text
+from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text
 
 from app.database import Base
 
@@ -19,6 +19,18 @@ class AgentRun(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     run_id = Column(String(64), unique=True, index=True, nullable=False)
+
+    #: Which customer this run was about, when the caller said so.
+    #:
+    #: Added by migration ``0001_agent_runs_customer_id``. The column did not
+    #: exist before, which is why the debug view found runs by scanning their
+    #: JSON trace for a customer id -- precise, because it parses the arguments,
+    #: but unindexable and blind to a run that named a customer only in prose.
+    #: Nullable on purpose: plenty of runs are about the whole book rather than
+    #: one customer, and rows written before the column have no value to invent.
+    customer_id = Column(
+        Integer, ForeignKey("customers.id"), nullable=True, index=True
+    )
 
     goal = Column(Text, nullable=False)
     # running | succeeded | truncated | error | stalled

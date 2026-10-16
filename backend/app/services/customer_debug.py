@@ -101,15 +101,46 @@ def tool_calls_naming(trace_json: Optional[str], customer_id: int) -> list[dict]
 async def runs_for_customer(
     db: AsyncSession, customer: Customer, *, limit: int = MAX_RUNS_SCANNED
 ) -> dict:
-    """The agent runs that touched this customer, newest first."""
-    rows = (
+    """The agent runs that touched this customer, newest first.
+
+    Two sources, and the difference between them matters:
+
+    * **The column.** ``agent_runs.customer_id`` (migration
+      ``0001_agent_runs_customer_id``) is exact and indexed. A run started with
+      ``customer_id`` is found here in one query, whatever its trace says.
+    * **The trace.** Rows written before the column existed have no value to
+      read, so they are still found by scanning recent traces for a tool call
+      that named this customer -- the old way, kept because those rows are real
+      history and dropping them would make the view lie by omission.
+
+    The scan is bounded and only runs when there are rows the column cannot
+    answer for, so on a database that has been running since the migration the
+    common case costs one indexed query.
+    """
+    by_column = (
         await db.execute(
-            select(AgentRun).order_by(AgentRun.created_at.desc()).limit(limit)
+            select(AgentRun)
+            .where(AgentRun.customer_id == customer.id)
+            .order_by(AgentRun.created_at.desc())
+            .limit(limit)
+        )
+    ).scalars().all()
+
+    legacy_rows = (
+        await db.execute(
+            select(AgentRun)
+            .where(AgentRun.customer_id.is_(None))
+            .order_by(AgentRun.created_at.desc())
+            .limit(limit)
         )
     ).scalars().all()
 
     matches = []
-    for run in rows:
+    seen: set[str] = set()
+    for run in by_column:
+        seen.add(run.run_id)
+        matches.append(_run_payload(run, customer, matched_by="customer_id column"))
+    for run in legacy_rows:
         calls = tool_calls_naming(run.trace, customer.id)
         mentioned_in_goal = (
             str(customer.id) in (run.goal or "")
@@ -117,25 +148,39 @@ async def runs_for_customer(
         )
         if not calls and not mentioned_in_goal:
             continue
-        matches.append({
-            "run_id": run.run_id,
-            "status": run.status,
-            "stop_reason": run.stop_reason,
-            "error": run.error,
-            "goal": run.goal,
-            "created_at": _iso(run.created_at),
-            "finished_at": _iso(run.finished_at),
-            "rounds": run.rounds,
-            "tool_calls_total": run.tool_calls,
-            "matched_by": "tool arguments" if calls else "goal text",
-            "tool_calls_naming_this_customer": calls,
-            "trace_url": f"/api/v1/agent/runs/{run.run_id}/trace.html",
-        })
+        matches.append(
+            _run_payload(
+                run, customer,
+                matched_by="tool arguments" if calls else "goal text",
+                calls=calls,
+            )
+        )
 
+    matches.sort(key=lambda entry: entry["created_at"] or "", reverse=True)
     return {
         "runs": matches,
-        "runs_scanned": len(rows),
-        "scan_truncated": len(rows) >= limit,
+        "runs_scanned": len(by_column) + len(legacy_rows),
+        "scan_truncated": len(by_column) >= limit or len(legacy_rows) >= limit,
+        "legacy_rows_searched": len(legacy_rows),
+    }
+
+
+def _run_payload(run: AgentRun, customer: Customer, *, matched_by: str,
+                 calls: list[dict] | None = None) -> dict:
+    calls = tool_calls_naming(run.trace, customer.id) if calls is None else calls
+    return {
+        "run_id": run.run_id,
+        "status": run.status,
+        "stop_reason": run.stop_reason,
+        "error": run.error,
+        "goal": run.goal,
+        "created_at": _iso(run.created_at),
+        "finished_at": _iso(run.finished_at),
+        "rounds": run.rounds,
+        "tool_calls_total": run.tool_calls,
+        "matched_by": matched_by,
+        "tool_calls_naming_this_customer": calls,
+        "trace_url": f"/api/v1/agent/runs/{run.run_id}/trace.html",
     }
 
 
@@ -273,6 +318,10 @@ async def debug_customer(db: AsyncSession, customer_id: int) -> Optional[dict]:
         "runs": runs["runs"],
         "runs_scanned": runs["runs_scanned"],
         "runs_scan_truncated": runs["scan_truncated"],
+        "runs_found_by_column": sum(
+            1 for r in runs["runs"] if r["matched_by"] == "customer_id column"
+        ),
+        "legacy_runs_searched": runs["legacy_rows_searched"],
         "notes": [
             {"id": n.id, "content": n.content, "created_at": _iso(n.created_at)}
             for n in notes
