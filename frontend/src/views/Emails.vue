@@ -324,26 +324,75 @@ const handleSend = async () => {
   if (!sendForm.to_email) { ElMessage.warning('Email is required'); return }
   sending.value = true
   try {
-    await emailApi.send(sendForm)
-    ElMessage.success('Email sent successfully!')
+    const result = await emailApi.send(sendForm)
+    // A repeated send comes back as the first one's record instead of a second
+    // email. Saying "sent" there would be true but misleading -- the user
+    // clicked twice and should know only one went out.
+    if (result?.replayed) {
+      ElMessage.info('That email was already sent a moment ago - not sent again.')
+    } else {
+      ElMessage.success('Email sent successfully!')
+    }
     sendForm.to_email = ''
     sendForm.to_name = ''
     loadData()
   } catch (e) {
-    ElMessage.error('Failed to send email')
+    ElMessage.error(e?.response?.data?.detail || 'Failed to send email')
   } finally {
     sending.value = false
   }
 }
 
 const markReplied = async (row) => {
+  // When they wrote, not when we noticed.
+  //
+  // The endpoint has always accepted `replied_at`, and the whole conversation
+  // derivation hangs off it: a reply recorded as "now" when it actually arrived
+  // three months ago makes the plan read a cold thread as a live one -- "they
+  // replied 0 day(s) ago", priority high, and a routine answer proposed for a
+  // conversation that ended a season ago. The common case is a reply that just
+  // arrived, so that is one click; the rare case now has somewhere to go.
+  let repliedAt = null
   try {
-    const result = await emailApi.recordReply(row.id)
+    await ElMessageBox.confirm(
+      'Did this reply arrive just now?',
+      'Record a reply',
+      {
+        confirmButtonText: 'Just now',
+        cancelButtonText: 'They wrote earlier',
+        type: 'info',
+        distinguishCancelAndClose: true,
+      }
+    )
+  } catch (action) {
+    if (action !== 'cancel') return // dialog closed: record nothing
+    let value
+    try {
+      ({ value } = await ElMessageBox.prompt(
+        'When did they write? (YYYY-MM-DD)',
+        'Record an earlier reply',
+        {
+          inputPattern: /^\d{4}-\d{2}-\d{2}$/,
+          inputErrorMessage: 'Use YYYY-MM-DD',
+          inputPlaceholder: '2025-08-15',
+        }
+      ))
+    } catch (cancelled) {
+      return
+    }
+    // Midnight, so a reply dated today is never "in the future" for a server
+    // running on UTC.
+    repliedAt = `${value}T00:00:00`
+  }
+
+  try {
+    const result = await emailApi.recordReply(row.id, repliedAt ? { replied_at: repliedAt } : {})
     const conversation = result.conversation || {}
     if (result.already_recorded) {
       ElMessage.info('This reply was already recorded')
     } else if (conversation.they_wrote_last) {
-      ElMessage.success('Reply recorded - you owe them an answer')
+      const when = repliedAt ? ` (recorded as ${repliedAt.slice(0, 10)})` : ''
+      ElMessage.success(`Reply recorded${when} - you owe them an answer`)
     } else {
       ElMessage.success('Reply recorded')
     }

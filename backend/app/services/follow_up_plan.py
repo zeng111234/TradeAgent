@@ -107,6 +107,22 @@ class FollowUpPlanPolicy:
     #: escalates at the same point; here it decides urgency, there it decides risk.
     answer_within_days: int = 2
 
+    #: Past this, an unanswered reply is no longer something to answer.
+    #:
+    #: A message we owe an answer to for three months is not a live reply; the
+    #: deal has almost certainly moved on, and proposing "answer their message"
+    #: as routine work is the wrong instruction -- it sends a routine follow-up
+    #: into a conversation that ended a season ago. What is actually needed is a
+    #: decision: apologise and restart, or close the customer. So the kind
+    #: changes to ``review``, which also means no draft is written for it
+    #: (``EMAILING_KINDS``), because an apology is not something to generate
+    #: automatically.
+    #:
+    #: A knob, not a discovery: thirty days is roughly where "late" turns into
+    #: "gone" for a quote in this trade. The number is worth arguing with; the
+    #: behaviour it selects for is not.
+    reply_too_late_after_days: int = 30
+
     #: A parked customer is reviewed this far out: far enough that the plan stops
     #: nagging, near enough that nobody is quietly dropped.
     parked_review_after_days: int = 60
@@ -318,6 +334,33 @@ def plan_one(
     if thread.they_wrote_last and thread.last_reply_at is not None:
         owed = thread.reply_owed_days or 0
         late = owed >= policy.answer_within_days
+        too_late = owed >= policy.reply_too_late_after_days
+
+        # A reply nobody answered for months is not a reply to send. Handing it
+        # to the same "answer their message" action meant the app proposed a
+        # routine email into a conversation that ended a season ago, and ranked
+        # it identically to one that arrived this morning.
+        if too_late:
+            return PlannedAction(
+                **base,
+                kind=KIND_REVIEW,
+                due_at=_today(now),
+                priority=PRIORITY_HIGH,
+                reason=(
+                    f"They wrote {owed} day(s) ago and nobody answered - too late "
+                    f"for a routine reply"
+                ),
+                suggested_action=(
+                    "Decide: restart the conversation with an apology, or close "
+                    "this customer"
+                ),
+                attempt=0,
+                evidence=evidence({
+                    "reply_owed_days": owed,
+                    "reply_too_late_after_days": policy.reply_too_late_after_days,
+                }),
+            )
+
         return PlannedAction(
             **base,
             kind=KIND_ANSWER_THEM,
