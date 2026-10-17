@@ -4,6 +4,7 @@ from app.models.email_template import EmailTemplate
 from app.models.email_log import EmailLog
 from app.models.task import Task
 from app.models.agent_run import AgentRun
+from app.models.job_run import JobRun
 
 __all__ = [
     "Customer",
@@ -13,4 +14,5 @@ __all__ = [
     "EmailLog",
     "Task",
     "AgentRun",
+    "JobRun",
 ]

@@ -164,6 +164,20 @@ async def api_scheduler_jobs():
     return {"jobs": get_job_status()}
 
 
+@app.get("/api/v1/scheduler/history")
+async def api_scheduler_history():
+    """What the scheduler actually did -- including the runs it skipped.
+
+    `/scheduler/jobs` answers "when will it run next". This answers "did it run",
+    which is the question somebody asks after a report failed to arrive. A skipped
+    fire is recorded here rather than dropped, because a skipped scheduled run is
+    a missing report and used to be indistinguishable from one never scheduled.
+    """
+    from app.scheduler import get_job_history
+
+    return await get_job_history()
+
+
 @app.post("/api/v1/scheduler/run-daily")
 async def api_run_daily(search_keywords: str = "textile buyer", target_country: str = ""):
     """Manually trigger the daily morning routine."""

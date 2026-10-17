@@ -67,8 +67,11 @@ EXPECTED_ROUTES: dict[str, set[str]] = {
     "/api/v1/emails/templates": {"get", "post"},
     "/api/v1/emails/templates/{template_id}": {"get", "put", "delete"},
     "/api/v1/emails/track/{tracking_id}/pixel": {"get"},
-    # --- scheduler (2) ---
+    # --- scheduler (3) ---
     "/api/v1/scheduler/jobs": {"get"},
+    # What actually ran, including the fires that were skipped rather than
+    # stacked on top of a run still in progress.
+    "/api/v1/scheduler/history": {"get"},
     "/api/v1/scheduler/run-daily": {"post"},
     # --- tasks router (3) ---
     "/api/v1/tasks/": {"get", "post"},

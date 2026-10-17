@@ -15,7 +15,7 @@ A draft is only sendable from ``pending``. That single rule is what makes
 """
 import threading
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 from fastapi import APIRouter, Depends, Header, HTTPException, Response
 from pydantic import BaseModel, Field
@@ -636,7 +636,8 @@ async def api_record_reply(
             ),
         )
 
-    when = (data.replied_at if data else None) or datetime.utcnow()
+    supplied = data.replied_at if data else None
+    when = supplied or datetime.utcnow()
     if when > datetime.utcnow():
         raise HTTPException(
             status_code=422,
@@ -656,6 +657,22 @@ async def api_record_reply(
                 "had not been sent yet"
             ),
         )
+
+    if supplied is None and was_sent_at is not None and when <= was_sent_at:
+        # Clamp "now" to be strictly after the email it answers.
+        #
+        # The clock here cannot be trusted to order two events that happen close
+        # together: Windows resolves `datetime.utcnow()` to roughly 15 ms, so a
+        # send and the reply recorded a moment later can carry the *same*
+        # timestamp. The conversation derivation asks whether the reply is newer
+        # than the last outbound message, so a tie reads as "we spoke last" and
+        # the customer who just answered is treated as silent -- which is exactly
+        # what made a reply-endpoint test fail intermittently.
+        #
+        # A reply to an email cannot precede it, so the honest value is "just
+        # after that email". Only the defaulted timestamp is adjusted; a time the
+        # caller stated is taken at its word or refused above.
+        when = was_sent_at + timedelta(microseconds=1)
 
     already = email_log.replied_at is not None
     if not already:

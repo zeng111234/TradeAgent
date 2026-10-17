@@ -190,3 +190,65 @@ def test_the_reply_endpoint_shows_up_in_the_capability_surface(client):
     assert after["total_replied"] >= 1, (
         "reply_rate was 0.0% by construction before this endpoint existed"
     )
+
+def test_a_reply_recorded_in_the_same_clock_tick_still_counts_as_their_turn(client, db):
+    """The defect behind an intermittent failure, pinned deterministically.
+
+    Windows resolves ``datetime.utcnow()`` to about 15 ms, so an email sent and
+    a reply recorded a moment later can carry the *same* timestamp. The
+    conversation derivation asks whether the reply is newer than the last
+    outbound message, so a tie read as "we spoke last" -- and the customer who
+    had just answered was treated as silent. This test manufactures the tie: the
+    email's ``sent_at`` is set to exactly what the frozen clock reports.
+    """
+    import asyncio
+
+    from sqlalchemy import select
+
+    import app.routers.emails as emails_module
+    from app.models.email_log import EmailLog
+
+    sent = send(client, "Japan Embroidery - gold thread")
+    frozen = datetime(2026, 3, 1, 12, 0, 0)
+
+    async def pin():
+        row = (
+            await db.execute(select(EmailLog).where(EmailLog.id == sent["id"]))
+        ).scalar_one()
+        row.sent_at = frozen
+        await db.commit()
+
+    asyncio.run(pin())
+
+    class FrozenDatetime(datetime):
+        @classmethod
+        def utcnow(cls):
+            return frozen
+
+    original = emails_module.datetime
+    emails_module.datetime = FrozenDatetime
+    try:
+        response = client.post(f"/api/v1/emails/logs/{sent['id']}/reply")
+    finally:
+        emails_module.datetime = original
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+
+    async def read_back():
+        row = (
+            await db.execute(select(EmailLog).where(EmailLog.id == sent["id"]))
+        ).scalar_one()
+        await db.refresh(row)
+        return row
+
+    row = asyncio.run(read_back())
+
+    assert row.replied_at is not None
+    assert row.replied_at > frozen, (
+        f"the reply was stored at {row.replied_at} and the email was sent at "
+        f"{frozen}; with equal timestamps the thread reads as if they never wrote"
+    )
+    assert body["conversation"]["they_wrote_last"] is True, (
+        "a reply in the same clock tick as the send was read as our turn"
+    )
