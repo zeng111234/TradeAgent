@@ -27,6 +27,7 @@ trace, instead of to a constant nobody remembers choosing.
 from __future__ import annotations
 
 import asyncio
+import time
 import logging
 import re
 from datetime import datetime
@@ -687,19 +688,51 @@ async def inspect_website(url: str, max_chars: int = MAX_PAGE_CHARS) -> dict:
         url = "https://" + url.lstrip("/")
 
     def _fetch() -> tuple[int, str]:
-        """Blocking network call plus the parse. Runs on a worker thread."""
-        response = requests.get(
-            url,
-            timeout=15,
-            verify=False,  # noqa: S501 - many small trade sites have broken chains
-            headers={
-                "User-Agent": (
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        """Blocking network call plus the parse. Runs on a worker thread.
+
+        Two attempts, not one. A reset connection or a 503 from a small trade site
+        is a page that a single second would have fetched -- before this, it was
+        simply a page the agent never read, reported as a tool failure. Bounded by
+        ``PAGE_FETCH_SECONDS`` and by the tool's own timeout, so the retry cannot
+        turn a 15-second tool into a 40-second one.
+
+        Deliberately not retried: a 404 or a 403. Those are answers, not accidents.
+        """
+        from app.timeouts import PAGE_FETCH_SECONDS
+        from app.retry import classify_http_status, backoff_seconds
+
+        deadline = time.monotonic() + PAGE_FETCH_SECONDS
+
+        for attempt in (1, 2):
+            try:
+                response = requests.get(
+                    url,
+                    timeout=PAGE_FETCH_SECONDS,
+                    verify=False,  # noqa: S501 - many small trade sites have broken chains
+                    headers={
+                        "User-Agent": (
+                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                            "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                        )
+                    },
                 )
-            },
-        )
-        return response.status_code, response.text or ""
+            except Exception:  # noqa: BLE001 - transport failures are the case here
+                # requests raises rather than returning a status for connection
+                # resets, DNS hiccups and timeouts. Those are exactly the ones
+                # worth one more try; there is no status to classify.
+                if attempt == 2:
+                    raise
+                time.sleep(backoff_seconds(1, cap=1.0))
+                continue
+
+            decision = classify_http_status(response.status_code)
+            if decision.retryable and attempt == 1:
+                if time.monotonic() + decision.wait_seconds < deadline:
+                    time.sleep(decision.wait_seconds)
+                    continue
+            return response.status_code, response.text or ""
+
+        raise RuntimeError("fetch failed without an error")  # pragma: no cover
 
     try:
         status_code, raw = await asyncio.to_thread(_fetch)

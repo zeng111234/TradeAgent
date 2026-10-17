@@ -77,7 +77,18 @@ class LLMUnavailable(LLMError):
 
 
 class LLMRateLimited(LLMError):
-    """Too many requests. The call may succeed later, but not immediately."""
+    """Too many requests. The call may succeed later, but not immediately.
+
+    ``retry_after`` carries the provider's own answer to "how much later" when it
+    gives one (``Retry-After``, or ``x-ratelimit-reset-*`` expressed in seconds).
+    It was being thrown away: the exception said "rate limited" and left the
+    caller to guess a wait, which is the one number a retry decision actually
+    needs. ``None`` means the provider did not say.
+    """
+
+    def __init__(self, message: str, *, retry_after: Optional[float] = None):
+        super().__init__(message)
+        self.retry_after = retry_after
 
 
 class LLMTransient(LLMError):
@@ -128,10 +139,46 @@ def translate_provider_error(exc: BaseException) -> LLMError:
             + (f", HTTP {status}" if status else "") + ")"
         )
     if status == 429 or name == "RateLimitError":
-        return LLMRateLimited("the provider is rate limiting this key (HTTP 429)")
+        return LLMRateLimited(
+            "the provider is rate limiting this key (HTTP 429)",
+            retry_after=_retry_after_seconds(exc),
+        )
     if status is not None and 500 <= int(status) < 600:
         return LLMTransient(f"the provider returned HTTP {status} ({name})")
     return LLMTransient(f"{name}: {exc}")
+
+
+def _retry_after_seconds(exc: BaseException) -> Optional[float]:
+    """The provider's own "wait this long", if it gave one.
+
+    Read off the exception's response headers rather than hard-coded: a 429 with
+    ``Retry-After: 20`` means twenty seconds, and a caller that guesses two is
+    going to be told no again. Returns ``None`` when the provider said nothing or
+    the value is unreadable -- a guess is worse than an honest "unknown".
+    """
+    response = getattr(exc, "response", None)
+    headers = getattr(response, "headers", None)
+    if not headers:
+        return None
+
+    try:
+        raw = headers.get("retry-after") or headers.get("Retry-After")
+        if raw is not None:
+            value = float(str(raw).strip())
+            return value if value >= 0 else None
+    except (TypeError, ValueError):
+        return None
+
+    # OpenAI-compatible providers often use these instead, in seconds.
+    for header in ("x-ratelimit-reset-requests", "x-ratelimit-reset-tokens"):
+        try:
+            raw = headers.get(header)
+            if raw is not None and str(raw).endswith("s"):
+                value = float(str(raw).strip().rstrip("s"))
+                return value if value >= 0 else None
+        except (AttributeError, TypeError, ValueError):
+            continue
+    return None
 
 
 _client: Any = None
