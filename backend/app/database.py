@@ -5,6 +5,29 @@ from sqlalchemy.orm import DeclarativeBase
 
 from app.config import settings
 
+#: Pool shape, stated rather than inherited. Measured (tests/test_pool_capacity.py):
+#:
+#:     pool 5 + 10 overflow = 15 sessions
+#:     100 concurrent light requests  -> 0.94s wall, p50 500 ms, 0 errors
+#:     100 concurrent plan requests   -> 5.97s wall, p95 5.8 s, 0 errors
+#:     /health during both            -> p50 0 ms, max 16 ms
+#:
+#: So the event loop is not the constraint; the pool is, and it does not fail at a
+#: hundred -- it queues. Fifteen is kept because more connections do not buy
+#: throughput here: every aiosqlite connection is another thread serialising rows
+#: through one GIL, and SQLite admits one writer regardless. Measured elsewhere in
+#: this session: running the same work concurrently took *twice* as long as
+#: running it back to back. Raising the pool would trade queueing for contention.
+DEFAULT_POOL_SIZE = 5
+DEFAULT_MAX_OVERFLOW = 10
+
+#: How long a request waits for a free connection before giving up. Thirty
+#: seconds was the inherited default, and it is the wrong number: a caller is
+#: better served by an immediate, honest "busy" than by a request that hangs for
+#: half a minute and then fails as an unhandled 500. With this, exhaustion is a
+#: 503 with a Retry-After header (see app/main.py).
+DEFAULT_POOL_TIMEOUT_SECONDS = 5.0
+
 # A long analysis writes its progress while requests are being served, and
 # SQLite admits one writer at a time. The default is to give up after five
 # seconds with "database is locked"; waiting longer is the right trade for a
@@ -12,6 +35,9 @@ from app.config import settings
 engine = create_async_engine(
     settings.DATABASE_URL,
     echo=settings.DEBUG,
+    pool_size=DEFAULT_POOL_SIZE,
+    max_overflow=DEFAULT_MAX_OVERFLOW,
+    pool_timeout=DEFAULT_POOL_TIMEOUT_SECONDS,
     connect_args={"timeout": 30} if settings.DATABASE_URL.startswith("sqlite") else {},
 )
 

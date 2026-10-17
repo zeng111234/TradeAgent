@@ -148,13 +148,21 @@ async def api_agent_capabilities():
 async def api_agent_run(
     data: AgentRunRequest,
     response: Response,
-    db: AsyncSession = Depends(get_db),
 ):
     """Run the agent against a goal.
 
     Returns the full trace when ``wait`` is true, and a run id with a poll URL
     (HTTP 202) when it is false. The run row exists either way before any work
     starts.
+
+    **No request-scoped session.** This route used to take ``db=Depends(get_db)``
+    and hold it across ``execute(...)``, which with ``wait=true`` means holding one
+    of the fifteen pooled connections for the length of a run -- up to
+    ``max_seconds``, and nine hundred seconds in the worst case. Measured: the
+    pool is fifteen and the event loop is not the constraint, so a handful of
+    long runs would starve every other endpoint in the process. The one query
+    this route needs (does the customer exist) now gets its own short-lived
+    session, and nothing is pinned while the agent works.
     """
     if not is_configured():
         raise HTTPException(
@@ -171,14 +179,17 @@ async def api_agent_run(
         # key unless it is switched on, so a wrong id would be written and then
         # quietly match nothing -- a run recorded as being about a customer who
         # does not exist is worse than a rejected request.
-        from app.models.customer import Customer
         from sqlalchemy import select
 
-        exists = (
-            await db.execute(
-                select(Customer.id).where(Customer.id == data.customer_id)
-            )
-        ).scalar_one_or_none()
+        from app.database import async_session
+        from app.models.customer import Customer
+
+        async with async_session() as session:
+            exists = (
+                await session.execute(
+                    select(Customer.id).where(Customer.id == data.customer_id)
+                )
+            ).scalar_one_or_none()
         if exists is None:
             raise HTTPException(
                 status_code=404, detail=f"no customer with id {data.customer_id}"
