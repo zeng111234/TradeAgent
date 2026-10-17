@@ -327,7 +327,13 @@ class AgentLoop:
             if round_index > self.budget.max_rounds:
                 return self._finish(run, started, "truncated", "round budget exhausted")
 
-            reply = await self._ask(run, schemas, round_index)
+            # The model call is bounded by what is left of the run, not by the
+            # client's own timeout. Otherwise the inner layer is longer than the
+            # outer one -- a sub-agent with a 90-second allowance and a
+            # 120-second model timeout could outlive its own budget, and the
+            # parent would wait for a child that had already been written off.
+            remaining = deadline - time.monotonic()
+            reply = await self._ask(run, schemas, round_index, timeout=remaining)
             step = TraceStep(
                 round=round_index,
                 thought=reply.content,
@@ -462,18 +468,33 @@ class AgentLoop:
 
     # -- internals ---------------------------------------------------------
 
-    async def _ask(self, run: AgentRun, schemas: list[dict], round_index: int):
+    async def _ask(
+        self, run: AgentRun, schemas: list[dict], round_index: int,
+        *, timeout: float | None = None,
+    ):
         try:
             # The full history is kept on the run for the trace; the model gets a
             # bounded projection of it. Nothing is lost — oversized observations
             # are written to the spill store and stay retrievable by name.
             messages = self._project_for_model(run, round_index)
-            return await self.llm.chat(
+            call = self.llm.chat(
                 messages,
                 schemas,
                 temperature=0.2,
                 max_tokens=1500,
             )
+            if timeout is None or timeout <= 0:
+                return await call
+            # `wait_for` cancels the in-flight request when the budget runs out,
+            # including the SDK's own retry loop -- so a throttled provider cannot
+            # spend three attempts' worth of time on a run that has 4 seconds
+            # left.
+            return await asyncio.wait_for(call, timeout=timeout)
+        except asyncio.TimeoutError as exc:
+            raise AgentError(
+                f"the model call in round {round_index} exceeded what was left of "
+                "the run's time budget and was cancelled"
+            ) from exc
         except Exception as exc:  # noqa: BLE001 - surfaced as a run error
             logger.error("LLM call failed in run %s: %s", run.run_id, exc, exc_info=True)
             # The class name is part of the message on purpose. The provider

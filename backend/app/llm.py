@@ -54,7 +54,7 @@ logger = logging.getLogger(__name__)
 
 #: The SDK default is 600s; a ten-minute hang is indistinguishable from a hung
 #: server and the browser has given up long before.
-DEFAULT_TIMEOUT_SECONDS = 120.0
+DEFAULT_TIMEOUT_SECONDS = 60.0
 
 #: The SDK's own default is 2. Stated here rather than inherited, because
 #: "how many times will this retry, and what does it do between attempts" is a

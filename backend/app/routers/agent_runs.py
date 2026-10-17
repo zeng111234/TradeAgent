@@ -42,6 +42,7 @@ from app.agent.service import (
     summarise,
 )
 from app.database import get_db
+from app.timeouts import BROWSER_REQUEST_SECONDS, WAIT_MODE_MAX_SECONDS
 
 logger = logging.getLogger(__name__)
 
@@ -206,6 +207,35 @@ async def api_agent_run(
 
     if not data.wait:
         return await _start_in_background(data, budget)
+
+    # `wait=true` holds this HTTP connection open, so its ceiling is a property of
+    # the transport rather than of the work: the browser gives up at
+    # BROWSER_REQUEST_SECONDS, and a run that outlives it produces a timeout error
+    # for work that is going fine. Two cases, and they are different:
+    #
+    # * the caller asked for a budget the connection cannot carry -> refuse, and
+    #   name the path that can (``wait=false``, whose row exists up front);
+    # * the caller asked for nothing specific -> clamp to what the connection can
+    #   carry. The default run budget is 180s, so this is the common case.
+    if data.max_seconds and data.max_seconds > WAIT_MODE_MAX_SECONDS:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"wait=true holds this HTTP request open, so the budget must stay "
+                f"under {WAIT_MODE_MAX_SECONDS:.0f}s (the browser waits "
+                f"{BROWSER_REQUEST_SECONDS:.0f}s). Asked for "
+                f"{data.max_seconds:.0f}s. Use wait=false and poll "
+                "/api/v1/agent/runs/<run_id>: the run row exists before the work "
+                "starts, so polling works from the first moment."
+            ),
+        )
+    if budget.max_seconds > WAIT_MODE_MAX_SECONDS:
+        budget = AgentBudget(
+            max_rounds=budget.max_rounds,
+            max_tool_calls=budget.max_tool_calls,
+            max_seconds=WAIT_MODE_MAX_SECONDS,
+            max_tokens=budget.max_tokens,
+        )
 
     try:
         result = await execute(

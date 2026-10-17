@@ -189,8 +189,18 @@ def test_get_client_refuses_without_a_key(monkeypatch):
 
 
 def test_default_timeout_is_not_the_sdk_default():
-    """600s (the SDK default) is what made a hung provider hold a request."""
-    assert llm.DEFAULT_TIMEOUT_SECONDS == 120.0
+    """600s (the SDK default) is what made a hung provider hold a request.
+
+    The value now lives in ``app/timeouts.py`` with the rest of the ladder, and it
+    is the *per attempt* number: it has to be shorter than the total a caller
+    experiences (``LLM_TOTAL_SECONDS``), because the SDK retries inside one
+    logical call and an attempt allowed more time than the total could never
+    finish.
+    """
+    from app import timeouts
+
+    assert llm.DEFAULT_TIMEOUT_SECONDS == timeouts.LLM_REQUEST_SECONDS
+    assert llm.DEFAULT_TIMEOUT_SECONDS < timeouts.LLM_TOTAL_SECONDS
     assert llm.DEFAULT_TIMEOUT_SECONDS < 600.0
 
 

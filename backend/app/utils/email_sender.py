@@ -1,4 +1,5 @@
 """Email sending utility with SMTP support and tracking."""
+import asyncio
 import uuid
 import aiosmtplib
 from email.mime.text import MIMEText
@@ -7,6 +8,7 @@ from jinja2 import Template
 import logging
 
 from app.config import settings
+from app.timeouts import SMTP_SEND_SECONDS
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +81,11 @@ async def send_email(
             username=settings.SMTP_USER,
             password=settings.SMTP_PASSWORD,
             use_tls=settings.SMTP_USE_TLS,
+            # Stated rather than inherited: aiosmtplib's own default is 60
+            # seconds, and this call happens while the process-wide send lock is
+            # held. Thirty is enough for a handshake and one message against a
+            # healthy server, and it keeps a hung one from owning the queue.
+            timeout=SMTP_SEND_SECONDS,
         )
 
         logger.info(f"Email sent to {to_email}")

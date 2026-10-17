@@ -14,6 +14,7 @@ A draft is only sendable from ``pending``. That single rule is what makes
 "the same draft cannot go out twice" true rather than hoped for.
 """
 import threading
+import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from typing import Optional
@@ -34,6 +35,7 @@ from app.schemas.email_log import (
     EmailSendRequest, EmailBatchSendRequest,
     EmailLogResponse, EmailStatsResponse,
 )
+from app.timeouts import BATCH_SEND_BUDGET_SECONDS
 from app.services.email_claims import (
     already_handled,
     claim,
@@ -437,8 +439,20 @@ async def api_send_pending(
         failed_count = 0
         skipped_count = 0
         details = []
+        deadline = time.monotonic() + BATCH_SEND_BUDGET_SECONDS
+        stopped_on_time = False
 
         for email_log in pending:
+            # Two bounds, not one. The count (`limit`) keeps a single request from
+            # being enormous; this clock keeps it from *lasting* arbitrarily long,
+            # because each message is allowed SMTP_SEND_SECONDS and thirty
+            # seconds times fifty drafts is twenty-five minutes inside a
+            # process-wide lock. Whichever bound is reached first ends the batch,
+            # and the response says how many are left so the caller can go again.
+            if time.monotonic() >= deadline:
+                stopped_on_time = True
+                break
+
             # Claim this row, and commit the claim, *before* sending it.
             #
             # The old loop sent every draft and committed once at the end. A
@@ -497,12 +511,16 @@ async def api_send_pending(
             "sent": sent_count,
             "failed": failed_count,
             "skipped": skipped_count,
-            "total": len(pending),
+            "total": sent_count + failed_count + skipped_count,
             "limit": limit,
             # The queue depth *after* this batch, so a caller can loop until it
             # reaches zero instead of guessing how many calls it needs.
             "remaining": remaining_after,
             "queue_before": remaining_before,
+            # True when the clock, not the count, ended the batch. The caller
+            # learns "come back for the rest" instead of "this is everything".
+            "stopped_on_time": stopped_on_time,
+            "budget_seconds": BATCH_SEND_BUDGET_SECONDS,
             "details": details,
         }
 
