@@ -30,6 +30,10 @@ class LLMReply:
     tool_calls: list[ToolCall] = field(default_factory=list)
     prompt_tokens: int = 0
     completion_tokens: int = 0
+    #: How much of ``prompt_tokens`` the provider served from its prefix cache.
+    #: A subset, not an addition: see ``app.llm_usage`` for why the split is the
+    #: difference between knowing what a run cost and only knowing how big it was.
+    cached_prompt_tokens: int = 0
     finish_reason: Optional[str] = None
 
     @property
@@ -197,8 +201,13 @@ class OpenAICompatibleClient:
 
         usage = getattr(response, "usage", None)
         if usage is not None:
-            reply.prompt_tokens = getattr(usage, "prompt_tokens", 0) or 0
-            reply.completion_tokens = getattr(usage, "completion_tokens", 0) or 0
+            # One parser for three provider spellings; see app.llm_usage.
+            from app.llm_usage import parse_usage
+
+            parsed = parse_usage(usage)
+            reply.prompt_tokens = parsed.prompt_tokens
+            reply.cached_prompt_tokens = parsed.cached_prompt_tokens
+            reply.completion_tokens = parsed.completion_tokens
 
         return reply
 

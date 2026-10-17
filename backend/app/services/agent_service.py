@@ -91,6 +91,7 @@ Return ONLY valid JSON, no other text."""
             system="You are a B2B trade intelligence analyst. Always respond with valid JSON only.",
             temperature=0.3,
             max_tokens=1500,
+            scope="website_analysis",
         )
         result["ai_powered"] = True
         result["source_url"] = url
@@ -239,6 +240,7 @@ Return ONLY valid JSON."""
             system="You are a B2B trade email analyst. Always respond with valid JSON.",
             temperature=0.3,
             max_tokens=1000,
+            scope="reply_analysis",
         )
         result["ai_powered"] = True
         return result
@@ -576,6 +578,7 @@ Write a warm, professional follow-up. Be specific to their situation. Return ONL
                     system="You are a professional foreign trade email writer. Write concise, warm emails.",
                     temperature=0.7,
                     max_tokens=300,
+                    scope="email_draft",
                 )
                 action["draft_subject"] = f"Following up - {action['company_name']}"
             except Exception as e:
@@ -650,6 +653,7 @@ Return JSON: {{"subject": "email subject", "body": "email body in HTML"}}"""
                 system="Write B2B cold outreach emails. Return valid JSON only.",
                 temperature=0.7,
                 max_tokens=400,
+                scope="email_draft",
             )
 
             emails.append({
@@ -732,6 +736,7 @@ Return ONLY valid JSON."""
             system="You are an expert B2B negotiation coach. Always respond with valid JSON.",
             temperature=0.5,
             max_tokens=2000,
+            scope="negotiation_advice",
         )
         result["ai_powered"] = True
         return result
@@ -817,6 +822,7 @@ Return ONLY valid JSON."""
             system="You are a B2B trade inquiry analyst. Always respond with valid JSON.",
             temperature=0.3,
             max_tokens=2000,
+            scope="inquiry_analysis",
         )
         result["ai_powered"] = True
         return result
@@ -1034,6 +1040,7 @@ Write a warm, non-pushy email that re-engages the customer. Offer value (new pro
                         system="You are a professional foreign trade email writer. Write concise re-engagement emails.",
                         temperature=0.7,
                         max_tokens=300,
+                        scope="email_draft",
                     )
                     alert["rescue_subject"] = f"Something new for {alert['company_name']} - Let's reconnect"
                 except Exception as e:
@@ -1141,6 +1148,7 @@ Return JSON: {{"subject": "email subject", "body": "email body in HTML"}}"""
                     system="Write professional B2B holiday greeting emails. Return valid JSON only.",
                     temperature=0.7,
                     max_tokens=400,
+                    scope="email_draft",
                 )
 
                 emails.append({

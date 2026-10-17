@@ -167,7 +167,11 @@ def _cmd_show(args: argparse.Namespace) -> int:
     print(f"goal     : {row.goal}")
     print(f"status   : {row.status} ({row.stop_reason})")
     print(f"rounds   : {row.rounds}   tool calls: {row.tool_calls}")
-    print(f"tokens   : {row.prompt_tokens} in / {row.completion_tokens} out")
+    print(
+        f"tokens   : {row.prompt_tokens} in "
+        f"({getattr(row, 'cached_prompt_tokens', 0) or 0} cached) / "
+        f"{row.completion_tokens} out"
+    )
     print()
     for step in trace:
         thought = (step.get("thought") or "").strip()

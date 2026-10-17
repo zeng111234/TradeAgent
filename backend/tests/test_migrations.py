@@ -187,12 +187,12 @@ def test_a_fresh_database_records_the_migration_without_running_it(scratch):
     report = asyncio.run(scratch.run(apply_migrations))
 
     assert report["applied"] == []
-    assert report["already_present"] == ["0001_agent_runs_customer_id"], report
+    assert set(report["already_present"]) == {m.id for m in MIGRATIONS}, report
     assert report["pending"] == []
 
     status = asyncio.run(scratch.run(schema_status))
     assert status["unapplied"] == []
-    assert status["applied"] == ["0001_agent_runs_customer_id"]
+    assert set(status["applied"]) == {m.id for m in MIGRATIONS}
 
 
 def test_the_status_reports_what_the_database_thinks_it_is(scratch):
@@ -200,12 +200,12 @@ def test_the_status_reports_what_the_database_thinks_it_is(scratch):
 
     as_legacy_database(scratch)
     before = asyncio.run(scratch.run(schema_status))
-    assert before["unapplied"] == ["0001_agent_runs_customer_id"]
+    assert set(before["unapplied"]) == {m.id for m in MIGRATIONS}
 
     asyncio.run(scratch.run(apply_migrations))
     after = asyncio.run(scratch.run(schema_status))
     assert after["unapplied"] == []
-    assert after["applied"] == ["0001_agent_runs_customer_id"]
+    assert set(after["applied"]) == {m.id for m in MIGRATIONS}
 
 
 # --------------------------------------------------------------------------

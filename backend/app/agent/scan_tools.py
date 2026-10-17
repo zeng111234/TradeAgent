@@ -263,7 +263,10 @@ class ProspectSink:
             lines.append(f"  status      : {run.status} ({run.stop_reason})")
             lines.append(f"  tool path   : {' -> '.join(run.tool_sequence) or '(none)'}")
             lines.append(f"  rounds/calls: {len(run.steps)}/{run.tool_call_count}")
-            lines.append(f"  tokens      : {run.prompt_tokens} in / {run.completion_tokens} out")
+            lines.append(
+                f"  tokens      : {run.prompt_tokens} in "
+                f"({run.cached_prompt_tokens} cached) / {run.completion_tokens} out"
+            )
             lines.append("")
             if run.final_output:
                 lines.append("  conclusion:")

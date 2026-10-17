@@ -508,6 +508,7 @@ def derive_stats(steps: list[dict], meta: Optional[dict] = None) -> dict:
         "delegated": delegated,
         "tool_sequence": meta.get("tool_sequence") or executed,
         "prompt_tokens": meta.get("prompt_tokens", 0),
+        "cached_prompt_tokens": meta.get("cached_prompt_tokens", 0),
         "completion_tokens": meta.get("completion_tokens", 0),
         "elapsed": meta.get("elapsed", 0),
     }
@@ -575,7 +576,9 @@ def render_html(run: Any, *, title: Optional[str] = None) -> str:
         ("tool calls", stats_data["tool_calls"]),
         (
             "tokens",
-            f"{stats_data['prompt_tokens']} in / {stats_data['completion_tokens']} out",
+            f"{stats_data['prompt_tokens']} in "
+            f"({stats_data['cached_prompt_tokens']} cached) / "
+            f"{stats_data['completion_tokens']} out",
         ),
         ("elapsed", f"{stats_data['elapsed']}s"),
     ]

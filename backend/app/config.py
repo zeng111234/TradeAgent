@@ -34,6 +34,13 @@ class Settings(BaseSettings):
     # One completion's request timeout. The SDK default is 600s, which lets a
     # hung provider hold an HTTP request for ten minutes.
     OPENAI_TIMEOUT_SECONDS: float = 120.0
+    # What a million tokens cost, per model, as a JSON object:
+    #   {"deepseek-chat": {"inputPerMtok": 0.27, "cachedInputPerMtok": 0.07,
+    #                      "outputPerMtok": 1.10, "currency": "USD"}}
+    # Empty by default on purpose: a price baked into the code is wrong the day
+    # the provider changes its table, and wrong silently. Until an operator sets
+    # it, ``app.llm_usage`` reports spend as token counts and cost as unpriced.
+    LLM_PRICES_JSON: str = ""
 
     # CORS
     CORS_ORIGINS: list[str] = ["http://localhost:5173", "http://localhost:3000"]

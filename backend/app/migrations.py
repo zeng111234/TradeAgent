@@ -107,6 +107,17 @@ MIGRATIONS: list[Migration] = [
         ],
         guard=lambda conn: _has_column(conn, "agent_runs", "customer_id"),
     ),
+    Migration(
+        id="0002_agent_runs_cached_prompt_tokens",
+        description=(
+            "record how much of a run's prompt the provider served from its "
+            "prefix cache, so the run's token count can be turned into a price"
+        ),
+        statements=[
+            "ALTER TABLE agent_runs ADD COLUMN cached_prompt_tokens INTEGER DEFAULT 0",
+        ],
+        guard=lambda conn: _has_column(conn, "agent_runs", "cached_prompt_tokens"),
+    ),
 ]
 
 

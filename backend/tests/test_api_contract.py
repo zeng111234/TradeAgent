@@ -8,7 +8,8 @@ breaking change and needs an explicit decision.
 from __future__ import annotations
 
 # Snapshot of the API surface as of the commit this refactor started from
-# (f8f8836). 42 paths / 54 operations.
+# (f8f8836). 42 paths / 54 operations. One path was added on purpose since
+# (/api/v1/usage, see the note in the table); nothing was removed.
 EXPECTED_ROUTES: dict[str, set[str]] = {
     "/": {"get"},
     "/health": {"get"},
@@ -77,6 +78,11 @@ EXPECTED_ROUTES: dict[str, set[str]] = {
     "/api/v1/tasks/": {"get", "post"},
     "/api/v1/tasks/overdue/list": {"get"},
     "/api/v1/tasks/{task_id}": {"get", "put", "delete"},
+    # --- usage (1) ---
+    # Deliberate addition, not a modification: nothing above changed. Token spend
+    # by scope, which no endpoint reported before -- the eight service-layer call
+    # sites store no run, so the ledger is the only place their cost exists.
+    "/api/v1/usage": {"get"},
 }
 
 

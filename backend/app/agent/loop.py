@@ -152,6 +152,8 @@ class TraceStep:
     tool_calls: list[ToolInvocation] = field(default_factory=list)
     prompt_tokens: int = 0
     completion_tokens: int = 0
+    #: Of ``prompt_tokens``, how many the provider served from its prefix cache.
+    cached_prompt_tokens: int = 0
     latency: float = 0.0
     note: str = ""
 
@@ -161,6 +163,11 @@ class TraceStep:
             "thought": self.thought,
             "latency": round(self.latency, 3),
             "note": self.note,
+            # Per round, because "which round cost the money" is a question the
+            # aggregate cannot answer: a run can spend it all on the first prompt.
+            "prompt_tokens": self.prompt_tokens,
+            "cached_prompt_tokens": self.cached_prompt_tokens,
+            "completion_tokens": self.completion_tokens,
             "tool_calls": [
                 {
                     "name": c.name,
@@ -193,6 +200,10 @@ class AgentRun:
     messages: list[Message] = field(default_factory=list)
     prompt_tokens: int = 0
     completion_tokens: int = 0
+    #: Cache-hit share of ``prompt_tokens``, summed over rounds. Recorded because
+    #: it is the difference between a count and a price: cached input is billed at
+    #: a fraction of fresh input by every provider that offers it.
+    cached_prompt_tokens: int = 0
     elapsed: float = 0.0
     error: Optional[str] = None
     # One entry per compaction pass: round, tokens freed, observations spilled.
@@ -238,6 +249,7 @@ class AgentRun:
             "tool_sequence": self.tool_sequence,
             "did_investigate": self.did_investigate,
             "prompt_tokens": self.prompt_tokens,
+            "cached_prompt_tokens": self.cached_prompt_tokens,
             "completion_tokens": self.completion_tokens,
             "elapsed": round(self.elapsed, 3),
             "steps": [s.as_dict() for s in self.steps],
@@ -339,10 +351,12 @@ class AgentLoop:
                 thought=reply.content,
                 prompt_tokens=reply.prompt_tokens,
                 completion_tokens=reply.completion_tokens,
+                cached_prompt_tokens=getattr(reply, "cached_prompt_tokens", 0) or 0,
             )
             run.steps.append(step)
             run.prompt_tokens += reply.prompt_tokens
             run.completion_tokens += reply.completion_tokens
+            run.cached_prompt_tokens += step.cached_prompt_tokens
 
             if not reply.tool_calls:
                 idle_rounds += 1
@@ -468,6 +482,23 @@ class AgentLoop:
 
     # -- internals ---------------------------------------------------------
 
+    def _model_label(self) -> str:
+        """Which model to file this run's spend under.
+
+        The injected client knows its own model when it is the real adapter; a
+        scripted one does not, and the configured model is the honest fallback
+        for "what this process was pointed at".
+        """
+        explicit = getattr(self.llm, "model", None)
+        if explicit:
+            return str(explicit)
+        try:
+            from app.config import settings
+
+            return str(settings.OPENAI_MODEL or "unknown")
+        except Exception:  # pragma: no cover - configuration is always importable
+            return "unknown"
+
     async def _ask(
         self, run: AgentRun, schemas: list[dict], round_index: int,
         *, timeout: float | None = None,
@@ -484,12 +515,29 @@ class AgentLoop:
                 max_tokens=1500,
             )
             if timeout is None or timeout <= 0:
-                return await call
-            # `wait_for` cancels the in-flight request when the budget runs out,
-            # including the SDK's own retry loop -- so a throttled provider cannot
-            # spend three attempts' worth of time on a run that has 4 seconds
-            # left.
-            return await asyncio.wait_for(call, timeout=timeout)
+                reply = await call
+            else:
+                # `wait_for` cancels the in-flight request when the budget runs
+                # out, including the SDK's own retry loop -- so a throttled
+                # provider cannot spend three attempts' worth of time on a run
+                # that has 4 seconds left.
+                reply = await asyncio.wait_for(call, timeout=timeout)
+
+            # Recorded here, not at the end of the run: a round that ends the run
+            # -- a final answer, a budget stop, a stall -- is still a round the
+            # provider billed for, and only the rounds that returned get counted.
+            from app.llm_usage import Usage, record as record_usage
+
+            record_usage(
+                "agent_run",
+                self._model_label(),
+                Usage(
+                    prompt_tokens=reply.prompt_tokens,
+                    cached_prompt_tokens=getattr(reply, "cached_prompt_tokens", 0) or 0,
+                    completion_tokens=reply.completion_tokens,
+                ),
+            )
+            return reply
         except asyncio.TimeoutError as exc:
             raise AgentError(
                 f"the model call in round {round_index} exceeded what was left of "

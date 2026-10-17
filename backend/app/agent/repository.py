@@ -55,6 +55,8 @@ async def save_run(
     row.tool_calls = payload["tool_calls"]
     row.prompt_tokens = payload["prompt_tokens"]
     row.completion_tokens = payload["completion_tokens"]
+    # Old traces predate the field; a missing key is zero, not a KeyError.
+    row.cached_prompt_tokens = payload.get("cached_prompt_tokens", 0)
     row.elapsed = int(payload["elapsed"] * 1000)
     row.trace = json.dumps(payload["steps"], ensure_ascii=False)
     if run.status in TERMINAL_STATUSES:
@@ -87,6 +89,7 @@ async def start_run(db: AsyncSession, run: AgentRunResult, *, commit: bool = Tru
     row.tool_calls = 0
     row.prompt_tokens = 0
     row.completion_tokens = 0
+    row.cached_prompt_tokens = 0
     row.elapsed = 0
     db.add(row)
     if commit:

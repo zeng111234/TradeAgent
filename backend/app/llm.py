@@ -49,6 +49,7 @@ import logging
 from typing import Any, Optional
 
 from app.config import settings
+from app.llm_usage import parse_usage, record as record_usage
 
 logger = logging.getLogger(__name__)
 
@@ -275,8 +276,16 @@ async def complete_text(
     system: Optional[str] = None,
     temperature: float = 0.3,
     max_tokens: int = 1500,
+    scope: str = "unlabelled",
 ) -> str:
-    """One completion, returned as text. Raises on anything unusable."""
+    """One completion, returned as text. Raises on anything unusable.
+
+    ``scope`` labels the spend in :mod:`app.llm_usage`'s ledger -- ``plan``,
+    ``email_draft``, ``reply_analysis``. It is a keyword with a default rather
+    than a required argument because the label matters to the *reader* of the
+    bill, not to the call: a site that forgets it still spends, and shows up as
+    ``unlabelled`` instead of vanishing.
+    """
     client = get_client()
     messages = []
     if system:
@@ -298,6 +307,11 @@ async def complete_text(
         # translate_provider_error -- anything that is not the provider's own
         # exception is re-raised untouched.
         raise translate_provider_error(exc) from exc
+
+    # Recorded *before* the reply is judged. ``text_of`` raises on a truncated or
+    # empty answer, and those are exactly the calls the provider still billed --
+    # which made the most expensive failures the ones that recorded nothing.
+    record_usage(scope, settings.OPENAI_MODEL, parse_usage(getattr(response, "usage", None)))
 
     return text_of(response)
 
@@ -343,6 +357,7 @@ async def complete_json(
     system: Optional[str] = None,
     temperature: float = 0.3,
     max_tokens: int = 1500,
+    scope: str = "unlabelled",
 ) -> Any:
     """One completion, parsed as JSON. Raises on anything unusable."""
     return parse_json_object(
@@ -351,5 +366,6 @@ async def complete_json(
             system=system,
             temperature=temperature,
             max_tokens=max_tokens,
+            scope=scope,
         )
     )

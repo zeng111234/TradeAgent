@@ -96,6 +96,9 @@ class AgentRunSummary(BaseModel):
     elapsed: float
     prompt_tokens: int
     completion_tokens: int
+    #: Of ``prompt_tokens``, how many the provider served from its cache. Defaulted
+    #: so runs recorded before the column existed still validate.
+    cached_prompt_tokens: int = 0
     final_output: str
     error: Optional[str] = None
     steps: list[dict[str, Any]] = []
@@ -425,6 +428,7 @@ async def api_agent_run_detail(run_id: str, db: AsyncSession = Depends(get_db)):
         "rounds": row.rounds,
         "tool_calls": row.tool_calls,
         "prompt_tokens": row.prompt_tokens,
+        "cached_prompt_tokens": getattr(row, "cached_prompt_tokens", 0) or 0,
         "completion_tokens": row.completion_tokens,
         "elapsed_ms": row.elapsed,
         "created_at": row.created_at.isoformat() if row.created_at else None,

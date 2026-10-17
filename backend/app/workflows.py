@@ -466,6 +466,7 @@ Return JSON: {{"subject": "email subject", "body": "email body in plain text"}}"
                 system="You write personalized B2B cold emails for a Chinese textile supplier. Each email must be 120-180 words, reference specific details, include product benefits, and a concrete next step. Return valid JSON only.",
                 temperature=0.7,
                 max_tokens=500,
+                scope="lead_draft_email",
             )
 
             return {

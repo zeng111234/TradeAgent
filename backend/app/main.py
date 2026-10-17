@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.database import init_db
-from app.routers import customers, emails, tasks, analytics, agent, agent_runs
+from app.routers import customers, emails, tasks, analytics, agent, agent_runs, usage
 from app.scheduler import start_scheduler, stop_scheduler, get_job_status, trigger_daily_routine
 
 # Logging
@@ -139,6 +139,8 @@ app.include_router(agent.router, prefix="/api/v1")
 # Goal-driven runs and their traces. Separate router so the reviewed,
 # human-triggered endpoints above stay untouched.
 app.include_router(agent_runs.router, prefix="/api/v1")
+# What the models have cost, by scope. Read-only view of the in-process ledger.
+app.include_router(usage.router, prefix="/api/v1")
 
 
 @app.get("/")

@@ -44,6 +44,10 @@ class AgentRun(Base):
     tool_calls = Column(Integer, default=0)
     prompt_tokens = Column(Integer, default=0)
     completion_tokens = Column(Integer, default=0)
+    #: Of ``prompt_tokens``, how many came from the provider's prefix cache.
+    #: Added by migration ``0002_agent_runs_cached_prompt_tokens``: a run's input
+    #: is not one price, and the row could not say which part was cheap.
+    cached_prompt_tokens = Column(Integer, default=0)
     elapsed = Column(Integer, default=0)          # milliseconds
 
     # JSON: list of TraceStep.as_dict()

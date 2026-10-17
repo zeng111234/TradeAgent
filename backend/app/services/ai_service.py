@@ -80,6 +80,7 @@ BODY: [email body in HTML format]"""
             system="You are a professional foreign trade email copywriter.",
             temperature=0.7,
             max_tokens=500,
+            scope="cold_email",
         )
     except LLMUnavailable:
         reason = "no_api_key"

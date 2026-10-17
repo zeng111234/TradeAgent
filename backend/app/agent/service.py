@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 from app.config import settings
+from app.llm_usage import Usage, cost_of
 
 from .loop import AgentBudget, AgentRun, run_agent
 from .protocol import LLMClient, OpenAICompatibleClient
@@ -224,6 +225,13 @@ def summarise(result: AgentResult) -> dict[str, Any]:
     delegations = result.delegations or {}
     delegated_calls = delegations.get("tool_calls", 0)
     delegated_tokens = delegations.get("tokens", 0)
+    model = getattr(getattr(result, "llm", None), "model", None) or settings.OPENAI_MODEL
+    usage = Usage(
+        prompt_tokens=run.prompt_tokens,
+        cached_prompt_tokens=run.cached_prompt_tokens,
+        completion_tokens=run.completion_tokens,
+    )
+    cost = cost_of(usage, model)
     return {
         "run_id": run.run_id,
         "status": run.status,
@@ -234,6 +242,7 @@ def summarise(result: AgentResult) -> dict[str, Any]:
         "did_investigate": run.did_investigate,
         "elapsed": round(run.elapsed, 2),
         "prompt_tokens": run.prompt_tokens,
+        "cached_prompt_tokens": run.cached_prompt_tokens,
         "completion_tokens": run.completion_tokens,
         "final_output": run.final_output,
         "error": run.error,
@@ -242,4 +251,9 @@ def summarise(result: AgentResult) -> dict[str, Any]:
         "delegated_tool_calls": delegated_calls,
         "tool_calls_total": run.tool_call_count + delegated_calls,
         "tokens_total": run.prompt_tokens + run.completion_tokens + delegated_tokens,
+        "cache_hit_rate": usage.cache_hit_rate,
+        "model": model,
+        # ``None`` means no price was declared for this model: unpriced, which is
+        # a different statement from free. See app.llm_usage.
+        "cost": cost.as_dict() if cost is not None else None,
     }
