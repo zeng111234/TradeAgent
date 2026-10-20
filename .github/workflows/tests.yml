@@ -1,0 +1,83 @@
+# The suite is the largest asset in this repository and nothing was running it.
+#
+# Two jobs, because the two halves fail for different reasons and a red build
+# should say which half. The backend job also re-runs the two snapshot scripts:
+# a snapshot that has drifted is a contract change nobody decided on, and the
+# test that compares it only helps if something runs the test.
+name: Tests
+
+on:
+  push:
+    branches: [main, master, "feat/**"]
+  pull_request:
+  workflow_dispatch:
+
+# A superseded push should not keep a runner busy: cancel what this branch
+# already started.
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: backend (py${{ matrix.python }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.11 is what the Dockerfile ships; 3.12 is what the suite is developed
+        # on. Testing only the second is how a release breaks on the first.
+        python: ["3.11", "3.12"]
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Tests
+        # No network: the suite blocks outbound sockets on purpose, so a test
+        # that needs one fails here the same way it fails locally.
+        run: python -m pytest
+
+      - name: API surface has not drifted
+        run: python tests/api_surface.py
+
+      - name: Prompts have not drifted
+        run: python tests/prompt_surface.py
+
+  frontend:
+    name: frontend
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Build
+        run: npm run build

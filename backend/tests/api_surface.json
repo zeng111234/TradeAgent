@@ -1951,6 +1951,11 @@
       "200": "untyped"
     }
   },
+  "GET /ready": {
+    "responses": {
+      "200": "untyped"
+    }
+  },
   "POST /api/v1/agent/analyze-email": {
     "request": {
       "required": true,
@@ -2211,6 +2216,23 @@
     }
   },
   "POST /api/v1/agent/run": {
+    "parameters": [
+      {
+        "in": "header",
+        "name": "Idempotency-Key",
+        "required": false,
+        "schema": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    ],
     "request": {
       "required": true,
       "schema": {

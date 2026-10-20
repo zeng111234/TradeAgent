@@ -74,3 +74,9 @@ BATCH_SEND_BUDGET_SECONDS = 90.0
 #: writer is real work rather than queueing.
 POOL_CHECKOUT_SECONDS = 5.0
 SQLITE_BUSY_SECONDS = 30.0
+
+#: ``GET /ready`` asking the database one question. Smaller than the pool
+#: checkout ceiling on purpose: a probe that waits as long as a request is not a
+#: probe, it is a queued request. Two seconds is long enough for a local SQLite
+#: file and short enough that a poller notices within its own interval.
+READY_TIMEOUT_SECONDS = 2.0

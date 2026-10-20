@@ -84,6 +84,10 @@ class ErrorCode(str, Enum):
     RATE_LIMITED = "rate_limited"
     INTERNAL_ERROR = "internal_error"
     UNAVAILABLE = "unavailable"
+    #: The process is up but cannot serve: its database is not reachable. A
+    #: readiness probe, not a liveness one -- taking the instance out of
+    #: rotation is the correct response, and restarting it is not.
+    DATABASE_UNAVAILABLE = "database_unavailable"
 
     # -- customers
     CUSTOMER_NOT_FOUND = "customer_not_found"

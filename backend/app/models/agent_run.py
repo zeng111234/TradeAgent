@@ -7,7 +7,7 @@ reconstructed after the fact.
 """
 from datetime import datetime
 
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import Column, DateTime, ForeignKey, Index, Integer, String, Text
 
 from app.database import Base
 
@@ -16,6 +16,12 @@ class AgentRun(Base):
     """A single agent execution, start to finish."""
 
     __tablename__ = "agent_runs"
+    #: A unique key only when one was sent. Both SQLite and PostgreSQL treat
+    #: NULLs as distinct in a unique index, so the rows that never used the
+    #: header do not collide with each other.
+    __table_args__ = (
+        Index("ix_agent_runs_idempotency_key", "idempotency_key", unique=True),
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     run_id = Column(String(64), unique=True, index=True, nullable=False)
@@ -41,6 +47,14 @@ class AgentRun(Base):
     #: are no longer in the tree cannot be told apart from one produced today.
     #: Nullable: rows written before the column existed have nothing to invent.
     prompt_version = Column(String(32), nullable=True)
+
+    #: Caller-supplied key that makes "start a run" safe to retry.
+    #:
+    #: Added by migration ``0007_agent_runs_idempotency_key``. A run costs money
+    #: and writes to the same book a human is reading, so a client that times out
+    #: and retries must not start a second one. Unique when present; NULL for the
+    #: calls that did not send the header, which is most of them.
+    idempotency_key = Column(String(120), nullable=True)
 
     goal = Column(Text, nullable=False)
     # running | succeeded | truncated | error | stalled

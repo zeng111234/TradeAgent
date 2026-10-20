@@ -150,6 +150,28 @@ def test_a_legacy_database_gains_the_prompt_identity_column(scratch):
     assert "prompt_version" in columns(scratch, "agent_runs")
 
 
+def test_a_legacy_database_gains_a_place_to_remember_an_idempotency_key(scratch):
+    """A retry needs somewhere to point, including on a book that predates it."""
+    import asyncio
+
+    as_legacy_database(scratch)
+    assert "idempotency_key" not in columns(scratch, "agent_runs")
+
+    report = asyncio.run(scratch.run(apply_migrations))
+
+    assert "0007_agent_runs_idempotency_key" in report["applied"], report
+    assert "idempotency_key" in columns(scratch, "agent_runs")
+
+    async def indexes(conn):
+        rows = await conn.execute(text("PRAGMA index_list(agent_runs)"))
+        return rows.fetchall()
+
+    names = [row[1] for row in asyncio.run(scratch.run(indexes))]
+    assert "ix_agent_runs_idempotency_key" in names, (
+        "the column without the unique index cannot stop a racing duplicate"
+    )
+
+
 def test_a_legacy_row_survives_the_migration(scratch):
     """The rows that were already there are the ones this exists for."""
     import asyncio

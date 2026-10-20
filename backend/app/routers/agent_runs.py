@@ -6,12 +6,18 @@ and this is the autonomous path.
 
 A run can take minutes, so ``POST /agent/run`` supports two shapes:
 
-* ``wait=false`` (the default) starts the run in the background and answers
-  ``202`` with the run id and a poll URL. The row is written *before* any work
-  happens, so polling works immediately rather than 404-ing until it finishes.
+* ``wait=false`` (the default) starts the run in the background and answers with
+  the run id and a poll URL. The row is written *before* any work happens, so
+  polling works immediately rather than 404-ing until it finishes.
 * ``wait=true`` keeps the connection open and returns the finished trace. That
   is what the CLI and the tests use, and it is what an operator clicking a
   button wants when the run is short.
+
+Both accept an optional ``Idempotency-Key`` header. A run costs money and edits
+the same book a human is reading, so a client that times out mid-call must be
+able to ask again without buying a second run: the key is stored on the row and
+a unique index refuses the duplicate. A replay answers with the existing run id
+and ``replayed: true``, never with a fresh run.
 
 Neither blocks the process: the work is asynchronous, and the tools that do
 blocking I/O (page fetches, web search, parsing) run on worker threads. That
@@ -28,9 +34,10 @@ import time
 import uuid
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, Request, Response
+from fastapi import APIRouter, Depends, Header, Request, Response
 from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel, Field
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.errors import ApiError, ErrorCode
@@ -110,13 +117,19 @@ class AgentRunRequest(BaseModel):
 
 
 class AgentRunStarted(BaseModel):
-    """What a caller gets when the run is still going."""
+    """What a caller gets when the run is still going.
+
+    ``replayed`` is the difference between "I started this" and "this already
+    existed": a retry with the same ``Idempotency-Key`` returns the same run and
+    says so, instead of pretending to have started a second one.
+    """
     run_id: str
     status: str
     goal: str
     poll: str
     trace_url: str
     max_seconds: float
+    replayed: bool = False
 
 
 class AgentRunSummary(BaseModel):
@@ -146,6 +159,103 @@ class AgentRunSummary(BaseModel):
     delegated_tool_calls: int = 0
     tool_calls_total: int = 0
     tokens_total: int = 0
+
+
+#: A header value, not a payload: long enough for a UUID with a scope prefix,
+#: short enough that a stray request body cannot become a key.
+MAX_IDEMPOTENCY_KEY = 120
+
+
+def _clean_key(raw: Optional[str]) -> Optional[str]:
+    """The header as a usable key, or a 422 that says what was wrong.
+
+    Blank is rejected rather than treated as absent: a client that sends the
+    header with an empty value believes it is protected, and silently dropping
+    the protection is the failure this header exists to prevent.
+    """
+    if raw is None:
+        return None
+    key = raw.strip()
+    if not key:
+        raise ApiError(
+            status_code=422, code=ErrorCode.VALIDATION_ERROR,
+            detail="Idempotency-Key was sent but empty. Omit the header if you "
+                   "do not want retry protection; an empty value is not a key.",
+        )
+    if len(key) > MAX_IDEMPOTENCY_KEY:
+        raise ApiError(
+            status_code=422, code=ErrorCode.VALIDATION_ERROR,
+            detail=f"Idempotency-Key is {len(key)} characters; the limit is "
+                   f"{MAX_IDEMPOTENCY_KEY}.",
+        )
+    return key
+
+
+async def _run_by_key(key: str):
+    """The run already recorded under ``key``, or None. One short session."""
+    from sqlalchemy import select
+
+    from app.database import async_session
+    from app.models.agent_run import AgentRun as AgentRunRow
+
+    async with async_session() as session:
+        return (
+            await session.execute(
+                select(AgentRunRow).where(AgentRunRow.idempotency_key == key)
+            )
+        ).scalar_one_or_none()
+
+
+def _replay(row, *, goal: str, max_seconds: float) -> AgentRunStarted:
+    """Answer a retry with the run that already exists.
+
+    A key reused for a different goal is a caller bug, not a retry: the run
+    that exists is about something else, and returning it would tell the caller
+    their new goal had been started when it had not.
+    """
+    if row.goal != goal:
+        raise ApiError(
+            status_code=409, code=ErrorCode.IDEMPOTENCY_KEY_REUSE,
+            detail=(
+                f"this Idempotency-Key already started run {row.run_id} for a "
+                f"different goal, so nothing was started. Use a new key for a "
+                f"new goal, or poll /api/v1/agent/runs/{row.run_id} for the "
+                f"run this key belongs to."
+            ),
+            details={"run_id": row.run_id, "status": row.status},
+        )
+    return AgentRunStarted(
+        run_id=row.run_id,
+        status=row.status,
+        goal=row.goal,
+        poll=f"/api/v1/agent/runs/{row.run_id}",
+        trace_url=f"/api/v1/agent/runs/{row.run_id}/trace.html",
+        max_seconds=max_seconds,
+        replayed=True,
+    )
+
+
+async def _abandon(run_id: str, exc: BaseException) -> None:
+    """A keyed synchronous run failed after reserving its row. Say so.
+
+    The row exists before the work does, so leaving it ``running`` after the
+    request has already returned an error would make every poller wait for a run
+    that is not running. Best effort: if even this write fails, the startup sweep
+    (``mark_stale_runs``) is the backstop.
+    """
+    from app.agent.repository import get_run
+    from app.database import async_session
+
+    try:
+        async with async_session() as db:
+            row = await get_run(db, run_id)
+            if row is not None and row.status == "running":
+                row.status = "error"
+                row.stop_reason = "request failed"
+                row.error = f"{type(exc).__name__}: {exc}"
+                await db.commit()
+    except Exception:  # noqa: BLE001 - the caller is already handling a failure
+        logger.exception("could not record the failure of run %s", run_id)
 
 
 @router.get("/capabilities")
@@ -195,6 +305,15 @@ async def api_agent_capabilities():
 async def api_agent_run(
     data: AgentRunRequest,
     response: Response,
+    idempotency_key: Optional[str] = Header(
+        default=None,
+        alias="Idempotency-Key",
+        description=(
+            "Retry-safe key. A second request with the same key returns the run "
+            "the first one started (``replayed: true``) instead of starting "
+            "another. Reusing a key for a different goal is a 409."
+        ),
+    ),
 ):
     """Run the agent against a goal.
 
@@ -211,6 +330,18 @@ async def api_agent_run(
     this route needs (does the customer exist) now gets its own short-lived
     session, and nothing is pinned while the agent works.
     """
+    key = _clean_key(idempotency_key)
+    if key is not None:
+        # Before the configuration check, the customer check and any budget
+        # work: a retry is answered from what already happened, not re-validated
+        # against a world that may have moved on. A run that exists does not need
+        # a model to be reported.
+        existing = await _run_by_key(key)
+        if existing is not None:
+            return _replay(
+                existing, goal=data.goal, max_seconds=DEFAULT_BUDGET.max_seconds
+            )
+
     if not is_configured():
         raise ApiError(
             status_code=503,
@@ -253,7 +384,7 @@ async def api_agent_run(
         )
 
     if not data.wait:
-        return await _start_in_background(data, budget)
+        return await _start_in_background(data, budget, key)
 
     # `wait=true` holds this HTTP connection open, so its ceiling is a property of
     # the transport rather than of the work: the browser gives up at
@@ -292,15 +423,55 @@ async def api_agent_run(
     if len(_in_flight) >= MAX_CONCURRENT_RUNS:
         raise _refuse_when_full()
     _in_flight.add(gate_key)
+
+    # A keyed synchronous run reserves its key before the model call, or two
+    # concurrent retries both start and the caller pays twice. The row *is* the
+    # reservation; execute() updates it at the end (save_run is idempotent on
+    # run_id). Without a key nothing changes: the row still appears at the end.
+    wait_run_id = uuid.uuid4().hex if key is not None else None
+    if key is not None:
+        from app.agent.loop import AgentRun as AgentRunResult
+        from app.agent.repository import start_run
+        from app.database import async_session
+
+        try:
+            async with async_session() as db:
+                await start_run(
+                    db,
+                    AgentRunResult(
+                        goal=data.goal, run_id=wait_run_id,
+                        customer_id=data.customer_id,
+                    ),
+                    idempotency_key=key,
+                )
+        except IntegrityError:
+            existing = await _run_by_key(key)
+            _in_flight.discard(gate_key)
+            if existing is None:
+                # The index fired and then the row vanished. Not something to
+                # paper over: the caller should see the failure, not a 200.
+                raise
+            return _replay(
+                existing, goal=data.goal, max_seconds=budget.max_seconds
+            )
+
     try:
         result = await execute(
             data.goal, context=data.context, budget=budget,
-            customer_id=data.customer_id,
+            customer_id=data.customer_id, run_id=wait_run_id,
         )
     except AgentUnavailable as exc:            # pragma: no cover - guarded above
+        if wait_run_id:
+            await _abandon(wait_run_id, exc)
         raise ApiError(status_code=503, code=ErrorCode.LLM_NOT_CONFIGURED, detail=str(exc)) from exc
     except ValueError as exc:
+        if wait_run_id:
+            await _abandon(wait_run_id, exc)
         raise ApiError(status_code=422, code=ErrorCode.VALIDATION_ERROR, detail=str(exc)) from exc
+    except Exception as exc:
+        if wait_run_id:
+            await _abandon(wait_run_id, exc)
+        raise
     finally:
         # Released on every exit -- a refused or failed run must not leak a
         # slot, or the limit slowly closes over the process.
@@ -313,7 +484,11 @@ async def api_agent_run(
     return payload
 
 
-async def _start_in_background(data: AgentRunRequest, budget: AgentBudget) -> AgentRunStarted:
+async def _start_in_background(
+    data: AgentRunRequest,
+    budget: AgentBudget,
+    idempotency_key: Optional[str] = None,
+) -> AgentRunStarted:
     """Write the row, hand out the id, and let the work happen elsewhere."""
     if len(_in_flight) >= MAX_CONCURRENT_RUNS:
         raise _refuse_when_full()
@@ -329,9 +504,27 @@ async def _start_in_background(data: AgentRunRequest, budget: AgentBudget) -> Ag
     async with async_session() as db:
         from app.agent.loop import AgentRun as AgentRunResult
 
-        await start_run(db, AgentRunResult(
-            goal=data.goal, run_id=run_id, customer_id=data.customer_id,
-        ))
+        try:
+            await start_run(
+                db,
+                AgentRunResult(
+                    goal=data.goal, run_id=run_id, customer_id=data.customer_id,
+                ),
+                idempotency_key=idempotency_key,
+            )
+        except IntegrityError:
+            # Two requests raced with the same key and this one lost the insert.
+            # The winner's row is the answer; a second run would be a duplicate.
+            await db.rollback()
+            existing = (
+                await _run_by_key(idempotency_key)
+                if idempotency_key is not None else None
+            )
+            if existing is None:
+                raise
+            return _replay(
+                existing, goal=data.goal, max_seconds=budget.max_seconds
+            )
 
     _in_flight.add(run_id)
 

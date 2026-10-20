@@ -75,19 +75,29 @@ async def save_run(
     return row
 
 
-async def start_run(db: AsyncSession, run: AgentRunResult, *, commit: bool = True) -> AgentRun:
+async def start_run(
+    db: AsyncSession,
+    run: AgentRunResult,
+    *,
+    commit: bool = True,
+    idempotency_key: Optional[str] = None,
+) -> AgentRun:
     """Record that a run has started, before it does any work.
 
     Without this there is no row until the run finishes, so a caller polling
     ``GET /agent/runs/{run_id}`` gets 404 for the entire duration of a long
     analysis -- and the docstring promising "queue it and poll" was describing
     storage that was not actually written until the end.
+
+    ``idempotency_key`` is stored with the row so the unique index can refuse a
+    second run for the same key, including when two requests race.
     """
     run.status = "running"
     row = AgentRun(
         run_id=run.run_id, goal=run.goal, status="running",
         customer_id=getattr(run, "customer_id", None),
         prompt_version=getattr(run, "prompt_version", "") or None,
+        idempotency_key=idempotency_key,
     )
     row.trace = json.dumps([], ensure_ascii=False)
     row.rounds = 0

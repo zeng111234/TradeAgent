@@ -164,6 +164,21 @@ async def _indexes_settled(conn: AsyncConnection, table: str, names: list[str]) 
     return True
 
 
+async def _idempotency_settled(conn: AsyncConnection) -> bool:
+    """Both halves of 0007, because the column without the index is not enough.
+
+    A unique index is the thing that makes concurrent retries safe; a column on
+    its own only makes them look recorded. A fresh install has the column from
+    ``create_all`` and the index from the model, so this is true; an upgraded
+    database has neither until the migration runs.
+    """
+    column = await _column_settled(conn, "agent_runs", "idempotency_key")
+    index = await _indexes_settled(
+        conn, "agent_runs", ["ix_agent_runs_idempotency_key"]
+    )
+    return column and index
+
+
 # --------------------------------------------------------------------------
 # The migrations, oldest first
 # --------------------------------------------------------------------------
@@ -259,6 +274,21 @@ MIGRATIONS: list[Migration] = [
             "ALTER TABLE agent_runs ADD COLUMN prompt_version VARCHAR(32)",
         ],
         guard=lambda conn: _has_column(conn, "agent_runs", "prompt_version"),
+    ),
+    Migration(
+        id="0007_agent_runs_idempotency_key",
+        description=(
+            "let a caller retry 'start a run' without paying for it twice. A run "
+            "costs money and writes to the book a human is reading, so a client "
+            "that times out must be able to ask again with the same key and get "
+            "the same run back instead of a second one"
+        ),
+        statements=[
+            "ALTER TABLE agent_runs ADD COLUMN idempotency_key VARCHAR(120)",
+            "CREATE UNIQUE INDEX IF NOT EXISTS ix_agent_runs_idempotency_key "
+            "ON agent_runs (idempotency_key)",
+        ],
+        guard=_idempotency_settled,
     ),
 ]
 

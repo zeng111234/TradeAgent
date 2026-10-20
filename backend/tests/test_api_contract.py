@@ -11,11 +11,12 @@ from __future__ import annotations
 # refactor started from (f8f8836), was 42 paths / 54 operations; the table has
 # grown since (the follow-up plan's read-only GET, the customer debug view, the
 # scheduler history, /usage -- each addition marked below). It now stands at
-# 54 paths / 66 operations, and ``test_route_count_unchanged`` is what keeps
+# 55 paths / 67 operations, and ``test_route_count_unchanged`` is what keeps
 # that number honest: the declared table and the live app must agree exactly.
 EXPECTED_ROUTES: dict[str, set[str]] = {
     "/": {"get"},
     "/health": {"get"},
+    "/ready": {"get"},
     # --- agent router (15 operations) ---
     "/api/v1/agent/analyze-email": {"post"},
     "/api/v1/agent/analyze-inquiry": {"post"},

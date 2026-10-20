@@ -1,4 +1,5 @@
 """TradeAgent - FastAPI application entry point."""
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -11,6 +12,8 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from app.config import settings
 from app.database import init_db
 from app.errors import (
+    ApiError,
+    ErrorCode,
     accept_request_id,
     http_error_response,
     validation_error_response,
@@ -18,6 +21,7 @@ from app.errors import (
 from app.errors import error_response as build_error_response
 from app.routers import customers, emails, tasks, analytics, agent, agent_runs, usage
 from app.scheduler import start_scheduler, stop_scheduler, get_job_status, trigger_daily_routine
+from app.timeouts import READY_TIMEOUT_SECONDS
 
 # Logging
 logging.basicConfig(level=logging.INFO)
@@ -219,6 +223,43 @@ async def root():
 async def health():
     """Health check endpoint."""
     return {"status": "ok"}
+
+
+@app.get("/ready")
+async def ready():
+    """Ready to serve, which is not the same as running.
+
+    ``/health`` answers for the process; a process that is alive but cannot
+    reach its database will keep answering 200 there while every real request
+    fails. This asks the database one question with a two-second ceiling, and
+    fails closed: a false "ready" sends traffic into a hole, a false "not ready"
+    costs a retry.
+
+    No session is held: the connection is opened, asked once, and returned. This
+    route is polled every few seconds by whatever is in front of the service.
+    """
+    from sqlalchemy import text
+
+    from app.database import async_session
+
+    try:
+        async with async_session() as session:
+            await asyncio.wait_for(
+                session.execute(text("SELECT 1")), timeout=READY_TIMEOUT_SECONDS
+            )
+    except Exception as exc:  # noqa: BLE001 - every failure means "not ready"
+        logger.warning("readiness probe failed: %s: %s", type(exc).__name__, exc)
+        raise ApiError(
+            status_code=503,
+            code=ErrorCode.DATABASE_UNAVAILABLE,
+            detail=(
+                "the database did not answer a SELECT 1 within "
+                f"{READY_TIMEOUT_SECONDS:.0f}s ({type(exc).__name__}). This "
+                "instance should not receive traffic until it does."
+            ),
+            retryable=True,
+        ) from exc
+    return {"status": "ready", "database": "ok"}
 
 
 @app.get("/api/v1/scheduler/jobs")
