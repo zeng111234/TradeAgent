@@ -172,6 +172,42 @@ def test_a_legacy_database_gains_a_place_to_remember_an_idempotency_key(scratch)
     )
 
 
+def test_legacy_stop_reasons_are_backfilled_with_a_code(scratch):
+    """The sentence stays; the code is derived once, from what we actually wrote.
+
+    A migration that only adds the column would leave every historical run
+    ungroupable. Guessing arbitrary prose into a bucket would be worse than
+    saying ``legacy_unknown``.
+    """
+    import asyncio
+
+    as_legacy_database(scratch)
+
+    async def seed(conn):
+        await conn.execute(text(
+            "INSERT INTO agent_runs (run_id, goal, status, stop_reason) VALUES "
+            "('r-final', 'g', 'succeeded', 'final answer'), "
+            "('r-token', 'g', 'truncated', 'token budget exhausted'), "
+            "('r-weird', 'g', 'truncated', 'a sentence from an older build')"
+        ))
+
+    asyncio.run(scratch.run(seed))
+    report = asyncio.run(scratch.run(apply_migrations))
+
+    assert "0008_agent_runs_stop_code" in report["applied"], report
+
+    async def read(conn):
+        rows = await conn.execute(text(
+            "SELECT run_id, stop_code FROM agent_runs ORDER BY run_id"
+        ))
+        return rows.fetchall()
+
+    codes = dict(asyncio.run(scratch.run(read)))
+    assert codes["r-final"] == "final_answer"
+    assert codes["r-token"] == "token_budget"
+    assert codes["r-weird"] == "legacy_unknown"
+
+
 def test_a_legacy_row_survives_the_migration(scratch):
     """The rows that were already there are the ones this exists for."""
     import asyncio

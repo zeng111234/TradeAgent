@@ -65,6 +65,7 @@ class QualityRunStats(BaseModel):
     elapsed_ms: dict[str, float | None] = {}
     totals: dict[str, int] = {}
     cached_prompt_ratio: float | None = None
+    by_stop_code: list[dict] = []
     by_stop_reason: list[dict] = []
     by_prompt_version: list[dict] = []
 

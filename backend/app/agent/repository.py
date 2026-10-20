@@ -48,6 +48,10 @@ async def save_run(
     if getattr(run, "customer_id", None) is not None:
         row.customer_id = run.customer_id
     row.status = run.status
+    # Set, never cleared, for the same reason as ``customer_id``: a progress
+    # write after the terminal one must not erase the code the finish wrote.
+    if getattr(run, "stop_code", ""):
+        row.stop_code = run.stop_code
     row.stop_reason = run.stop_reason or None
     row.error = run.error
     row.final_output = run.final_output or None
@@ -137,6 +141,7 @@ async def mark_stale_runs(db: AsyncSession, *, older_than_seconds: int = 900) ->
             "nothing is running it now"
         )
         row.stop_reason = "abandoned"
+        row.stop_code = "abandoned"
         row.finished_at = datetime.utcnow()
     if rows:
         await db.commit()

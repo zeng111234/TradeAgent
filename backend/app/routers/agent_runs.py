@@ -135,6 +135,9 @@ class AgentRunStarted(BaseModel):
 class AgentRunSummary(BaseModel):
     run_id: str
     status: str
+    #: Stable reason code; ``stop_reason`` is the sentence a human reads.
+    #: Nullable because rows written before migration 0008 have no code.
+    stop_code: Optional[str] = None
     stop_reason: str
     tool_sequence: list[str]
     rounds: int
@@ -251,6 +254,7 @@ async def _abandon(run_id: str, exc: BaseException) -> None:
             row = await get_run(db, run_id)
             if row is not None and row.status == "running":
                 row.status = "error"
+                row.stop_code = "error"
                 row.stop_reason = "request failed"
                 row.error = f"{type(exc).__name__}: {exc}"
                 await db.commit()
@@ -556,6 +560,7 @@ async def _start_in_background(
                     row = await get_run(db, run_id)
                     if row is not None:
                         row.status = "error"
+                        row.stop_code = "error"
                         row.error = f"{type(exc).__name__}: {exc}"
                         row.stop_reason = "background task failed"
                         await db.commit()
@@ -632,6 +637,7 @@ async def api_agent_runs(limit: int = 20, status: Optional[str] = None,
                 "goal": row.goal,
                 "prompt_version": getattr(row, "prompt_version", None),
                 "status": row.status,
+                "stop_code": row.stop_code,
                 "stop_reason": row.stop_reason,
                 # Derived from the trace, so the path shown for a run cannot
                 # disagree with the trace you open for it.
@@ -665,6 +671,7 @@ def _snapshot(row, *, with_diagram: bool = True) -> dict[str, Any]:
         # column existed -- null is the honest answer, not a guessed version.
         "prompt_version": getattr(row, "prompt_version", None),
         "status": row.status,
+        "stop_code": row.stop_code,
         "stop_reason": row.stop_reason,
         "error": row.error,
         "final_output": row.final_output,
@@ -851,6 +858,7 @@ async def api_agent_run_html(run_id: str, db: AsyncSession = Depends(get_db)):
     page = render_html({
         "goal": row.goal,
         "status": row.status,
+        "stop_code": row.stop_code,
         "stop_reason": row.stop_reason,
         # Without this the conclusion section rendered empty, and it is the part
         # a human actually reads.

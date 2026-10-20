@@ -203,6 +203,10 @@ class AgentRun:
     status: str = "running"      # running | succeeded | truncated | error | stalled
     final_output: str = ""
     stop_reason: str = ""
+    #: Stable identifier for why the run stopped. ``stop_reason`` is the
+    #: human sentence; this is the value a metric can group by. Empty for runs
+    #: that have not finished (and for objects built by older callers).
+    stop_code: str = ""
     steps: list[TraceStep] = field(default_factory=list)
     messages: list[Message] = field(default_factory=list)
     prompt_tokens: int = 0
@@ -249,6 +253,7 @@ class AgentRun:
             "prompt_version": self.prompt_version,
             "status": self.status,
             "stop_reason": self.stop_reason,
+            "stop_code": self.stop_code,
             "final_output": self.final_output,
             "error": self.error,
             "rounds": len(self.steps),
@@ -349,11 +354,17 @@ class AgentLoop:
 
         for round_index in range(1, self.budget.max_rounds + 1):
             if deadline - time.monotonic() <= 0:
-                return self._finish(run, started, "truncated", "time budget exceeded")
+                return self._finish(
+                    run, started, "truncated", "time budget exceeded",
+                    stop_code="time_budget",
+                )
 
             # Check the round budget *before* spending a model call on it.
             if round_index > self.budget.max_rounds:
-                return self._finish(run, started, "truncated", "round budget exhausted")
+                return self._finish(
+                    run, started, "truncated", "round budget exhausted",
+                    stop_code="round_budget",
+                )
 
             # The model call is bounded by what is left of the run, not by the
             # client's own timeout. Otherwise the inner layer is longer than the
@@ -381,7 +392,10 @@ class AgentLoop:
 
                 if substantive:
                     # A text answer ends the run.
-                    return self._finish(run, started, "succeeded", "final answer", text)
+                    return self._finish(
+                        run, started, "succeeded", "final answer", text,
+                        stop_code="final_answer",
+                    )
 
                 # Not substantive enough to be an answer. Nudge, and give up
                 # if the model keeps producing nothing usable.
@@ -393,6 +407,7 @@ class AgentLoop:
                     return self._finish(
                         run, started, "stalled",
                         "model produced no usable tool calls and no substantive answer",
+                        stop_code="stalled",
                     )
                 run.messages.append(
                     Message.user(
@@ -489,12 +504,18 @@ class AgentLoop:
                 run.messages.append(Message.tool_result(call, observation))
 
             if run.prompt_tokens + run.completion_tokens > self.budget.max_tokens:
-                return self._finish(run, started, "truncated", "token budget exhausted")
+                return self._finish(
+                    run, started, "truncated", "token budget exhausted",
+                    stop_code="token_budget",
+                )
 
             if self.on_step:
                 self.on_step(step, run)
 
-        return self._finish(run, started, "truncated", "round budget exhausted")
+        return self._finish(
+            run, started, "truncated", "round budget exhausted",
+            stop_code="round_budget",
+        )
 
     # -- internals ---------------------------------------------------------
 
@@ -664,9 +685,11 @@ class AgentLoop:
         stop_reason: str,
         final_output: str = "",
         step: Optional[TraceStep] = None,
+        stop_code: str = "",
     ) -> AgentRun:
         run.status = status
         run.stop_reason = stop_reason
+        run.stop_code = stop_code
         if final_output:
             run.final_output = final_output
         elif status == "succeeded":
@@ -710,6 +733,7 @@ async def run_agent(
         return await loop.run(goal, context=context, run_id=run_id, customer_id=customer_id)
     except AgentError as exc:
         run = AgentRun(goal=goal, run_id=run_id or uuid.uuid4().hex,
-                       status="error", stop_reason=str(exc), error=str(exc),
+                       status="error", stop_code="error",
+                       stop_reason=str(exc), error=str(exc),
                        prompt_version=loop.prompt_version)
         return run

@@ -411,6 +411,12 @@
               "by_status": {
                 "type": "object"
               },
+              "by_stop_code": {
+                "items": {
+                  "type": "object"
+                },
+                "type": "array"
+              },
               "by_stop_reason": {
                 "items": {
                   "type": "object"

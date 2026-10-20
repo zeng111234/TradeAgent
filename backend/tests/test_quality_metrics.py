@@ -30,12 +30,14 @@ NOW = datetime(2020, 1, 15, 12, 0, 0)
 
 
 def _run(day: int, *, status: str, elapsed: int, reason: str = "done",
-         version: str | None = "abc123", **extra):
+         version: str | None = "abc123", stop_code: str | None = "final_answer",
+         **extra):
     return AgentRunRow(
         run_id=f"quality-{uuid4().hex}",
         goal="test",
         status=status,
         elapsed=elapsed,
+        stop_code=stop_code,
         stop_reason=reason,
         prompt_version=version,
         created_at=datetime(2020, 1, day, 9, 0, 0),
@@ -55,11 +57,12 @@ async def _seed(db):
     db.add_all([
         _run(13, status="succeeded", elapsed=100, rounds=2, tool_calls=3,
              prompt_tokens=1000, completion_tokens=100, cached_prompt_tokens=400),
-        _run(13, status="error", elapsed=300, reason="boom", version="abc123"),
+        _run(13, status="error", elapsed=300, reason="boom", version="abc123",
+             stop_code="error"),
         _run(14, status="succeeded", elapsed=200, rounds=1, tool_calls=1,
              prompt_tokens=500, completion_tokens=50, cached_prompt_tokens=0),
         _run(15, status="truncated", elapsed=400, reason="cut off",
-             version=None, rounds=5),
+             version=None, rounds=5, stop_code="token_budget"),
     ])
     db.add_all([
         JobRun(job_id="quality-daily", status="succeeded",
@@ -100,6 +103,14 @@ async def test_the_status_mix_and_success_rate_exclude_the_running_race(db):
     }
     # 2 of 4 finished runs. A run still in flight is not a failure.
     assert report["runs"]["success_rate"] == 50.0
+
+
+async def test_stop_codes_are_groupable_even_when_the_status_is_the_same(db):
+    """The point of the column: three 'truncated' causes are three codes."""
+    report = await _report(db)
+
+    counts = {item["value"]: item["count"] for item in report["runs"]["by_stop_code"]}
+    assert counts == {"final_answer": 2, "error": 1, "token_budget": 1}
 
 
 async def test_a_rate_with_no_finished_runs_is_null_not_zero(db):

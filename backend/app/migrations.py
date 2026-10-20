@@ -179,6 +179,18 @@ async def _idempotency_settled(conn: AsyncConnection) -> bool:
     return column and index
 
 
+async def _stop_code_settled(conn: AsyncConnection) -> bool:
+    """Column and index, for the same reason as 0007.
+
+    The index is what makes "how many runs stopped for each reason this week"
+    a lookup rather than a scan; a column without it would answer the question
+    slowly enough that nobody would ask it.
+    """
+    column = await _column_settled(conn, "agent_runs", "stop_code")
+    index = await _indexes_settled(conn, "agent_runs", ["ix_agent_runs_stop_code"])
+    return column and index
+
+
 # --------------------------------------------------------------------------
 # The migrations, oldest first
 # --------------------------------------------------------------------------
@@ -289,6 +301,37 @@ MIGRATIONS: list[Migration] = [
             "ON agent_runs (idempotency_key)",
         ],
         guard=_idempotency_settled,
+    ),
+    Migration(
+        id="0008_agent_runs_stop_code",
+        description=(
+            "record why a run stopped as a stable code, not only as a sentence. "
+            "Three different 'truncated' causes -- time, rounds, tokens -- shared "
+            "one status and three prose strings, so a metric could not separate "
+            "them and a dashboard had to show free text. The sentence stays: it "
+            "is what a human reads. The code is what a query groups by"
+        ),
+        statements=[
+            "ALTER TABLE agent_runs ADD COLUMN stop_code VARCHAR(32)",
+            "CREATE INDEX IF NOT EXISTS ix_agent_runs_stop_code "
+            "ON agent_runs (stop_code)",
+            # Backfill only the states whose sentences this codebase wrote. Any
+            # other historical wording is left as legacy_unknown rather than
+            # guessed into a bucket it may not belong to.
+            "UPDATE agent_runs SET stop_code = CASE "
+            "  WHEN stop_reason = 'final answer' THEN 'final_answer' "
+            "  WHEN stop_reason = 'time budget exceeded' THEN 'time_budget' "
+            "  WHEN stop_reason = 'round budget exhausted' THEN 'round_budget' "
+            "  WHEN stop_reason = 'token budget exhausted' THEN 'token_budget' "
+            "  WHEN stop_reason = 'model produced no usable tool calls and no "
+            "substantive answer' THEN 'stalled' "
+            "  WHEN stop_reason = 'abandoned' THEN 'abandoned' "
+            "  WHEN status = 'error' THEN 'error' "
+            "  ELSE 'legacy_unknown' "
+            "END "
+            "WHERE stop_code IS NULL AND stop_reason IS NOT NULL",
+        ],
+        guard=_stop_code_settled,
     ),
 ]
 

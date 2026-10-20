@@ -120,6 +120,7 @@ def _run_day(row) -> dict:
         "prompt_tokens": row.prompt_tokens or 0,
         "completion_tokens": row.completion_tokens or 0,
         "cached_prompt_tokens": row.cached_prompt_tokens or 0,
+        "stop_code": row.stop_code,
         "stop_reason": row.stop_reason,
         "prompt_version": row.prompt_version,
         "created_at": row.created_at,
@@ -144,6 +145,7 @@ async def get_quality_report(db: AsyncSession, *, days: int = 14,
             AgentRun.prompt_tokens,
             AgentRun.completion_tokens,
             AgentRun.cached_prompt_tokens,
+            AgentRun.stop_code,
             AgentRun.stop_reason,
             AgentRun.prompt_version,
         ).where(AgentRun.created_at >= since, AgentRun.created_at <= now)
@@ -167,6 +169,7 @@ async def get_quality_report(db: AsyncSession, *, days: int = 14,
 
     # ---- runs ------------------------------------------------------------
     by_status: dict[str, int] = {}
+    stop_codes: dict[str, int] = {}
     stop_reasons: dict[str, int] = {}
     prompt_versions: dict[str, int] = {}
     elapsed_values: list[int] = []
@@ -180,6 +183,8 @@ async def get_quality_report(db: AsyncSession, *, days: int = 14,
             totals[key] += run[key]
         reason = (run["stop_reason"] or "(none)")[:160]
         stop_reasons[reason] = stop_reasons.get(reason, 0) + 1
+        code = run["stop_code"] or "(none)"
+        stop_codes[code] = stop_codes.get(code, 0) + 1
         version = run["prompt_version"] or "(none)"
         prompt_versions[version] = prompt_versions.get(version, 0) + 1
 
@@ -199,6 +204,7 @@ async def get_quality_report(db: AsyncSession, *, days: int = 14,
             round(totals["cached_prompt_tokens"] / totals["prompt_tokens"] * 100, 1)
             if totals["prompt_tokens"] else None
         ),
+        "by_stop_code": _top(stop_codes),
         "by_stop_reason": _top(stop_reasons),
         "by_prompt_version": _top(prompt_versions),
     }

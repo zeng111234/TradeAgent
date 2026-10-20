@@ -59,6 +59,14 @@ class AgentRun(Base):
     goal = Column(Text, nullable=False)
     # running | succeeded | truncated | error | stalled
     status = Column(String(32), nullable=False, default="running")
+    #: Machine-readable reason the run stopped.
+    #:
+    #: Added by migration ``0008_agent_runs_stop_code``. ``stop_reason`` is the
+    #: sentence a human reads; it merged three different ``truncated`` causes
+    #: (time, rounds, tokens) into prose that could not be grouped. Nullable
+    #: because rows written before the column have no code to invent, and the
+    #: sentence remains the source of truth for those.
+    stop_code = Column(String(32), nullable=True, index=True)
     stop_reason = Column(String(300), nullable=True)
     error = Column(Text, nullable=True)
 

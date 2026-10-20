@@ -86,6 +86,7 @@ async def test_single_tool_then_answer(registry):
     run = await loop.run("look at https://x.com")
 
     assert run.status == "succeeded"
+    assert run.stop_code == "final_answer"
     assert run.final_output.startswith("Concluded.")
     assert run.tool_sequence == ["inspect_website"]
     assert run.did_investigate is True
@@ -236,6 +237,7 @@ async def test_round_budget_truncates(registry):
     run = await loop.run("never finish")
 
     assert run.status == "truncated"
+    assert run.stop_code == "round_budget"
     assert run.stop_reason == "round budget exhausted"
     assert len(run.steps) == 3
     assert llm.call_count == 3
@@ -314,6 +316,7 @@ async def test_token_budget_truncates(registry):
     run = await loop.run("expensive")
 
     assert run.status == "truncated"
+    assert run.stop_code == "token_budget"
     assert run.stop_reason == "token budget exhausted"
 
 
@@ -327,6 +330,7 @@ async def test_time_budget_truncates(registry):
     )
     run = await loop.run("go")
     assert run.status == "truncated"
+    assert run.stop_code == "time_budget"
     assert run.stop_reason == "time budget exceeded"
     assert run.steps == []
 
@@ -396,6 +400,7 @@ async def test_time_budget_stops_a_slow_run_mid_way(registry):
     run = await loop.run("keep ticking")
 
     assert run.status == "truncated"
+    assert run.stop_code == "time_budget"
     assert run.stop_reason == "time budget exceeded"
     # It must have stopped early, not exhausted the 20-round budget.
     assert llm.call_count < 20
@@ -422,6 +427,7 @@ async def test_empty_replies_eventually_stall(registry):
     run = await loop.run("go")
 
     assert run.status == "stalled"
+    assert run.stop_code == "stalled"
     assert "no usable tool calls" in run.stop_reason
     assert llm.call_count == 3
 
