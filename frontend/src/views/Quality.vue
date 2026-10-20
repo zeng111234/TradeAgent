@@ -27,7 +27,7 @@
       :closable="false"
       show-icon
       :title="'读不到质量指标：' + error"
-      style="margin-bottom: 16px"
+      class="mb-4"
     />
 
     <el-skeleton v-if="loading && !report" :rows="6" animated />
@@ -137,7 +137,7 @@
         </template>
 
         <el-alert :type="report.closed_loop.sent ? 'info' : 'warning'" :closable="false"
-          show-icon :title="coverageSentence(report.closed_loop)" style="margin-bottom: 12px" />
+          show-icon :title="coverageSentence(report.closed_loop)" class="mb-3" />
 
         <div class="stat-mini-row">
           <div class="stat-mini">
@@ -205,7 +205,7 @@
           <el-tag size="small" type="info" effect="plain">
             发送失败 {{ report.closed_loop.excluded.failed || 0 }}
           </el-tag>
-          <span class="hint" style="display: block; margin-top: 6px">
+          <span class="hint hint-block">
             模拟发送没有经过 SMTP，不可能收到回复；把它算进分母会让回复率取决于是否配置了邮箱。
           </span>
         </div>

@@ -7,12 +7,12 @@
 
     <!-- Toolbar: flex-wrap, so the filters stack instead of squeezing below
          1024. The old el-col spans broke at a fixed ratio whatever the width. -->
-    <el-card shadow="never" style="margin-bottom: 16px">
+    <el-card shadow="never" class="mb-4">
       <div class="toolbar">
-        <el-input v-model="filters.search" placeholder="Search company, industry..." clearable style="width: 240px" @keyup.enter="loadCustomers">
+        <el-input v-model="filters.search" placeholder="Search company, industry..." clearable class="filter-search" @keyup.enter="loadCustomers">
           <template #prefix><el-icon><Search /></el-icon></template>
         </el-input>
-        <el-select v-model="filters.stage" placeholder="Stage" clearable style="width: 130px">
+        <el-select v-model="filters.stage" placeholder="Stage" clearable class="filter-select">
           <el-option label="New" value="new" />
           <el-option label="Contacted" value="contacted" />
           <el-option label="Interested" value="interested" />
@@ -22,7 +22,7 @@
           <el-option label="Completed" value="completed" />
           <el-option label="Lost" value="lost" />
         </el-select>
-        <el-select v-model="filters.source" placeholder="Source" clearable style="width: 130px">
+        <el-select v-model="filters.source" placeholder="Source" clearable class="filter-select">
           <el-option label="Manual" value="manual" />
           <el-option label="Import" value="import" />
           <el-option label="Scraper" value="scraper" />
@@ -30,7 +30,7 @@
           <el-option label="Exhibition" value="exhibition" />
           <el-option label="Referral" value="referral" />
         </el-select>
-        <el-select v-model="filters.country" placeholder="Country" clearable filterable style="width: 150px">
+        <el-select v-model="filters.country" placeholder="Country" clearable filterable class="filter-select filter-select--wide">
           <el-option v-for="c in countries" :key="c" :label="c" :value="c" />
         </el-select>
         <div class="toolbar__end">
@@ -48,7 +48,7 @@
          under Company, and the dead 140px Industry width was what wrapped
          every row to two lines. -->
     <el-card shadow="never">
-      <el-table :data="customers" stripe style="width: 100%" v-loading="loading" @row-click="goToDetail">
+      <el-table :data="customers" stripe v-loading="loading" @row-click="goToDetail">
         <el-table-column prop="company_name" label="Company" min-width="220">
           <template #default="{ row }">
             <div class="cell-stack">
@@ -70,7 +70,7 @@
         </el-table-column>
         <el-table-column prop="score" label="Score" width="70" align="center">
           <template #default="{ row }">
-            <span class="num" :style="{ color: scoreColor(row.score) }">{{ row.score }}</span>
+            <span class="num" :class="scoreClass(row.score)">{{ row.score }}</span>
           </template>
         </el-table-column>
         <el-table-column label="Contacts" width="84" align="center">
@@ -89,7 +89,7 @@
       <!-- Pagination -->
       <el-pagination
         v-if="total > 0"
-        style="margin-top: 16px; justify-content: flex-end"
+        class="table-pager"
         :current-page="page"
         :page-size="pageSize"
         :total="total"
@@ -120,7 +120,7 @@
           <el-input v-model="form.products" type="textarea" :rows="2" placeholder="Comma separated keywords" />
         </el-form-item>
         <el-form-item label="Stage">
-          <el-select v-model="form.stage" style="width: 100%">
+          <el-select v-model="form.stage" class="form-fill">
             <el-option label="New" value="new" />
             <el-option label="Contacted" value="contacted" />
             <el-option label="Interested" value="interested" />
@@ -148,7 +148,7 @@ import { ref, reactive, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { customerApi } from '../api'
-import { scoreColor, stageLabel, stageTagType } from '../constants/status.js'
+import { scoreClass, stageLabel, stageTagType } from '../constants/status.js'
 
 const router = useRouter()
 const loading = ref(false)

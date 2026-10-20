@@ -269,10 +269,10 @@ watch(() => props.source, render)
 
 <style scoped>
 .trace-diagram {
-  border: 1px solid #e4e7ed;
+  border: 1px solid var(--border);
   border-radius: 8px;
   padding: 12px;
-  background: #fff;
+  background: var(--bg-card);
 }
 .toolbar {
   display: flex;
@@ -282,15 +282,15 @@ watch(() => props.source, render)
   margin-bottom: 10px;
 }
 .toolbar .hint {
-  color: #909399;
+  color: var(--text-3);
   font-size: 12px;
   margin: 0;
 }
 .diagram-viewport {
   overflow: auto;
   max-height: 460px;
-  background: #fafbfc;
-  border: 1px solid #f0f2f5;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border-subtle);
   border-radius: 6px;
   padding: 8px;
 }
@@ -299,8 +299,8 @@ watch(() => props.source, render)
   inset: 24px;
   z-index: 3000;
   max-height: none;
-  background: #fff;
-  border: 1px solid #dcdfe6;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
   box-shadow: 0 12px 48px rgba(0, 0, 0, 0.22);
   padding: 16px;
 }
@@ -315,19 +315,19 @@ watch(() => props.source, render)
   height: auto;
 }
 .diagram-error {
-  color: #f56c6c;
+  color: var(--negative);
   font-size: 13px;
 }
 .diagram-error .hint {
-  color: #909399;
+  color: var(--text-3);
 }
 .source-toggle {
   margin-top: 8px;
   font-size: 12px;
-  color: #909399;
+  color: var(--text-3);
 }
 .source {
-  background: #f5f7fa;
+  background: var(--bg-subtle);
   padding: 10px;
   border-radius: 6px;
   overflow-x: auto;

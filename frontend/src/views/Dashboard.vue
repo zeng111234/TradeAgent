@@ -24,7 +24,7 @@
     <!-- Four headline numbers, then the four that explain them. Eight cards at
          one weight was the page's loudest clutter; the month/task counts are
          context, not headlines. -->
-    <div class="stat-grid" style="margin-bottom: 16px">
+    <div class="stat-grid mb-4">
       <div class="stat-card">
         <div class="stat-value">{{ stats.total_customers }}</div>
         <div class="stat-label">客户总数</div>
@@ -43,7 +43,7 @@
       </div>
     </div>
 
-    <div class="kpi-strip" style="margin-bottom: 24px">
+    <div class="kpi-strip mb-6">
       <div class="kpi-strip__item">
         <div class="kpi-strip__value">{{ stats.new_customers_this_month }}</div>
         <div class="kpi-strip__label">本月新增客户</div>
@@ -65,7 +65,7 @@
     </div>
 
     <!-- Charts -->
-    <el-row :gutter="20" style="margin-bottom: 24px">
+    <el-row :gutter="20" class="mb-6">
       <el-col :span="12">
         <el-card shadow="never">
           <template #header>
@@ -104,7 +104,7 @@
     </el-row>
 
     <!-- Daily Report / Scheduler -->
-    <el-row :gutter="20" style="margin-top: 24px">
+    <el-row :gutter="20" class="mt-6">
       <el-col :span="16">
         <el-card shadow="never">
           <template #header>
@@ -112,7 +112,7 @@
           </template>
           <div v-if="dailyLoading || fullScanLoading || scanAndSendLoading" class="report-loading">
             <el-icon class="is-loading" :size="24"><Loading /></el-icon>
-            <p style="margin-top: 8px">{{ scanAndSendLoading ? 'Searching web + generating AI emails + sending... This may take 2-3 minutes.' : fullScanLoading ? 'Scanning web + generating AI drafts... This may take 1-2 minutes.' : 'Analyzing your CRM data...' }}</p>
+            <p class="mt-2">{{ scanAndSendLoading ? 'Searching web + generating AI emails + sending... This may take 2-3 minutes.' : fullScanLoading ? 'Scanning web + generating AI drafts... This may take 1-2 minutes.' : 'Analyzing your CRM data...' }}</p>
           </div>
           <div v-else-if="dailyReport" class="report-body">{{ dailyReport }}</div>
           <el-empty v-else description="Click 'Quick Report' for CRM analysis or 'Full Scan' to search for new leads" />
@@ -124,9 +124,9 @@
             <span class="card-title">Scheduled Jobs</span>
           </template>
           <div v-for="job in schedulerJobs" :key="job.id" class="job-row">
-            <div class="card-title" style="font-size: 13px">{{ job.name }}</div>
+            <div class="job-name">{{ job.name }}</div>
             <div class="hint">{{ job.trigger }}</div>
-            <div class="hint" :style="{ color: positive }">Next: {{ job.next_run }}</div>
+            <div class="hint text-positive">Next: {{ job.next_run }}</div>
           </div>
           <el-empty v-if="!schedulerJobs.length" description="No scheduled jobs" />
         </el-card>
@@ -134,14 +134,14 @@
     </el-row>
 
     <!-- New Leads Search Results & Review -->
-    <el-row :gutter="20" style="margin-top: 24px" v-if="searchedLeads.length > 0">
+    <el-row :gutter="20" class="mt-6" v-if="searchedLeads.length > 0">
       <el-col :span="24">
         <el-card shadow="never">
           <template #header>
             <div class="card-header-row">
               <div>
                 <span class="card-title">New Leads Found</span>
-                <span class="section-note" style="margin-left: 8px">Review AI-generated emails and select which to send</span>
+                <span class="section-note ml-2">Review AI-generated emails and select which to send</span>
               </div>
               <div>
                 <el-button @click="toggleSelectAllLeads" size="default">
@@ -154,7 +154,7 @@
             </div>
           </template>
 
-          <div v-if="sendDraftsResult" style="margin-bottom: 12px">
+          <div v-if="sendDraftsResult" class="mb-3">
             <!-- The count alone read as success even when half the batch failed.
                  The API has always returned emails_failed and send_results; the
                  banner now says so, and names the ones that did not go out. -->
@@ -165,7 +165,7 @@
               show-icon :closable="true" />
             <el-alert
               v-if="failedDrafts.length"
-              style="margin-top: 8px"
+              class="mt-2"
               type="error" :closable="false" show-icon
               :title="`Not sent: ${failedDrafts.map(f => `${f.company || f.email}: ${f.error || 'unknown error'}`).join(' · ')}`" />
           </div>
@@ -214,7 +214,7 @@
                     <span class="cell-link">{{ (row.draft_body || '').substring(0, 80) }}...</span>
                   </template>
                   <div class="popover-body">
-                    <div style="font-weight: 600; margin-bottom: 4px">Subject: {{ row.draft_subject }}</div>
+                    <div class="popover-subject">Subject: {{ row.draft_subject }}</div>
                     {{ row.draft_body }}
                   </div>
                 </el-popover>
@@ -231,14 +231,14 @@
     </el-row>
 
     <!-- Import Daily Scan Leads -->
-    <el-row :gutter="20" style="margin-top: 24px">
+    <el-row :gutter="20" class="mt-6">
       <el-col :span="24">
         <el-card shadow="never">
           <template #header>
             <div class="card-header-row">
               <div>
                 <span class="card-title">Import Daily Scan Leads</span>
-                <span class="section-note" style="margin-left: 8px">Import leads from daily_scan.py into CRM + draft emails</span>
+                <span class="section-note ml-2">Import leads from daily_scan.py into CRM + draft emails</span>
               </div>
               <div>
                 <el-button @click="previewLeads" :loading="previewLoading" size="default">
@@ -251,7 +251,7 @@
             </div>
           </template>
 
-          <div v-if="importResult" style="margin-bottom: 12px">
+          <div v-if="importResult" class="mb-3">
             <el-alert :title="`Imported ${importResult.imported} customers, ${importResult.skipped} skipped (already exist)`" type="success" show-icon :closable="true" />
           </div>
 
@@ -294,13 +294,13 @@
                         <span class="cell-link">{{ (row.draft_email || '').substring(0, 40) }}...</span>
                       </span>
                     </template>
-                    <div class="popover-body" style="max-height: 300px">{{ row.draft_email }}</div>
+                    <div class="popover-body popover-body--short">{{ row.draft_email }}</div>
                   </el-popover>
                   <el-tag v-else type="info" size="small">None</el-tag>
                 </template>
               </el-table-column>
             </el-table>
-            <div class="meta" style="margin-top: 12px">
+            <div class="meta mt-3">
               Scan date: {{ previewData.scan_date || 'N/A' }} | Keywords: {{ (previewData.keywords_used || []).join(', ') }}
             </div>
           </div>
@@ -318,7 +318,7 @@ import { ElMessage } from 'element-plus'
 import * as echarts from 'echarts'
 import { analyticsApi, schedulerApi, agentApi } from '../api'
 import { scoreTagType } from '../constants/status.js'
-import { accent, accentSeries, trendSeries, accentSoft, positive } from '../constants/theme.js'
+import { accent, accentSeries, trendSeries, accentSoft, white } from '../constants/theme.js'
 
 const stats = reactive({
   total_customers: 0,
@@ -412,7 +412,7 @@ const initCharts = async () => {
           radius: ['40%', '70%'],
           center: ['60%', '50%'],
           avoidLabelOverlap: false,
-          itemStyle: { borderRadius: 6, borderColor: '#fff', borderWidth: 2 },
+          itemStyle: { borderRadius: 6, borderColor: white, borderWidth: 2 },
           label: { show: true, formatter: '{b}\n{d}%' },
           data: sources.map(s => ({ name: s.source, value: s.count })),
         }],

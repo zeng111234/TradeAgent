@@ -44,12 +44,12 @@
               </div>
             </div>
           </template>
-          <p style="color: #909399; font-size: 13px; margin-bottom: 8px">
+          <p style="color: var(--text-3); font-size: 13px; margin-bottom: 8px">
             <strong>Subject:</strong> {{ tmpl.subject }}
           </p>
-          <div style="color: #606266; font-size: 13px; max-height: 80px; overflow: hidden" v-html="tmpl.body"></div>
+          <div style="color: var(--text-2); font-size: 13px; max-height: 80px; overflow: hidden" v-html="tmpl.body"></div>
           <div style="margin-top: 12px; display: flex; justify-content: space-between; align-items: center">
-            <span style="color: #c0c4cc; font-size: 12px">Used {{ tmpl.use_count }} times</span>
+            <span style="color: var(--text-disabled); font-size: 12px">Used {{ tmpl.use_count }} times</span>
             <div>
               <el-button size="small" type="primary" link @click="showDialog(tmpl)">Edit</el-button>
               <el-button size="small" type="danger" link @click="handleDelete(tmpl)">Delete</el-button>

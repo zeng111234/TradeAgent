@@ -15,6 +15,11 @@ export const positive = '#2e7d5b'
 export const warning = '#b45309'
 export const negative = '#b42318'
 export const neutral = '#6f7681'
+/* Two more for the places that paint a *surface* or an *edge* from JS: chart
+ * slice separators (canvas cannot read a CSS variable) and the quiet end of a
+ * risk border. */
+export const white = '#ffffff'
+export const border = '#e3e5e9'
 
 /**
  * Categorical chart palette: one hue, eight lightness steps. A greyscale pie

@@ -15,9 +15,9 @@
       :closable="false"
       show-icon
       title="未配置模型，agent 拒绝运行"
-      style="margin-bottom: 16px"
+      class="mb-4"
     >
-      <p style="margin: 4px 0 0">
+      <p class="mt-1">
         设置 <code>OPENAI_API_KEY</code> 后可用。
         没有降级方案 —— 一个无法判断的 agent 不是 agent。
         想看它如何工作：在 <code>backend/</code> 下运行
@@ -27,7 +27,7 @@
 
     <!-- Run form first: it is the only action this page offers, and it used to
          sit below a wall of boundary documentation. -->
-    <el-card shadow="never" style="margin-bottom: 16px">
+    <el-card shadow="never" class="mb-4">
       <template #header>
         <span class="card-title">运行</span>
       </template>
@@ -61,13 +61,13 @@
               <el-input-number v-model="maxToolCalls" :min="1" :max="60" :disabled="running" />
             </el-form-item>
           </el-col>
-          <el-col :span="12" style="display: flex; align-items: flex-end; padding-bottom: 18px">
+          <el-col :span="12" class="form-actions">
             <el-button type="primary" :loading="running" :disabled="!goal.trim() || !capabilities.configured"
               @click="startRun">
               <el-icon><VideoPlay /></el-icon> 运行 agent
             </el-button>
             <el-button :disabled="running" @click="loadRuns">刷新历史</el-button>
-            <span v-if="running" class="hint" style="margin-left: 12px">
+            <span v-if="running" class="hint ml-3">
               后台运行，进度每秒刷新（上限 {{ maxSeconds }} 秒）
             </span>
           </el-col>
@@ -78,13 +78,13 @@
     <!-- Live progress. The run is on the server; this card is what the last
          poll saw. Steps appear as rounds complete, because that is when the
          loop writes them -- not a character stream. -->
-    <el-card v-if="active" shadow="never" style="margin-bottom: 16px">
+    <el-card v-if="active" shadow="never" class="mb-4">
       <template #header>
-        <div style="display: flex; justify-content: space-between; align-items: center">
-          <span style="font-weight: 600">正在运行</span>
+        <div class="card-header-row">
+          <span class="card-title">正在运行</span>
           <div>
             <el-tag :type="statusType(active.status)" size="small" effect="plain">{{ active.status }}</el-tag>
-            <span class="hint" style="margin-left: 8px">
+            <span class="hint ml-2">
               第 {{ active.rounds }} 轮 · {{ active.toolCalls }} 次工具调用 · {{ elapsedSeconds }}s
             </span>
           </div>
@@ -97,19 +97,19 @@
         :closable="false"
         show-icon
         :title="active.warning"
-        style="margin-bottom: 12px"
+        class="mb-3"
       />
 
-      <p class="hint" style="margin: 0 0 8px">
+      <p class="hint hint-tight mb-2">
         下面每一轮都是服务端已经落库的步骤，按完成顺序出现；不是前端推测，也不是逐字流。
       </p>
 
       <TraceTimeline v-if="active.steps.length" :steps="active.steps" />
-      <p v-else class="hint" style="margin: 0">
+      <p v-else class="hint hint-tight">
         等待第一轮完成……（模型正在读目标、决定第一步）
       </p>
 
-      <p v-if="active.runId" style="margin-top: 12px">
+      <p v-if="active.runId" class="mt-3">
         <a :href="traceUrl(active.runId)" target="_blank" rel="noopener">
           在独立轨迹页查看这次运行（轮询卡住时的备用入口）
         </a>
@@ -117,17 +117,17 @@
     </el-card>
 
     <!-- Result of the run just performed -->
-    <el-card v-if="result" shadow="never" style="margin-bottom: 16px">
+    <el-card v-if="result" shadow="never" class="mb-4">
       <template #header>
-        <div style="display: flex; justify-content: space-between; align-items: center">
-          <span style="font-weight: 600">本次运行</span>
+        <div class="card-header-row">
+          <span class="card-title">本次运行</span>
           <div>
             <el-tag :type="statusType(result.status)" size="small">{{ result.status }}</el-tag>
-            <span class="hint" style="margin-left: 8px">{{ result.stop_reason }}</span>
+            <span class="hint ml-2">{{ result.stop_reason }}</span>
           </div>
         </div>
       </template>
-      <el-descriptions :column="2" border size="small" style="margin-bottom: 12px">
+      <el-descriptions :column="2" border size="small" class="mb-3">
         <el-descriptions-item label="工具路径" :span="2">
           <code>{{ result.tool_sequence?.join(' → ') || '(未调用工具)' }}</code>
         </el-descriptions-item>
@@ -151,7 +151,7 @@
       <el-alert v-else-if="!result.did_investigate" type="warning" :closable="false" show-icon
         title="这次运行没有调用任何工具就给出了答复" />
 
-      <p class="section-label" style="margin-top: 16px">执行路径</p>
+      <p class="section-label mt-4">执行路径</p>
       <TraceDiagram :source="result.mermaid_sequence" />
       <TraceTimeline :steps="result.steps" />
     </el-card>
@@ -159,10 +159,10 @@
     <!-- History -->
     <el-card shadow="never">
       <template #header>
-        <div style="display: flex; justify-content: space-between; align-items: center">
-          <span style="font-weight: 600">历史运行（{{ runs.length }}）</span>
+        <div class="card-header-row">
+          <span class="card-title">历史运行（{{ runs.length }}）</span>
           <el-select v-model="statusFilter" size="small" clearable placeholder="全部状态"
-            style="width: 160px" @change="loadRuns">
+            class="history-filter" @change="loadRuns">
             <el-option label="succeeded" value="succeeded" />
             <el-option label="truncated" value="truncated" />
             <el-option label="stalled" value="stalled" />
@@ -171,7 +171,7 @@
         </div>
       </template>
 
-      <el-table v-if="runs.length" :data="runs" size="small" @row-click="openRun" style="cursor: pointer">
+      <el-table v-if="runs.length" :data="runs" size="small" @row-click="openRun" class="clickable">
         <el-table-column prop="run_id" label="run id" width="100">
           <template #default="{ row }"><code>{{ row.run_id.slice(0, 8) }}</code></template>
         </el-table-column>
@@ -233,16 +233,16 @@
           </el-descriptions-item>
         </el-descriptions>
 
-        <div v-if="selected.final_output" class="conclusion" style="margin-top: 16px">
+        <div v-if="selected.final_output" class="conclusion mt-4">
           <p class="section-label">结论</p>
           <div class="md" v-html="renderMarkdown(selected.final_output)"></div>
         </div>
 
-        <p class="section-label" style="margin-top: 16px">执行路径</p>
+        <p class="section-label mt-4">执行路径</p>
         <TraceDiagram :source="selected.mermaid_sequence" />
         <TraceTimeline :steps="selected.steps" />
 
-        <p style="margin-top: 16px">
+        <p class="mt-4">
           <a :href="traceUrl(selected.run_id)" target="_blank" rel="noopener">
             在新标签页打开独立轨迹页
           </a>
@@ -254,7 +254,7 @@
          is not an action, so it does not get a card of equal weight. The
          "deliberately absent" tools are a design note, not an error -- they
          are plain tags now, not danger. -->
-    <div v-if="capabilities.tool_count" class="callout" style="margin-top: 16px">
+    <div v-if="capabilities.tool_count" class="callout mt-4">
       <p class="section-label">
         权限边界 —— agent 有 {{ capabilities.tool_count }} 个工具，但发送权不在它手上
       </p>
@@ -706,6 +706,16 @@ onUnmounted(() => {
   flex: 1 1 320px;
   min-width: 260px;
 }
+.form-actions {
+  display: flex;
+  align-items: flex-end;
+  padding-bottom: 18px;
+}
+
+.history-filter {
+  width: 160px;
+}
+
 .tag-cloud {
   display: flex;
   flex-wrap: wrap;

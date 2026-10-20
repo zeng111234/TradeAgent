@@ -41,7 +41,7 @@
       <el-table :data="visibleTasks" stripe v-loading="loading">
         <el-table-column prop="title" label="Task" min-width="250">
           <template #default="{ row }">
-            <span :style="{ textDecoration: row.status === 'completed' ? 'line-through' : 'none', color: row.status === 'completed' ? '#c0c4cc' : '#303133' }">
+            <span :style="{ textDecoration: row.status === 'completed' ? 'line-through' : 'none', color: row.status === 'completed' ? 'var(--text-disabled)' : 'var(--text-1)' }">
               {{ row.title }}
             </span>
           </template>
@@ -63,7 +63,7 @@
         </el-table-column>
         <el-table-column label="Due Date" width="160">
           <template #default="{ row }">
-            <span :style="{ color: isOverdue(row) ? '#f56c6c' : '#606266' }">
+            <span :style="{ color: isOverdue(row) ? 'var(--negative)' : 'var(--text-2)' }">
               {{ row.due_date ? formatDate(row.due_date) : '-' }}
             </span>
           </template>

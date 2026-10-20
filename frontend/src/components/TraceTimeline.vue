@@ -64,7 +64,7 @@ function format(value) {
   margin-top: 16px;
 }
 .round {
-  border-left: 3px solid #dcdfe6;
+  border-left: 3px solid var(--border);
   padding: 0 0 16px 16px;
   margin-bottom: 16px;
 }
@@ -78,44 +78,44 @@ function format(value) {
   font-weight: 700;
   font-size: 12px;
   letter-spacing: 0.05em;
-  color: #606266;
+  color: var(--text-2);
   text-transform: uppercase;
 }
 .note {
   font-size: 12px;
-  color: #e6a23c;
+  color: var(--warning);
 }
 .latency {
   font-size: 12px;
-  color: #909399;
+  color: var(--text-3);
   margin-left: auto;
 }
 .thought {
   font-size: 14px;
   line-height: 1.6;
-  color: #303133;
+  color: var(--text-1);
   margin: 0 0 10px;
   white-space: pre-wrap;
 }
 .thought.muted {
-  color: #c0c4cc;
+  color: var(--text-disabled);
   font-style: italic;
 }
 .no-call {
   font-size: 13px;
-  color: #909399;
+  color: var(--text-3);
   font-style: italic;
 }
 .call {
-  border: 1px solid #e4e7ed;
+  border: 1px solid var(--border);
   border-radius: 8px;
   padding: 10px 12px;
   margin: 10px 0;
-  background: #fafafa;
+  background: var(--bg-subtle);
 }
 .call.bad {
-  border-color: #fbc4c4;
-  background: #fef0f0;
+  border-color: var(--negative-border);
+  background: var(--negative-weak);
 }
 .call-head {
   display: flex;
@@ -127,18 +127,18 @@ function format(value) {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-weight: 700;
   font-size: 13px;
-  color: #409eff;
+  color: var(--accent);
 }
 .label {
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  color: #909399;
+  color: var(--text-3);
   margin: 8px 0 2px;
 }
 .payload {
-  background: #fff;
-  border: 1px solid #ebeef5;
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
   border-radius: 4px;
   padding: 8px;
   margin: 0;
@@ -150,6 +150,6 @@ function format(value) {
   overflow: auto;
 }
 .observation {
-  color: #606266;
+  color: var(--text-2);
 }
 </style>

@@ -24,8 +24,8 @@
                 :type="dailyResult.high_priority > 0 ? 'warning' : 'success'" :closable="false" show-icon style="margin-bottom: 16px" />
               <div v-if="dailyResult && dailyResult.actions && dailyResult.actions.length">
                 <div v-for="a in dailyResult.actions" :key="a.customer_id"
-                  style="border: 1px solid #e4e7ed; border-radius: 8px; padding: 16px; margin-bottom: 12px"
-                  :style="{ borderColor: a.priority === 'high' ? '#f56c6c' : (a.priority === 'medium' ? '#e6a23c' : '#e4e7ed'), borderLeftWidth: '4px' }">
+                  style="border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin-bottom: 12px"
+                  :style="{ borderColor: a.priority === 'high' ? 'var(--negative)' : (a.priority === 'medium' ? 'var(--warning)' : 'var(--border)'), borderLeftWidth: '4px' }">
                   <el-row :gutter="16">
                     <el-col :span="16">
                       <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px">
@@ -33,18 +33,18 @@
                         <strong>{{ a.company_name }}</strong>
                         <el-tag size="small" type="info">{{ a.stage }}</el-tag>
                       </div>
-                      <p style="margin: 0 0 4px; color: #606266; font-size: 13px">Reason: {{ a.reason }}</p>
-                      <p style="margin: 0; color: #409eff; font-size: 13px">Action: {{ a.suggested_action }}</p>
-                      <p v-if="a.contact_email" style="margin: 4px 0 0; color: #909399; font-size: 12px">Contact: {{ a.contact_name }} ({{ a.contact_email }})</p>
+                      <p style="margin: 0 0 4px; color: var(--text-2); font-size: 13px">Reason: {{ a.reason }}</p>
+                      <p style="margin: 0; color: var(--accent); font-size: 13px">Action: {{ a.suggested_action }}</p>
+                      <p v-if="a.contact_email" style="margin: 4px 0 0; color: var(--text-3); font-size: 12px">Contact: {{ a.contact_name }} ({{ a.contact_email }})</p>
                     </el-col>
                     <el-col :span="8" style="text-align: right">
                       <el-button v-if="a.draft_email" size="small" @click="showDraftEmail(a)">View Draft</el-button>
                       <el-button v-if="a.contact_email" size="small" type="primary" @click="sendQuickEmail(a)">Quick Send</el-button>
                     </el-col>
                   </el-row>
-                  <div v-if="a.showDraft" style="background: #f5f7fa; padding: 12px; border-radius: 6px; margin-top: 12px">
+                  <div v-if="a.showDraft" style="background: var(--bg-subtle); padding: 12px; border-radius: 6px; margin-top: 12px">
                     <p style="margin: 0 0 4px; font-weight: 600; font-size: 13px">Subject: {{ a.draft_subject }}</p>
-                    <div v-html="a.draft_email" style="font-size: 13px; color: #303133"></div>
+                    <div v-html="a.draft_email" style="font-size: 13px; color: var(--text-1)"></div>
                   </div>
                 </div>
               </div>
@@ -97,8 +97,8 @@
               <el-alert v-if="leadResult.market_insights" :title="leadResult.market_insights" type="info" :closable="false" show-icon style="margin-bottom: 12px" />
 
               <div v-for="(lead, i) in (leadResult.leads || [])" :key="i"
-                style="border: 1px solid #e4e7ed; border-radius: 8px; padding: 12px; margin-bottom: 10px"
-                :style="{ borderColor: lead.relevance_score >= 70 ? '#67c23a' : (lead.relevance_score >= 50 ? '#e6a23c' : '#e4e7ed'), borderLeftWidth: '4px' }">
+                style="border: 1px solid var(--border); border-radius: 8px; padding: 12px; margin-bottom: 10px"
+                :style="{ borderColor: lead.relevance_score >= 70 ? 'var(--positive)' : (lead.relevance_score >= 50 ? 'var(--warning)' : 'var(--border)'), borderLeftWidth: '4px' }">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px">
                   <div>
                     <strong>{{ lead.company_name }}</strong>
@@ -109,8 +109,8 @@
                   </div>
                   <el-progress :percentage="lead.relevance_score" :color="scoreColor(lead.relevance_score)" :stroke-width="8" style="width: 100px" />
                 </div>
-                <p style="margin: 0 0 4px; font-size: 12px; color: #909399">
-                  <a :href="lead.website" target="_blank" style="color: #409eff">{{ lead.website }}</a>
+                <p style="margin: 0 0 4px; font-size: 12px; color: var(--text-3)">
+                  <a :href="lead.website" target="_blank" style="color: var(--accent)">{{ lead.website }}</a>
                 </p>
                 <div v-if="lead.emails && lead.emails.length" style="margin-top: 4px">
                   <el-tag v-for="e in lead.emails" :key="e" type="success" size="small" style="margin-right: 4px">{{ e }}</el-tag>
@@ -118,8 +118,8 @@
                 <div v-if="lead.phones && lead.phones.length" style="margin-top: 2px">
                   <el-tag v-for="p in lead.phones" :key="p" size="small" style="margin-right: 4px">{{ p }}</el-tag>
                 </div>
-                <p v-if="lead.ai_reason" style="margin: 6px 0 0; font-size: 12px; color: #67c23a">{{ lead.ai_reason }}</p>
-                <p v-if="lead.snippet" style="margin: 4px 0 0; font-size: 11px; color: #909399; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">{{ lead.snippet }}</p>
+                <p v-if="lead.ai_reason" style="margin: 6px 0 0; font-size: 12px; color: var(--positive)">{{ lead.ai_reason }}</p>
+                <p v-if="lead.snippet" style="margin: 4px 0 0; font-size: 11px; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap">{{ lead.snippet }}</p>
               </div>
               <el-empty v-if="!leadResult.leads?.length" description="No leads found. Try different keywords or country." />
             </el-card>
@@ -159,19 +159,19 @@
               </template>
               <el-row :gutter="16" style="margin-bottom: 16px">
                 <el-col :span="8">
-                  <div style="text-align: center; padding: 12px; background: #f5f7fa; border-radius: 8px">
+                  <div style="text-align: center; padding: 12px; background: var(--bg-subtle); border-radius: 8px">
                     <el-tag size="large" type="primary">{{ inquiryResult.inquiry_type }}</el-tag>
-                    <p style="margin-top: 4px; font-size: 12px; color: #909399">Type</p>
+                    <p style="margin-top: 4px; font-size: 12px; color: var(--text-3)">Type</p>
                   </div>
                 </el-col>
                 <el-col :span="8">
-                  <div style="text-align: center; padding: 12px; background: #f5f7fa; border-radius: 8px">
+                  <div style="text-align: center; padding: 12px; background: var(--bg-subtle); border-radius: 8px">
                     <el-tag :type="urgencyColor(inquiryResult.urgency)" size="large">{{ urgencyLabel(inquiryResult.urgency) }}</el-tag>
-                    <p style="margin-top: 4px; font-size: 12px; color: #909399">Urgency</p>
+                    <p style="margin-top: 4px; font-size: 12px; color: var(--text-3)">Urgency</p>
                   </div>
                 </el-col>
                 <el-col :span="8">
-                  <div style="text-align: center; padding: 12px; background: #f5f7fa; border-radius: 8px">
+                  <div style="text-align: center; padding: 12px; background: var(--bg-subtle); border-radius: 8px">
                     <!-- A gauge with no number behind it is the same fabrication
                          the backend just stopped making: `|| 0` turned "nobody
                          assessed this" into a 0% score, which reads as a verdict. -->
@@ -179,7 +179,7 @@
                       type="dashboard" :percentage="inquiryResult.customer_intent_score"
                       :color="scoreColor(inquiryResult.customer_intent_score)" :width="60" />
                     <el-tag v-else type="info" size="large">n/a</el-tag>
-                    <p style="margin-top: 4px; font-size: 12px; color: #909399">Intent Score</p>
+                    <p style="margin-top: 4px; font-size: 12px; color: var(--text-3)">Intent Score</p>
                   </div>
                 </el-col>
               </el-row>
@@ -195,11 +195,11 @@
               <div v-if="inquiryResult.products && inquiryResult.products.length" style="margin-bottom: 16px">
                 <h4 style="margin: 0 0 8px; font-size: 14px">Products Requested:</h4>
                 <div v-for="(p, i) in inquiryResult.products" :key="i"
-                  style="background: #f5f7fa; padding: 10px; border-radius: 6px; margin-bottom: 6px">
+                  style="background: var(--bg-subtle); padding: 10px; border-radius: 6px; margin-bottom: 6px">
                   <strong>{{ p.name }}</strong>
-                  <span v-if="p.specification" style="color: #909399"> | {{ p.specification }}</span>
-                  <span v-if="p.quantity" style="color: #409eff; margin-left: 8px">Qty: {{ p.quantity }}</span>
-                  <span v-if="p.target_price" style="color: #e6a23c; margin-left: 8px">Target: {{ p.target_price }}</span>
+                  <span v-if="p.specification" style="color: var(--text-3)"> | {{ p.specification }}</span>
+                  <span v-if="p.quantity" style="color: var(--accent); margin-left: 8px">Qty: {{ p.quantity }}</span>
+                  <span v-if="p.target_price" style="color: var(--warning); margin-left: 8px">Target: {{ p.target_price }}</span>
                 </div>
               </div>
               <el-descriptions v-if="inquiryResult.delivery_requirements" :column="2" border size="small" style="margin-bottom: 16px">
@@ -212,10 +212,10 @@
                 <el-tag v-for="c in inquiryResult.key_concerns" :key="c" type="warning" style="margin: 2px 4px">{{ c }}</el-tag>
               </div>
               <div v-if="inquiryResult.missing_info && inquiryResult.missing_info.length" style="margin-bottom: 16px">
-                <h4 style="margin: 0 0 6px; font-size: 14px; color: #f56c6c">Missing Info (Ask For):</h4>
+                <h4 style="margin: 0 0 6px; font-size: 14px; color: var(--negative)">Missing Info (Ask For):</h4>
                 <el-tag v-for="m in inquiryResult.missing_info" :key="m" type="danger" style="margin: 2px 4px">{{ m }}</el-tag>
               </div>
-              <el-card v-if="inquiryResult.suggested_reply_draft" shadow="never" style="background: #ecf5ff; border-color: #b3d8ff">
+              <el-card v-if="inquiryResult.suggested_reply_draft" shadow="never" style="background: var(--accent-weak); border-color: var(--el-color-primary-light-5)">
                 <template #header>
                   <div style="display: flex; justify-content: space-between; align-items: center">
                     <span style="font-weight: 600">AI Draft Reply</span>
@@ -223,7 +223,7 @@
                   </div>
                 </template>
                 <p style="margin: 0 0 4px; font-weight: 600; font-size: 13px">Subject: {{ inquiryResult.suggested_reply_subject }}</p>
-                <div v-html="inquiryResult.suggested_reply_draft" style="font-size: 13px; color: #303133"></div>
+                <div v-html="inquiryResult.suggested_reply_draft" style="font-size: 13px; color: var(--text-1)"></div>
               </el-card>
               <el-alert v-if="inquiryResult.follow_up_strategy"
                 :title="'Follow-up: ' + inquiryResult.follow_up_strategy"
@@ -255,7 +255,7 @@
           </div>
           <div v-if="churnResult && churnResult.alerts && churnResult.alerts.length">
             <div v-for="a in churnResult.alerts" :key="a.customer_id"
-              style="border: 1px solid #e4e7ed; border-radius: 8px; padding: 16px; margin-bottom: 12px"
+              style="border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin-bottom: 12px"
               :style="{ borderColor: riskColor(a.risk_level), borderLeftWidth: '4px' }">
               <el-row :gutter="16">
                 <el-col :span="14">
@@ -263,18 +263,18 @@
                     <el-tag :type="riskTagType(a.risk_level)" size="small">{{ a.risk_level }}</el-tag>
                     <strong>{{ a.company_name }}</strong>
                     <el-tag size="small" type="info">{{ a.stage }}</el-tag>
-                    <span v-if="a.country" style="color: #909399; font-size: 12px">{{ a.country }}</span>
+                    <span v-if="a.country" style="color: var(--text-3); font-size: 12px">{{ a.country }}</span>
                   </div>
                   <div v-for="(reason, i) in a.risk_reasons" :key="i">
-                    <p style="margin: 0 0 2px; color: #f56c6c; font-size: 13px">{{ reason }}</p>
+                    <p style="margin: 0 0 2px; color: var(--negative); font-size: 13px">{{ reason }}</p>
                   </div>
                   <div style="margin-top: 8px">
-                    <span style="font-size: 12px; color: #909399">Suggested: </span>
-                    <span v-for="(action, i) in a.suggested_actions" :key="i" style="color: #409eff; font-size: 12px">
+                    <span style="font-size: 12px; color: var(--text-3)">Suggested: </span>
+                    <span v-for="(action, i) in a.suggested_actions" :key="i" style="color: var(--accent); font-size: 12px">
                       {{ action }}{{ i < a.suggested_actions.length - 1 ? ' | ' : '' }}
                     </span>
                   </div>
-                  <div style="margin-top: 6px; font-size: 11px; color: #909399">
+                  <div style="margin-top: 6px; font-size: 11px; color: var(--text-3)">
                     Sent: {{ a.emails_sent }} | Replied: {{ a.emails_replied }} | Days in stage: {{ a.days_in_stage }}
                   </div>
                 </el-col>
@@ -283,9 +283,9 @@
                   <el-button v-if="a.contact_email" size="small" type="primary" @click="sendRescueEmail(a)">Send Now</el-button>
                 </el-col>
               </el-row>
-              <div v-if="a.showRescue && a.rescue_email" style="background: #ecf5ff; padding: 12px; border-radius: 6px; margin-top: 12px">
+              <div v-if="a.showRescue && a.rescue_email" style="background: var(--accent-weak); padding: 12px; border-radius: 6px; margin-top: 12px">
                 <p style="margin: 0 0 4px; font-weight: 600; font-size: 13px">Subject: {{ a.rescue_subject }}</p>
-                <div v-html="a.rescue_email" style="font-size: 13px; color: #303133"></div>
+                <div v-html="a.rescue_email" style="font-size: 13px; color: var(--text-1)"></div>
               </div>
             </div>
           </div>
@@ -334,7 +334,7 @@
                 </div>
               </template>
               <div v-for="e in (holidayResult.emails || [])" :key="e.customer_id"
-                style="border: 1px solid #e4e7ed; border-radius: 8px; padding: 12px; margin-bottom: 12px">
+                style="border: 1px solid var(--border); border-radius: 8px; padding: 12px; margin-bottom: 12px">
                 <div style="display: flex; justify-content: space-between; margin-bottom: 8px">
                   <strong>{{ e.company_name }} - {{ e.contact_name }}</strong>
                   <el-tag size="small" :type="e.personalized ? 'success' : 'info'">
@@ -342,7 +342,7 @@
                   </el-tag>
                 </div>
                 <p style="margin: 0 0 4px; font-weight: 600; font-size: 13px">Subject: {{ e.subject }}</p>
-                <div v-html="e.body" style="background: #f5f7fa; padding: 12px; border-radius: 6px; font-size: 13px; color: #303133"></div>
+                <div v-html="e.body" style="background: var(--bg-subtle); padding: 12px; border-radius: 6px; font-size: 13px; color: var(--text-1)"></div>
                 <el-button size="small" style="margin-top: 8px"
                   @click="sendSingleHolidayEmail(e)">Send to {{ e.to_email }}</el-button>
               </div>
@@ -389,7 +389,7 @@
                   type="dashboard" :percentage="webResult.lead_score"
                   :color="scoreColor(webResult.lead_score)" :width="120" />
                 <el-tag v-else type="info" size="large">not analysed</el-tag>
-                <p style="margin-top: 8px; color: #909399; font-size: 13px">Lead Score</p>
+                <p style="margin-top: 8px; color: var(--text-3); font-size: 13px">Lead Score</p>
               </div>
               <el-descriptions :column="2" border size="small">
                 <el-descriptions-item label="Company">{{ webResult.company_name }}</el-descriptions-item>
@@ -412,13 +412,13 @@
               <div v-if="webResult.key_selling_points && webResult.key_selling_points.length" style="margin-top: 16px">
                 <h4 style="margin: 0 0 8px; font-size: 14px">Key Selling Points:</h4>
                 <ul style="margin: 0; padding-left: 20px">
-                  <li v-for="s in webResult.key_selling_points" :key="s" style="color: #606266; font-size: 13px; margin-bottom: 4px">{{ s }}</li>
+                  <li v-for="s in webResult.key_selling_points" :key="s" style="color: var(--text-2); font-size: 13px; margin-bottom: 4px">{{ s }}</li>
                 </ul>
               </div>
               <div v-if="webResult.risk_factors && webResult.risk_factors.length" style="margin-top: 16px">
-                <h4 style="margin: 0 0 8px; font-size: 14px; color: #f56c6c">Risk Factors:</h4>
+                <h4 style="margin: 0 0 8px; font-size: 14px; color: var(--negative)">Risk Factors:</h4>
                 <ul style="margin: 0; padding-left: 20px">
-                  <li v-for="r in webResult.risk_factors" :key="r" style="color: #f56c6c; font-size: 13px; margin-bottom: 4px">{{ r }}</li>
+                  <li v-for="r in webResult.risk_factors" :key="r" style="color: var(--negative); font-size: 13px; margin-bottom: 4px">{{ r }}</li>
                 </ul>
               </div>
             </el-card>
@@ -460,19 +460,19 @@
                 <el-col :span="8">
                   <div style="text-align: center; padding: 12px">
                     <el-tag :type="intentColor(emailResult.intent)" size="large">{{ emailResult.intent }}</el-tag>
-                    <p style="margin-top: 4px; font-size: 12px; color: #909399">Intent</p>
+                    <p style="margin-top: 4px; font-size: 12px; color: var(--text-3)">Intent</p>
                   </div>
                 </el-col>
                 <el-col :span="8">
                   <div style="text-align: center; padding: 12px">
                     <el-tag :type="sentimentColor(emailResult.sentiment)" size="large">{{ emailResult.sentiment }}</el-tag>
-                    <p style="margin-top: 4px; font-size: 12px; color: #909399">Sentiment</p>
+                    <p style="margin-top: 4px; font-size: 12px; color: var(--text-3)">Sentiment</p>
                   </div>
                 </el-col>
                 <el-col :span="8">
                   <div style="text-align: center; padding: 12px">
                     <el-tag :type="urgencyColor(emailResult.urgency)" size="large">{{ urgencyLabel(emailResult.urgency) }}</el-tag>
-                    <p style="margin-top: 4px; font-size: 12px; color: #909399">Urgency</p>
+                    <p style="margin-top: 4px; font-size: 12px; color: var(--text-3)">Urgency</p>
                   </div>
                 </el-col>
               </el-row>
@@ -489,13 +489,13 @@
               <div v-if="emailResult.suggested_reply_points && emailResult.suggested_reply_points.length">
                 <h4 style="margin: 0 0 8px; font-size: 14px">Reply Points:</h4>
                 <ul style="margin: 0; padding-left: 20px">
-                  <li v-for="s in emailResult.suggested_reply_points" :key="s" style="color: #606266; font-size: 13px; margin-bottom: 4px">{{ s }}</li>
+                  <li v-for="s in emailResult.suggested_reply_points" :key="s" style="color: var(--text-2); font-size: 13px; margin-bottom: 4px">{{ s }}</li>
                 </ul>
               </div>
               <div v-if="emailResult.risks && emailResult.risks.length" style="margin-top: 12px">
-                <h4 style="margin: 0 0 8px; font-size: 14px; color: #f56c6c">Risks:</h4>
+                <h4 style="margin: 0 0 8px; font-size: 14px; color: var(--negative)">Risks:</h4>
                 <ul style="margin: 0; padding-left: 20px">
-                  <li v-for="r in emailResult.risks" :key="r" style="color: #f56c6c; font-size: 13px">{{ r }}</li>
+                  <li v-for="r in emailResult.risks" :key="r" style="color: var(--negative); font-size: 13px">{{ r }}</li>
                 </ul>
               </div>
             </el-card>
@@ -534,13 +534,13 @@
                 <span style="font-weight: 600">Generated Emails ({{ batchResult.generated }}/{{ batchResult.total }})</span>
               </template>
               <div v-for="e in (batchResult.emails || [])" :key="e.customer_id"
-                style="border: 1px solid #e4e7ed; border-radius: 8px; padding: 12px; margin-bottom: 12px">
+                style="border: 1px solid var(--border); border-radius: 8px; padding: 12px; margin-bottom: 12px">
                 <div style="display: flex; justify-content: space-between; margin-bottom: 8px">
                   <strong>{{ e.company_name }}</strong>
                   <el-tag size="small" type="info">{{ e.personalized_for || e.error }}</el-tag>
                 </div>
                 <p style="margin: 0 0 4px; font-weight: 600; font-size: 13px" v-if="e.subject">Subject: {{ e.subject }}</p>
-                <div v-if="e.body" v-html="e.body" style="background: #f5f7fa; padding: 12px; border-radius: 6px; font-size: 13px; color: #303133"></div>
+                <div v-if="e.body" v-html="e.body" style="background: var(--bg-subtle); padding: 12px; border-radius: 6px; font-size: 13px; color: var(--text-1)"></div>
                 <el-button v-if="e.body && e.to_email" size="small" style="margin-top: 8px"
                   @click="sendBatchEmail(e)">Send to {{ e.to_email }}</el-button>
               </div>
@@ -595,33 +595,33 @@
                 :title="'Customer Intent: ' + negoResult.customer_intent_analysis"
                 type="warning" :closable="false" show-icon style="margin-bottom: 16px" />
               <div v-for="(s, i) in (negoResult.strategies || [])" :key="i"
-                style="border: 1px solid #e4e7ed; border-radius: 8px; padding: 16px; margin-bottom: 12px"
-                :style="{ borderColor: i === 0 ? '#67c23a' : '#e4e7ed' }">
+                style="border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin-bottom: 12px"
+                :style="{ borderColor: i === 0 ? 'var(--positive)' : 'var(--border)' }">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px">
                   <el-tag :type="i === 0 ? 'success' : (i === 1 ? 'warning' : 'info')" size="small">
                     Strategy {{ i + 1 }}: {{ s.type || s.name }}
                   </el-tag>
-                  <span v-if="i === 0 && negoResult.recommended_strategy" style="color: #67c23a; font-size: 12px; font-weight: 600">RECOMMENDED</span>
+                  <span v-if="i === 0 && negoResult.recommended_strategy" style="color: var(--positive); font-size: 12px; font-weight: 600">RECOMMENDED</span>
                 </div>
                 <p v-if="s.name" style="margin: 0 0 8px; font-weight: 600; font-size: 14px">{{ s.name }}</p>
-                <div style="background: #f5f7fa; padding: 12px; border-radius: 6px; margin-bottom: 8px">
-                  <p style="margin: 0; color: #303133; font-size: 13px; white-space: pre-wrap">{{ s.reply }}</p>
+                <div style="background: var(--bg-subtle); padding: 12px; border-radius: 6px; margin-bottom: 8px">
+                  <p style="margin: 0; color: var(--text-1); font-size: 13px; white-space: pre-wrap">{{ s.reply }}</p>
                 </div>
                 <div style="display: flex; gap: 20px; font-size: 12px">
-                  <span v-if="s.pros" style="color: #67c23a">Pros: {{ s.pros }}</span>
-                  <span v-if="s.cons" style="color: #f56c6c">Cons: {{ s.cons }}</span>
+                  <span v-if="s.pros" style="color: var(--positive)">Pros: {{ s.pros }}</span>
+                  <span v-if="s.cons" style="color: var(--negative)">Cons: {{ s.cons }}</span>
                 </div>
               </div>
               <div v-if="negoResult.talking_points && negoResult.talking_points.length" style="margin-top: 16px">
                 <h4 style="margin: 0 0 8px; font-size: 14px">Talking Points:</h4>
                 <ul style="margin: 0; padding-left: 20px">
-                  <li v-for="t in negoResult.talking_points" :key="t" style="color: #606266; font-size: 13px; margin-bottom: 4px">{{ t }}</li>
+                  <li v-for="t in negoResult.talking_points" :key="t" style="color: var(--text-2); font-size: 13px; margin-bottom: 4px">{{ t }}</li>
                 </ul>
               </div>
               <div v-if="negoResult.red_flags && negoResult.red_flags.length" style="margin-top: 12px">
-                <h4 style="margin: 0 0 8px; font-size: 14px; color: #f56c6c">Red Flags:</h4>
+                <h4 style="margin: 0 0 8px; font-size: 14px; color: var(--negative)">Red Flags:</h4>
                 <ul style="margin: 0; padding-left: 20px">
-                  <li v-for="r in negoResult.red_flags" :key="r" style="color: #f56c6c; font-size: 13px; margin-bottom: 4px">{{ r }}</li>
+                  <li v-for="r in negoResult.red_flags" :key="r" style="color: var(--negative); font-size: 13px; margin-bottom: 4px">{{ r }}</li>
                 </ul>
               </div>
             </el-card>
@@ -653,7 +653,7 @@
                 </el-form-item>
 
                 <el-divider content-position="left">Products</el-divider>
-                <div v-for="(p, i) in piForm.products" :key="i" style="background: #f5f7fa; padding: 12px; border-radius: 6px; margin-bottom: 8px">
+                <div v-for="(p, i) in piForm.products" :key="i" style="background: var(--bg-subtle); padding: 12px; border-radius: 6px; margin-bottom: 8px">
                   <el-row :gutter="8">
                     <el-col :span="12"><el-input v-model="p.name" placeholder="Product name" size="small" /></el-col>
                     <el-col :span="12"><el-input v-model="p.spec" placeholder="Spec/Model" size="small" /></el-col>
@@ -708,11 +708,11 @@
                   <el-descriptions-item label="Customer">{{ piResult.customer_company }}</el-descriptions-item>
                   <el-descriptions-item label="Terms">{{ piResult.trade_terms }}</el-descriptions-item>
                   <el-descriptions-item label="Total">
-                    <span style="font-size: 18px; font-weight: bold; color: #e74c3c">${{ piResult.total?.toLocaleString('en', {minimumFractionDigits: 2}) }}</span>
+                    <span style="font-size: 18px; font-weight: bold; color: var(--negative)">${{ piResult.total?.toLocaleString('en', {minimumFractionDigits: 2}) }}</span>
                   </el-descriptions-item>
                 </el-descriptions>
               </div>
-              <div ref="piPreview" v-html="piResult.pi_html" style="border: 1px solid #eee; border-radius: 4px; max-height: 600px; overflow-y: auto"></div>
+              <div ref="piPreview" v-html="piResult.pi_html" style="border: 1px solid var(--border-subtle); border-radius: 4px; max-height: 600px; overflow-y: auto"></div>
             </el-card>
             <el-empty v-else description="Fill in customer info and products, then click Generate PI" />
           </el-col>
@@ -729,6 +729,8 @@ import { ElMessage } from 'element-plus'
 import { agentApi, emailApi } from '../api'
 import {
   intentColor,
+  riskColor,
+  riskTagType,
   scoreColor,
   sentimentColor,
   urgencyColor,
@@ -794,9 +796,6 @@ const sendRescueEmail = async (a) => {
     ElMessage.success(`Rescue email sent to ${a.contact_email}`)
   } catch (e) { ElMessage.error('Failed to send') }
 }
-const riskColor = (level) => ({ critical: '#f56c6c', high: '#e6a23c', medium: '#909399' }[level] || '#e4e7ed')
-const riskTagType = (level) => ({ critical: 'danger', high: 'warning', medium: 'info' }[level] || '')
-
 // Holiday Emails
 const holidayLoading = ref(false)
 const holidayResult = ref(null)

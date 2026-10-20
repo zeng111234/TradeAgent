@@ -23,7 +23,7 @@
  * tag type, so scoreColor resolves through theme.js instead. Low score is
  * neutral, not red -- "not relevant" is not "wrong".
  */
-import { accent, positive, warning, negative, neutral } from './theme.js'
+import { accent, positive, warning, negative, neutral, border } from './theme.js'
 
 const ACCENT = 'primary'
 const POSITIVE = 'success'
@@ -114,7 +114,7 @@ export const priorityType = (priority) => PRIORITY_TYPES[priority] || NEUTRAL
  * Match score -> el-progress colour. Thresholds are 70 / 40; CustomerDetail's
  * old stops array used 30 / 60 and Agent used 70 / 50, so the same number
  * turned up in two colours on two pages. One rule now, shared by the hex form
- * (progress strokes) and the tag form (table cells).
+ * (progress strokes), the tag form (table cells) and the class form.
  */
 const scoreBand = (score) => (score >= 70 ? 'high' : score >= 40 ? 'mid' : 'low')
 
@@ -123,6 +123,9 @@ export const scoreColor = (score) =>
 
 export const scoreTagType = (score) =>
   ({ high: ACCENT, mid: WARNING, low: NEUTRAL })[scoreBand(score)]
+
+/** Same bands as a class name, for cells that colour text without a tag. */
+export const scoreClass = (score) => `score-${scoreBand(score)}`
 
 /** Customer note types -- a category, so: quiet by default, loud only for risk. */
 const NOTE_TYPES = Object.freeze({
@@ -163,3 +166,16 @@ const URGENCY_TYPES = Object.freeze({
 })
 
 export const urgencyColor = (u) => URGENCY_TYPES[u] || NEUTRAL
+
+/** Churn risk level: how close a customer is to leaving. */
+const RISK_TYPES = Object.freeze({
+  critical: NEGATIVE,
+  high: WARNING,
+  medium: NEUTRAL,
+})
+
+export const riskTagType = (level) => RISK_TYPES[level] || NEUTRAL
+
+/** Hex form for the card's left edge -- same bands as the tag. */
+export const riskColor = (level) =>
+  ({ critical: negative, high: warning, medium: neutral })[level] || border

@@ -378,6 +378,75 @@ code, pre, kbd, samp {
   color: var(--text-disabled);
 }
 
+/* Spacing utilities, one class per token step. The four rearranged views use
+ * these instead of inline margins: a spacing decision should read as a token
+ * decision, and 186 inline margins was how four different "gaps between
+ * blocks" survived on one page. */
+.mt-1 { margin-top: var(--space-1); }
+.mt-2 { margin-top: var(--space-2); }
+.mt-3 { margin-top: var(--space-3); }
+.mt-4 { margin-top: var(--space-4); }
+.mt-6 { margin-top: var(--space-6); }
+.mb-1 { margin-bottom: var(--space-1); }
+.mb-2 { margin-bottom: var(--space-2); }
+.mb-3 { margin-bottom: var(--space-3); }
+.mb-4 { margin-bottom: var(--space-4); }
+.mb-6 { margin-bottom: var(--space-6); }
+.ml-2 { margin-left: var(--space-2); }
+.ml-3 { margin-left: var(--space-3); }
+
+.text-positive {
+  color: var(--positive);
+}
+
+.hint-block {
+  display: block;
+}
+
+/* A .hint with its top gap removed, for text that follows a title closely. */
+.hint-tight {
+  margin-top: 0;
+}
+
+.job-name {
+  font-weight: 600;
+  font-size: var(--fs-sm);
+}
+
+/* Toolbar filter widths: the values are the slots the filters occupy when the
+ * toolbar is one row, and they wrap when it is not. */
+.filter-search { width: 240px; }
+.filter-select { width: 130px; }
+.filter-select--wide { width: 150px; }
+.form-fill { width: 100%; }
+
+.table-pager {
+  margin-top: var(--space-4);
+  justify-content: flex-end;
+}
+
+/* Score bands, matching scoreClass() in constants/status.js: >=70 accent,
+ * 40-69 warning, below that neutral. A low score is "not relevant", not
+ * "wrong", so it does not go red. */
+.score-high { color: var(--accent); font-weight: 600; }
+.score-mid { color: var(--warning); font-weight: 600; }
+.score-low { color: var(--text-3); font-weight: 600; }
+
+.clickable {
+  cursor: pointer;
+}
+
+.popover-subject {
+  font-weight: 600;
+  margin-bottom: var(--space-1);
+}
+
+/* Draft bodies come in two lengths: the scanned-leads one is a full email,
+ * the import preview one is a short first paragraph. */
+.popover-body--short {
+  max-height: 300px;
+}
+
 .card-title {
   font-weight: 600;
 }

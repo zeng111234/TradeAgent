@@ -25,13 +25,13 @@
             <el-descriptions-item label="Country">{{ customer.country || '-' }}</el-descriptions-item>
             <el-descriptions-item label="City">{{ customer.city || '-' }}</el-descriptions-item>
             <el-descriptions-item label="Website">
-              <a v-if="customer.website" :href="customer.website" target="_blank" style="color: #409eff">{{ customer.website }}</a>
+              <a v-if="customer.website" :href="customer.website" target="_blank" style="color: var(--accent)">{{ customer.website }}</a>
               <span v-else>-</span>
             </el-descriptions-item>
             <el-descriptions-item label="Industry">{{ customer.industry || '-' }}</el-descriptions-item>
             <el-descriptions-item label="Products" :span="2">{{ customer.products || '-' }}</el-descriptions-item>
             <el-descriptions-item label="Score">
-              <span :style="{ color: customer.score >= 70 ? '#67c23a' : '#e6a23c', fontWeight: 700, fontSize: '18px' }">
+              <span :style="{ color: customer.score >= 70 ? 'var(--positive)' : 'var(--warning)', fontWeight: 700, fontSize: '18px' }">
                 {{ customer.score }}
               </span>
             </el-descriptions-item>
@@ -85,7 +85,7 @@
             >
               <el-card shadow="never" body-style="padding: 12px">
                 <el-tag size="small" :type="noteTypeColor(note.note_type)" style="margin-bottom: 4px">{{ note.note_type }}</el-tag>
-                <p style="margin: 0; color: #606266">{{ note.content }}</p>
+                <p style="margin: 0; color: var(--text-2)">{{ note.content }}</p>
               </el-card>
             </el-timeline-item>
           </el-timeline>
@@ -122,18 +122,18 @@
           </template>
           <div v-if="followUpAdvice">
             <el-alert :title="followUpAdvice.urgency" :type="followUpAdvice.urgency_type" :closable="false" show-icon style="margin-bottom: 12px" />
-            <p style="margin: 0 0 8px; font-size: 13px; color: #303133">{{ followUpAdvice.advice }}</p>
+            <p style="margin: 0 0 8px; font-size: 13px; color: var(--text-1)">{{ followUpAdvice.advice }}</p>
             <div v-if="followUpAdvice.next_steps && followUpAdvice.next_steps.length">
-              <p style="margin: 0 0 4px; font-size: 12px; color: #909399; font-weight: 600">Next Steps:</p>
+              <p style="margin: 0 0 4px; font-size: 12px; color: var(--text-3); font-weight: 600">Next Steps:</p>
               <ul style="margin: 0; padding-left: 16px">
-                <li v-for="s in followUpAdvice.next_steps" :key="s" style="font-size: 12px; color: #606266; margin-bottom: 2px">{{ s }}</li>
+                <li v-for="s in followUpAdvice.next_steps" :key="s" style="font-size: 12px; color: var(--text-2); margin-bottom: 2px">{{ s }}</li>
               </ul>
             </div>
             <el-button v-if="followUpAdvice.draft_email" size="small" style="margin-top: 8px" @click="showFollowUpDraft = !showFollowUpDraft">
               {{ showFollowUpDraft ? 'Hide' : 'Show' }} Draft Email
             </el-button>
-            <div v-if="showFollowUpDraft && followUpAdvice.draft_email" style="background: #f5f7fa; padding: 12px; border-radius: 6px; margin-top: 8px">
-              <div v-html="followUpAdvice.draft_email" style="font-size: 13px; color: #303133"></div>
+            <div v-if="showFollowUpDraft && followUpAdvice.draft_email" style="background: var(--bg-subtle); padding: 12px; border-radius: 6px; margin-top: 8px">
+              <div v-html="followUpAdvice.draft_email" style="font-size: 13px; color: var(--text-1)"></div>
               <el-button size="small" type="primary" style="margin-top: 8px" @click="sendFollowUpDraft">Send This Email</el-button>
             </div>
           </div>
@@ -159,7 +159,7 @@
           <template #header><span style="font-weight: 600">AI Match Score</span></template>
           <div style="text-align: center; padding: 20px 0">
             <el-progress type="dashboard" :percentage="customer.score" :color="scoreColor" :width="120" />
-            <p style="margin-top: 12px; color: #909399; font-size: 13px">Product match score</p>
+            <p style="margin-top: 12px; color: var(--text-3); font-size: 13px">Product match score</p>
           </div>
         </el-card>
       </el-col>

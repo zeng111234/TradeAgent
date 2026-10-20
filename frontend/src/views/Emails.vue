@@ -15,19 +15,19 @@
       </el-col>
       <el-col :span="6">
         <div class="stat-card">
-          <div class="stat-value" style="color: #67c23a">{{ emailStats.open_rate }}%</div>
+          <div class="stat-value" style="color: var(--positive)">{{ emailStats.open_rate }}%</div>
           <div class="stat-label">Open Rate</div>
         </div>
       </el-col>
       <el-col :span="6">
         <div class="stat-card">
-          <div class="stat-value" style="color: #409eff">{{ emailStats.reply_rate }}%</div>
+          <div class="stat-value" style="color: var(--accent)">{{ emailStats.reply_rate }}%</div>
           <div class="stat-label">Reply Rate</div>
         </div>
       </el-col>
       <el-col :span="6">
         <div class="stat-card">
-          <div class="stat-value" style="color: #f56c6c">{{ emailStats.total_failed }}</div>
+          <div class="stat-value" style="color: var(--negative)">{{ emailStats.total_failed }}</div>
           <div class="stat-label">Failed</div>
         </div>
       </el-col>
@@ -45,7 +45,7 @@
             <el-button size="small" @click="loadData" :loading="false">
               <el-icon><Refresh /></el-icon> Refresh
             </el-button>
-            <span v-if="batchProgress" style="margin-right: 8px; font-size: 12px; color: #909399">{{ batchProgress }}</span>
+            <span v-if="batchProgress" style="margin-right: 8px; font-size: 12px; color: var(--text-3)">{{ batchProgress }}</span>
           <el-button size="small" @click="sendAllPending" :loading="sendingAll" :disabled="!pendingEmails.length">
               <el-icon><Promotion /></el-icon> Send All ({{ pendingEmails.length }})
             </el-button>
@@ -55,11 +55,11 @@
 
       <el-empty v-if="!pendingEmails.length" description="No pending drafts. Import leads from Dashboard first." />
 
-      <div v-for="email in pendingEmails" :key="email.id" style="border: 1px solid #ebeef5; border-radius: 8px; padding: 16px; margin-bottom: 12px; background: #fafafa">
+      <div v-for="email in pendingEmails" :key="email.id" style="border: 1px solid var(--border-subtle); border-radius: 8px; padding: 16px; margin-bottom: 12px; background: var(--bg-subtle)">
         <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px">
           <div>
             <strong>To:</strong> {{ email.to_email }}
-            <span v-if="email.to_name" style="color: #909399; margin-left: 8px">({{ email.to_name }})</span>
+            <span v-if="email.to_name" style="color: var(--text-3); margin-left: 8px">({{ email.to_name }})</span>
           </div>
           <div>
             <el-tag type="warning" size="small">Pending</el-tag>
@@ -70,8 +70,8 @@
           <span v-if="editingId !== email.id">{{ email.subject }}</span>
           <el-input v-else v-model="editSubject" size="small" style="width: 80%; margin-left: 4px" />
         </div>
-        <div style="margin-bottom: 12px; color: #606266; font-size: 13px; line-height: 1.6">
-          <div v-if="editingId !== email.id" style="white-space: pre-wrap; background: #fff; padding: 12px; border-radius: 4px; border: 1px solid #eee">{{ email.body }}</div>
+        <div style="margin-bottom: 12px; color: var(--text-2); font-size: 13px; line-height: 1.6">
+          <div v-if="editingId !== email.id" style="white-space: pre-wrap; background: var(--bg-card); padding: 12px; border-radius: 4px; border: 1px solid var(--border-subtle)">{{ email.body }}</div>
           <el-input v-else v-model="editBody" type="textarea" :rows="5" />
         </div>
         <div style="display: flex; gap: 8px">
@@ -178,7 +178,7 @@
           </el-form>
 
           <!-- AI Result -->
-          <div v-if="aiResult" style="background: #f5f7fa; padding: 16px; border-radius: 8px; margin-top: 12px">
+          <div v-if="aiResult" style="background: var(--bg-subtle); padding: 16px; border-radius: 8px; margin-top: 12px">
             <h4 style="margin: 0 0 8px">
               Generated Email:
               <el-tag v-if="aiResult.ai_powered" type="success" size="small">AI 生成</el-tag>
@@ -193,7 +193,7 @@
               :title="`以下内容是内置模板，不是模型写的。原因：${aiResult.fallback_reason}`"
             />
             <p><strong>Subject:</strong> {{ aiResult.subject }}</p>
-            <div v-html="aiResult.body" style="margin: 8px 0; color: #606266"></div>
+            <div v-html="aiResult.body" style="margin: 8px 0; color: var(--text-2)"></div>
             <el-button size="small" @click="useAiResult">
               Use This Email
             </el-button>
@@ -230,9 +230,9 @@
             <el-table-column label="Error" min-width="160">
               <template #default="{ row }">
                 <el-tooltip v-if="row.error_message" :content="row.error_message" placement="top">
-                  <span style="color: #f56c6c; font-size: 12px">{{ row.error_message }}</span>
+                  <span style="color: var(--negative); font-size: 12px">{{ row.error_message }}</span>
                 </el-tooltip>
-                <span v-else style="color: #c0c4cc">-</span>
+                <span v-else style="color: var(--text-disabled)">-</span>
               </template>
             </el-table-column>
             <el-table-column prop="open_count" label="Opens" width="70" align="center" />
@@ -241,7 +241,7 @@
             </el-table-column>
             <el-table-column label="Reply" width="130">
               <template #default="{ row }">
-                <span v-if="row.status === 'replied'" style="color: #909399; font-size: 12px">
+                <span v-if="row.status === 'replied'" style="color: var(--text-3); font-size: 12px">
                   {{ formatDate(row.replied_at) }}
                 </span>
                 <el-button
