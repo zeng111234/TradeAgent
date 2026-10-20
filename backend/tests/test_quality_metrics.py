@@ -198,12 +198,119 @@ async def test_draft_acceptance_is_decided_proposals_only(db):
     assert approvals["acceptance_rate"] == 66.7
 
 
-async def test_the_suggestion_to_reply_loop_is_declared_unavailable(db):
-    """The honest gap: kind/attempt are not persisted, so there is no grouping."""
-    report = await _report(db)
+async def test_reply_rate_is_grouped_by_the_suggestion_that_produced_the_mail(db):
+    """The loop the columns were added for: what advice gets answered."""
+    report = await _closed_loop_report(db)
+    loop = report["closed_loop"]
 
-    assert report["closed_loop"]["available"] is False
-    assert "never stored" in report["closed_loop"]["reason"]
+    assert loop["available"] is True
+    # Five delivered: three chases (one answered), one answer_them (answered),
+    # one hand-written. The simulated and bounced rows are not in here.
+    assert loop["sent"] == 5
+    assert loop["replied"] == 2
+    assert loop["reply_rate"] == 40.0
+
+    by_kind = {item["kind"]: item for item in loop["by_kind"]}
+    assert by_kind["send_follow_up"] == {
+        "kind": "send_follow_up", "sent": 3, "replied": 1, "reply_rate": 33.3,
+    }
+    assert by_kind["answer_them"]["reply_rate"] == 100.0
+    # A one-row bucket still gets a rate; a bucket with no mail gets ``None``.
+    assert by_kind["unattributed"]["sent"] == 1
+
+
+async def test_mail_without_provenance_is_counted_apart_not_averaged_in(db):
+    """Silence is a value: one hand-written mail, and the coverage says so."""
+    loop = (await _closed_loop_report(db))["closed_loop"]
+
+    assert loop["attributed"] == 4
+    assert loop["unattributed"] == 1
+    assert loop["coverage"] == 80.0
+
+
+async def test_a_send_that_never_left_the_process_is_excluded(db):
+    """No SMTP means no reply is possible; counting it would tie the rate to config."""
+    loop = (await _closed_loop_report(db))["closed_loop"]
+
+    assert loop["excluded"] == {"simulated": 1, "bounced": 1, "failed": 0}
+    # And the header count matches the buckets it is the sum of.
+    assert loop["sent"] == sum(item["sent"] for item in loop["by_kind"])
+
+
+async def test_attempts_sort_numerically_and_unknown_goes_last(db):
+    """``unknown`` is a real bucket: the kind was known, the count was not."""
+    loop = (await _closed_loop_report(db))["closed_loop"]
+
+    assert [item["attempt"] for item in loop["by_attempt"]] == ["0", "1", "unknown"]
+    first = loop["by_attempt"][0]
+    assert (first["sent"], first["replied"], first["reply_rate"]) == (2, 1, 50.0)
+    # The answered mail whose count was never recorded.
+    assert loop["by_attempt"][2]["replied"] == 1
+
+
+async def test_a_window_with_no_delivered_mail_reports_no_rate(db):
+    """``0.0`` would read as "ignored"; there was nobody to ignore."""
+    await _seed(db)
+    report = await get_quality_report(
+        db, days=1, now=datetime(2020, 2, 1, 12, 0, 0)
+    )
+    loop = report["closed_loop"]
+
+    assert loop["available"] is True
+    assert loop["sent"] == 0
+    assert loop["reply_rate"] is None
+    assert loop["by_kind"] == []
+    # The caveats stay attached even when the numbers are absent: an empty
+    # table with no explanation is how "no data" becomes "all good".
+    assert loop["caveats"]
+
+
+async def _closed_loop_report(db, days=3):
+    """The base seed plus mail that carries a suggestion.
+
+    Base rows stay untouched so the approval numbers keep asserting what they
+    asserted: this file is about two different questions sharing one table, and
+    changing the fixture for one of them would make the other's failure
+    unreadable.
+    """
+    await _seed(db)
+    # The base rows predate provenance and would be counted as unattributed.
+    # This file's subject is the table built from mail that carries a
+    # suggestion, so they are removed rather than mixed into every assertion.
+    await db.execute(delete(EmailLog).where(EmailLog.to_email.like("quality-%")))
+    db.add_all([
+        # Two first contacts under the same kind, one of them answered.
+        EmailLog(to_email="quality-c1@example.test", subject="s", body="b",
+                 status=EmailStatus.SENT, suggestion_kind="send_follow_up",
+                 suggestion_attempt=0, created_at=datetime(2020, 1, 13, 9, 0)),
+        EmailLog(to_email="quality-c2@example.test", subject="s", body="b",
+                 status=EmailStatus.REPLIED, suggestion_kind="send_follow_up",
+                 suggestion_attempt=0, replied_at=datetime(2020, 1, 13, 15, 0),
+                 created_at=datetime(2020, 1, 13, 9, 30)),
+        # A chase, ignored.
+        EmailLog(to_email="quality-c3@example.test", subject="s", body="b",
+                 status=EmailStatus.SENT, suggestion_kind="send_follow_up",
+                 suggestion_attempt=1, created_at=datetime(2020, 1, 14, 9, 0)),
+        # Answered, but the count was never recorded -> its own attempt bucket.
+        EmailLog(to_email="quality-c4@example.test", subject="s", body="b",
+                 status=EmailStatus.REPLIED, suggestion_kind="answer_them",
+                 suggestion_attempt=None, replied_at=datetime(2020, 1, 14, 12, 0),
+                 created_at=datetime(2020, 1, 14, 10, 0)),
+        # Hand-written: no provenance, and counted as such.
+        EmailLog(to_email="quality-c5@example.test", subject="s", body="b",
+                 status=EmailStatus.SENT, created_at=datetime(2020, 1, 15, 9, 0)),
+        # Never left the process: cannot be answered, so it must not dilute a rate.
+        EmailLog(to_email="quality-c6@example.test", subject="s", body="b",
+                 status=EmailStatus.SENT, simulated=True,
+                 suggestion_kind="send_follow_up", suggestion_attempt=2,
+                 created_at=datetime(2020, 1, 15, 9, 30)),
+        # Bounced: delivered to nobody.
+        EmailLog(to_email="quality-c7@example.test", subject="s", body="b",
+                 status=EmailStatus.BOUNCED, suggestion_kind="send_follow_up",
+                 suggestion_attempt=0, created_at=datetime(2020, 1, 15, 10, 0)),
+    ])
+    await db.commit()
+    return await get_quality_report(db, days=days, now=NOW)
 
 
 async def test_the_query_never_reads_the_trace_column(db):

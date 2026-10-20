@@ -170,6 +170,12 @@ def _is_same_request(
     caller is told "sent" for a message that was never sent, and nothing in the
     response says so. Compared on the fields the recipient would actually see,
     because the row is evidence of what was sent, not of what was asked for.
+
+    Deliberately excludes ``suggestion_kind``/``suggestion_attempt``: those are
+    provenance, not content. A retry that repeats the same message but drops
+    metadata is still the same message, and failing it with 409 would turn an
+    ordinary retry into an error the caller cannot act on. The stored values
+    stay as first written -- see the replay branch in ``send_single_email``.
     """
     return (
         row.customer_id == customer_id
@@ -266,6 +272,10 @@ async def send_single_email(
         ):
             raise _key_reuse_error(seen)
         if seen.status in SETTLED_SEND_STATES:
+            # A replay answers from the record, so it never relabels the mail
+            # that was actually sent: provenance describes the first send, and
+            # a retry that arrives carrying a different kind is a bug in the
+            # caller, not a correction to history.
             response.status_code = 200
             return as_replay(seen)
         if seen.status == EmailStatus.SENDING:
@@ -294,6 +304,10 @@ async def send_single_email(
 
     # Claim before sending. The row exists (status `sending`) before the mail is
     # handed over, so a crash in between leaves evidence instead of a hole.
+    #
+    # The provenance travels with the claim, not with a later update: the update
+    # would be a second write that a crash can skip, and a send whose suggestion
+    # is unknown after a crash is exactly the gap this column exists to close.
     claim_row = EmailLog(
         customer_id=data.customer_id,
         template_id=data.template_id,
@@ -303,6 +317,8 @@ async def send_single_email(
         body=body,
         tracking_id=tracking_id,
         status=EmailStatus.SENDING,
+        suggestion_kind=data.suggestion_kind,
+        suggestion_attempt=data.suggestion_attempt,
     )
     db.add(claim_row)
     try:

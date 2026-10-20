@@ -90,6 +90,21 @@ class EmailLog(Base):
     #: flag is what tells a human the difference.
     simulated = Column(Boolean, default=False, nullable=False)
 
+    # --- what was suggested before this mail existed ------------------------
+    # The plan computes a kind and an attempt for every customer and used to
+    # throw both away once the draft was built. A reply was therefore
+    # attributable to a customer but not to the advice that produced the mail,
+    # and "which suggestion gets answered" could not be asked at all.
+    #
+    # Indexed because "reply rate by kind" is the query the column exists for
+    # and the quality report runs it every time it is opened.
+    suggestion_kind = Column(String(40), nullable=True, index=True)
+    #: 0 = first contact, 1 = first chase. NULL means the mail arrived without
+    #: provenance: composed by hand, written by the agent's own tool, or sent
+    #: before this column existed. NULL is a value, not a gap to be filled --
+    #: see ``app/suggestion.py``.
+    suggestion_attempt = Column(Integer, nullable=True)
+
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
     sent_at = Column(DateTime, nullable=True)
 

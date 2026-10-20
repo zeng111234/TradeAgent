@@ -742,7 +742,18 @@ const runDailyIntelligence = async () => {
 const showDraftEmail = (a) => { a.showDraft = !a.showDraft }
 const sendQuickEmail = async (a) => {
   try {
-    await emailApi.send({ to_email: a.contact_email, to_name: a.contact_name, subject: a.draft_subject || `Following up - ${a.company_name}`, body: a.draft_email || 'Following up.', customer_id: a.customer_id })
+    // Carry the plan's decision into the send. Without it the mail exists but
+    // the reason for it does not, and "which suggestion gets answered" can
+    // never be answered for mail sent from this screen.
+    await emailApi.send({
+      to_email: a.contact_email,
+      to_name: a.contact_name,
+      subject: a.draft_subject || `Following up - ${a.company_name}`,
+      body: a.draft_email || 'Following up.',
+      customer_id: a.customer_id,
+      suggestion_kind: a.kind,
+      suggestion_attempt: a.attempt,
+    })
     ElMessage.success(`Email sent to ${a.contact_email}`)
   } catch (e) { ElMessage.error('Failed to send email') }
 }

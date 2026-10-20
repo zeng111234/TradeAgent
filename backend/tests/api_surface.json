@@ -324,6 +324,115 @@
             "type": "object"
           },
           "closed_loop": {
+            "properties": {
+              "attributed": {
+                "type": "integer"
+              },
+              "available": {
+                "type": "boolean"
+              },
+              "by_attempt": {
+                "items": {
+                  "properties": {
+                    "attempt": {
+                      "type": "string"
+                    },
+                    "replied": {
+                      "type": "integer"
+                    },
+                    "reply_rate": {
+                      "anyOf": [
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "sent": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "attempt"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "by_kind": {
+                "items": {
+                  "properties": {
+                    "kind": {
+                      "type": "string"
+                    },
+                    "replied": {
+                      "type": "integer"
+                    },
+                    "reply_rate": {
+                      "anyOf": [
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "sent": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "kind"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "caveats": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "coverage": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "excluded": {
+                "type": "object"
+              },
+              "note": {
+                "type": "string"
+              },
+              "replied": {
+                "type": "integer"
+              },
+              "reply_rate": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "sent": {
+                "type": "integer"
+              },
+              "unattributed": {
+                "type": "integer"
+              }
+            },
             "type": "object"
           },
           "daily": {
@@ -1561,6 +1670,26 @@
             },
             "subject": {
               "type": "string"
+            },
+            "suggestion_attempt": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "suggestion_kind": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "template_id": {
               "anyOf": [
@@ -3673,6 +3802,29 @@
               }
             ]
           },
+          "suggestion_attempt": {
+            "anyOf": [
+              {
+                "maximum": 99.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "suggestion_kind": {
+            "anyOf": [
+              {
+                "maxLength": 40,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "template_id": {
             "anyOf": [
               {
@@ -3796,6 +3948,26 @@
           },
           "subject": {
             "type": "string"
+          },
+          "suggestion_attempt": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "suggestion_kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "template_id": {
             "anyOf": [

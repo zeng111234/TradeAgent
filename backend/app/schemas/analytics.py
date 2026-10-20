@@ -103,6 +103,47 @@ class QualityDay(BaseModel):
     jobs_skipped: int = 0
 
 
+class QualitySuggestionBucket(BaseModel):
+    """One row of the suggestion→reply table."""
+    sent: int = 0
+    replied: int = 0
+    #: ``null`` when the bucket has no delivered mail -- not 0%, which would
+    #: read as "every one of them was ignored".
+    reply_rate: float | None = None
+
+
+class QualitySuggestionKindBucket(QualitySuggestionBucket):
+    #: A planned action, or ``unattributed`` for mail with no provenance.
+    kind: str
+
+
+class QualitySuggestionAttemptBucket(QualitySuggestionBucket):
+    #: ``"0"`` is a first contact, ``"unknown"`` means the kind was recorded
+    #: without an attempt count. A string because of that word.
+    attempt: str
+
+
+class QualityClosedLoop(BaseModel):
+    """Reply rate by what was suggested -- the loop, measured.
+
+    Says what it excludes and why. A rate whose denominator nobody can
+    reconstruct is a number that will be argued about instead of used.
+    """
+    available: bool = True
+    sent: int = 0
+    replied: int = 0
+    reply_rate: float | None = None
+    attributed: int = 0
+    unattributed: int = 0
+    #: Share of delivered mail that carried a suggestion kind.
+    coverage: float | None = None
+    excluded: dict[str, int] = {}
+    by_kind: list[QualitySuggestionKindBucket] = []
+    by_attempt: list[QualitySuggestionAttemptBucket] = []
+    note: str = ""
+    caveats: list[str] = []
+
+
 class QualityReport(BaseModel):
     """Operational metrics for a window -- not a score, and not answer quality."""
     window: QualityWindow
@@ -111,4 +152,4 @@ class QualityReport(BaseModel):
     jobs: QualityJobStats
     approvals: QualityApprovals
     daily: list[QualityDay]
-    closed_loop: dict
+    closed_loop: QualityClosedLoop

@@ -50,41 +50,20 @@ from app.services.follow_up_policy import (
     ThreadState,
 )
 
-# --- the closed vocabulary of next actions ----------------------------------
-
-#: They spoke last. The only entry whose next action is never in doubt.
-KIND_ANSWER_THEM = "answer_them"
-#: We spoke last and they have not answered; keep trying by email. Also the
-#: entry for a draft that has been sitting unsent.
-KIND_SEND_FOLLOW_UP = "send_follow_up"
-#: A proposal is written and waiting for a human to approve or reject it.
-#: Nothing further is proposed for this customer until that decision is made.
-KIND_AWAITING_APPROVAL = "awaiting_approval"
-#: Enough emails with no answer. Stop sending the same thing.
-KIND_CHANGE_CHANNEL = "change_channel"
-#: The last attempt never arrived, so nothing is awaiting a reply.
-KIND_FIX_DELIVERY = "fix_delivery"
-#: Parked: no further chasing, but not forgotten.
-KIND_REVIEW = "review"
-
-#: The closed vocabulary of next actions. Closed on purpose: an open one grows a
-#: new synonym every time somebody edits a prompt, and nothing can assert on it.
-#: Every kind below is produced by a constructed state in the tests, so none of
-#: them is decoration -- an earlier draft carried a "keep_momentum" kind that no
-#: reachable state could produce.
-ACTION_KINDS = (
+# The vocabulary lives in ``app.suggestion`` because it is written into
+# ``email_logs`` at send time and read back by the quality report -- the plan is
+# only its first producer. Re-exported here because this module is where every
+# caller already imports it from.
+from app.suggestion import (  # noqa: F401  (re-exported for existing importers)
+    ACTION_KINDS,
+    EMAILING_KINDS,
     KIND_ANSWER_THEM,
-    KIND_SEND_FOLLOW_UP,
     KIND_AWAITING_APPROVAL,
     KIND_CHANGE_CHANNEL,
     KIND_FIX_DELIVERY,
     KIND_REVIEW,
+    KIND_SEND_FOLLOW_UP,
 )
-
-#: Kinds that mean "write to them again". The caller uses this to decide whether
-#: a draft is wanted, so neither a quit decision nor a pending proposal comes
-#: with an email attached -- a proposal to approve a proposal is not a thing.
-EMAILING_KINDS = (KIND_SEND_FOLLOW_UP,)
 
 
 @dataclass(frozen=True)

@@ -628,3 +628,139 @@ def test_two_starters_on_one_database_both_survive(tmp_path):
     finally:
         asyncio.run(engine_a.dispose())
         asyncio.run(engine_b.dispose())
+
+
+#: ``email_logs`` as it stood before 0010, copied from a real database's
+#: ``sqlite_master`` (the foreign keys are dropped: a scratch database has no
+#: ``customers`` table and the pragma that enforces them is off by default).
+LEGACY_EMAIL_LOGS = """
+CREATE TABLE email_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    customer_id INTEGER,
+    template_id INTEGER,
+    to_email VARCHAR(200) NOT NULL,
+    to_name VARCHAR(200),
+    subject VARCHAR(500) NOT NULL,
+    body TEXT NOT NULL,
+    status VARCHAR(9),
+    tracking_id VARCHAR(100),
+    opened_at DATETIME,
+    open_count INTEGER,
+    replied_at DATETIME,
+    error_message TEXT,
+    created_at DATETIME,
+    sent_at DATETIME,
+    simulated INTEGER DEFAULT 0
+)
+"""
+
+
+def test_legacy_mail_stays_unattributed_after_the_provenance_migration(scratch):
+    """A backfill here would be a guess counted as a measurement.
+
+    Mail sent before the column existed has no suggestion behind it in the
+    record. Filling it with the most likely kind would make the by-kind table
+    look complete, and every rate in it would then be computed over rows whose
+    provenance was invented.
+    """
+    import asyncio
+
+    as_legacy_database(scratch)
+
+    async def build(conn):
+        await conn.execute(text(LEGACY_EMAIL_LOGS))
+        await conn.execute(text(
+            "INSERT INTO email_logs (to_email, subject, body, status) VALUES "
+            "('old@example.test', 's', 'b', 'SENT')"
+        ))
+
+    asyncio.run(scratch.run(build))
+    assert "suggestion_kind" not in columns(scratch, "email_logs")
+
+    report = asyncio.run(scratch.run(apply_migrations))
+
+    assert "0010_email_logs_suggestion_provenance" in report["applied"], report
+    assert {"suggestion_kind", "suggestion_attempt"} <= set(columns(scratch, "email_logs"))
+
+    async def read(conn):
+        rows = await conn.execute(text(
+            "SELECT suggestion_kind, suggestion_attempt FROM email_logs"
+        ))
+        return rows.fetchall()
+
+    assert asyncio.run(scratch.run(read)) == [(None, None)], (
+        "an old row was given a provenance it never had"
+    )
+
+    names = indexes(scratch, "email_logs")
+    assert "ix_email_logs_suggestion_kind" in names, (
+        "without the index, 'reply rate by kind' is a scan of the whole table"
+    )
+
+
+#: ``email_logs`` as it stood before 0010, copied from a real database's
+#: ``sqlite_master`` (the foreign keys are dropped: a scratch database has no
+#: ``customers`` table and the pragma that enforces them is off by default).
+LEGACY_EMAIL_LOGS = """
+CREATE TABLE email_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    customer_id INTEGER,
+    template_id INTEGER,
+    to_email VARCHAR(200) NOT NULL,
+    to_name VARCHAR(200),
+    subject VARCHAR(500) NOT NULL,
+    body TEXT NOT NULL,
+    status VARCHAR(9),
+    tracking_id VARCHAR(100),
+    opened_at DATETIME,
+    open_count INTEGER,
+    replied_at DATETIME,
+    error_message TEXT,
+    created_at DATETIME,
+    sent_at DATETIME,
+    simulated INTEGER DEFAULT 0
+)
+"""
+
+
+def test_legacy_mail_stays_unattributed_after_the_provenance_migration(scratch):
+    """A backfill here would be a guess counted as a measurement.
+
+    Mail sent before the column existed has no suggestion behind it in the
+    record. Filling it with the most likely kind would make the by-kind table
+    look complete, and every rate in it would then be computed over rows whose
+    provenance was invented.
+    """
+    import asyncio
+
+    as_legacy_database(scratch)
+
+    async def build(conn):
+        await conn.execute(text(LEGACY_EMAIL_LOGS))
+        await conn.execute(text(
+            "INSERT INTO email_logs (to_email, subject, body, status) VALUES "
+            "('old@example.test', 's', 'b', 'SENT')"
+        ))
+
+    asyncio.run(scratch.run(build))
+    assert "suggestion_kind" not in columns(scratch, "email_logs")
+
+    report = asyncio.run(scratch.run(apply_migrations))
+
+    assert "0010_email_logs_suggestion_provenance" in report["applied"], report
+    assert {"suggestion_kind", "suggestion_attempt"} <= set(columns(scratch, "email_logs"))
+
+    async def read(conn):
+        rows = await conn.execute(text(
+            "SELECT suggestion_kind, suggestion_attempt FROM email_logs"
+        ))
+        return rows.fetchall()
+
+    assert asyncio.run(scratch.run(read)) == [(None, None)], (
+        "an old row was given a provenance it never had"
+    )
+
+    names = indexes(scratch, "email_logs")
+    assert "ix_email_logs_suggestion_kind" in names, (
+        "without the index, 'reply rate by kind' is a scan of the whole table"
+    )

@@ -191,6 +191,21 @@ async def _stop_code_settled(conn: AsyncConnection) -> bool:
     return column and index
 
 
+async def _suggestion_provenance_settled(conn: AsyncConnection) -> bool:
+    """Both columns and the index.
+
+    The two columns answer different halves of the same question: *what* was
+    suggested, and *how many times before*. A schema with only the first can
+    say which advice works and not whether the second chase is worth writing.
+    """
+    kind = await _column_settled(conn, "email_logs", "suggestion_kind")
+    attempt = await _column_settled(conn, "email_logs", "suggestion_attempt")
+    index = await _indexes_settled(
+        conn, "email_logs", ["ix_email_logs_suggestion_kind"]
+    )
+    return kind and attempt and index
+
+
 async def _idempotency_table_settled(conn: AsyncConnection) -> bool:
     """The table and its unique index, because either alone is useless.
 
@@ -369,6 +384,25 @@ MIGRATIONS: list[Migration] = [
             "ON idempotency_keys (scope, key)",
         ],
         guard=_idempotency_table_settled,
+    ),
+    Migration(
+        id="0010_email_logs_suggestion_provenance",
+        description=(
+            "record what was suggested when a mail was written, next to the mail "
+            "itself. The plan computes a kind and an attempt for every customer "
+            "and dropped both once the draft existed, so a reply was attributable "
+            "to a customer but not to the advice behind the mail, and 'which "
+            "suggestion gets answered' had no answer. No backfill: rows that "
+            "predate the column stay NULL and are reported as unattributed, "
+            "because a guessed provenance would be counted as if it were known"
+        ),
+        statements=[
+            "ALTER TABLE email_logs ADD COLUMN suggestion_kind VARCHAR(40)",
+            "ALTER TABLE email_logs ADD COLUMN suggestion_attempt INTEGER",
+            "CREATE INDEX IF NOT EXISTS ix_email_logs_suggestion_kind "
+            "ON email_logs (suggestion_kind)",
+        ],
+        guard=_suggestion_provenance_settled,
     ),
 ]
 

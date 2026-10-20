@@ -22,11 +22,11 @@ What it deliberately does **not** do
 * **It does not invent a quality score.** There is no answer-quality rubric in
   this repository, and averaging the numbers that do exist into one "health
   score" would be judgement dressed as arithmetic. The caller sees the parts.
-* **It does not claim the suggestion→reply loop.** That query needs the plan's
-  ``kind`` and ``attempt`` persisted next to the sent mail. They are computed on
-  the fly in ``follow_up_plan`` and never stored, so there is nothing to group by.
-  The response says so explicitly instead of returning a number that looks like
-  an answer.
+* **It does not make the suggestion→reply loop look cleaner than it is.** The
+  loop is now measurable (``email_logs.suggestion_kind`` is written at send
+  time), but a reply rate per *email* is not a reply rate per *customer*: three
+  chases to the same person are not three independent observations. The response
+  carries that caveat next to the numbers instead of leaving it to the reader.
 
 Percentiles are computed from the elapsed values themselves rather than with a
 SQL percentile function: SQLite has none, and a nearest-rank approximation that
@@ -44,9 +44,22 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.agent_run import AgentRun
 from app.models.email_log import EmailLog, EmailStatus
 from app.models.job_run import ABANDONED, FAILED, RUNNING, SKIPPED, SUCCEEDED, JobRun
+from app.suggestion import UNATTRIBUTED
 
 #: Statuses that mean "the run finished and did not succeed".
 RUN_FAILED = ("error", "stalled", "truncated")
+
+#: A mail in one of these states reached the recipient, or at least left this
+#: process with a server's acknowledgement. Only these can be replied to, so
+#: only these belong in a reply-rate denominator.
+SENT_STATES = frozenset({
+    EmailStatus.SENT, EmailStatus.DELIVERED,
+    EmailStatus.OPENED, EmailStatus.REPLIED,
+})
+
+#: Attempts are small. Anything past this is folded into ``5+`` so a data-entry
+#: accident cannot turn the by-attempt table into a long tail of one-row buckets.
+MAX_ATTEMPT_BUCKET = 5
 
 #: How many stop reasons / prompt versions to return. The tail is counted in
 #: ``other`` rather than dropped, so the list cannot silently hide a new reason.
@@ -98,6 +111,111 @@ def _rate(numerator: int, denominator: int) -> Optional[float]:
     if denominator <= 0:
         return None
     return round(numerator / denominator * 100, 1)
+
+
+def _attempt_bucket(attempt: Optional[int]) -> str:
+    """The label an attempt count is grouped under.
+
+    ``unknown`` is a real bucket, not a placeholder: a caller can know which
+    suggestion produced a mail without knowing how many tries preceded it, and
+    collapsing that into ``0`` would report first contacts that were not.
+    """
+    if attempt is None:
+        return "unknown"
+    if attempt >= MAX_ATTEMPT_BUCKET:
+        return f"{MAX_ATTEMPT_BUCKET}+"
+    return str(attempt)
+
+
+def _bucket_order(label: str) -> tuple[int, int | str]:
+    """Sort attempts numerically, with ``unknown`` last."""
+    if label == "unknown":
+        return (1, 0)
+    return (0, int(label.rstrip("+")))
+
+
+def _replied(row) -> bool:
+    """Did this mail get an answer?
+
+    Two fields can say so and both mean the same thing: ``replied_at`` is what
+    the reply endpoint writes, ``status=replied`` is what it derives. Reading
+    either keeps one malformed row from silently removing a reply from the
+    numerator while it stays in the denominator.
+    """
+    return row.replied_at is not None or row.status == EmailStatus.REPLIED
+
+
+def _closed_loop(rows: list) -> dict:
+    """Reply rate by what was suggested, and by how many tries it took.
+
+    The denominator is *delivered attempts*: a mail that left this process and
+    was not a simulation, because a simulated send cannot receive a reply and
+    counting it would make every rate depend on whether SMTP is configured.
+    Bounced and failed mail is excluded for the same reason and counted
+    separately, so the exclusion is visible instead of being an unexplained gap
+    between ``sent`` here and ``sent`` in ``approvals``.
+    """
+    delivered = [r for r in rows if r.status in SENT_STATES and not r.simulated]
+    excluded = {
+        "simulated": sum(1 for r in rows if r.simulated and r.status in SENT_STATES),
+        "bounced": sum(1 for r in rows if r.status == EmailStatus.BOUNCED),
+        "failed": sum(1 for r in rows if r.status == EmailStatus.FAILED),
+    }
+
+    by_kind: dict[str, dict] = {}
+    by_attempt: dict[str, dict] = {}
+    attributed = 0
+    replied_total = 0
+
+    for row in delivered:
+        replied = _replied(row)
+        replied_total += int(replied)
+        kind = row.suggestion_kind or UNATTRIBUTED
+        attributed += int(row.suggestion_kind is not None)
+
+        for table, label in ((by_kind, kind),
+                             (by_attempt, _attempt_bucket(row.suggestion_attempt))):
+            entry = table.setdefault(label, {"label": label, "sent": 0, "replied": 0})
+            entry["sent"] += 1
+            entry["replied"] += int(replied)
+
+    def finish(table: dict, key: str) -> list[dict]:
+        items = [dict(entry, reply_rate=_rate(entry["replied"], entry["sent"]))
+                 for entry in table.values()]
+        if key == "attempt":
+            items.sort(key=lambda item: _bucket_order(item["label"]))
+        else:
+            items.sort(key=lambda item: (-item["sent"], item["label"]))
+        return [{key: item.pop("label"), **item} for item in items]
+
+    return {
+        "available": True,
+        "sent": len(delivered),
+        "replied": replied_total,
+        "reply_rate": _rate(replied_total, len(delivered)),
+        "attributed": attributed,
+        "unattributed": len(delivered) - attributed,
+        "coverage": _rate(attributed, len(delivered)),
+        "excluded": excluded,
+        "by_kind": finish(by_kind, "kind"),
+        "by_attempt": finish(by_attempt, "attempt"),
+        "note": (
+            "reply_rate is per delivered email, not per customer: several "
+            "attempts to the same person are not independent observations, so "
+            "compare buckets rather than reading a bucket as a probability."
+        ),
+        "caveats": [
+            "provenance is recorded when the mail is sent and never rewritten; "
+            "an email composed by hand, or sent before migration 0010, is "
+            "counted under 'unattributed'",
+            "a reply is recorded against the email a human says it answers; a "
+            "reply to the first chase that is filed against the second one is "
+            "indistinguishable here",
+            "simulated sends (no SMTP configured) are excluded: they cannot "
+            "receive a reply, and including them would tie the rate to whether "
+            "credentials exist",
+        ],
+    }
 
 
 def _window(days: int, now: datetime) -> tuple[datetime, list[str]]:
@@ -161,8 +279,14 @@ async def get_quality_report(db: AsyncSession, *, days: int = 14,
     )).all()
 
     email_rows = (await db.execute(
-        select(EmailLog.created_at, EmailLog.status)
-        .where(EmailLog.created_at >= since, EmailLog.created_at <= now)
+        select(
+            EmailLog.created_at,
+            EmailLog.status,
+            EmailLog.simulated,
+            EmailLog.replied_at,
+            EmailLog.suggestion_kind,
+            EmailLog.suggestion_attempt,
+        ).where(EmailLog.created_at >= since, EmailLog.created_at <= now)
     )).all()
 
     runs = [_run_day(row) for row in run_rows]
@@ -237,12 +361,8 @@ async def get_quality_report(db: AsyncSession, *, days: int = 14,
     }
 
     # ---- human-in-the-loop ----------------------------------------------
-    sent_states = {
-        EmailStatus.SENT, EmailStatus.DELIVERED,
-        EmailStatus.OPENED, EmailStatus.REPLIED,
-    }
     proposals = len(email_rows)
-    sent = sum(1 for row in email_rows if row.status in sent_states)
+    sent = sum(1 for row in email_rows if row.status in SENT_STATES)
     rejected = sum(1 for row in email_rows if row.status == EmailStatus.REJECTED)
     pending = sum(1 for row in email_rows
                   if row.status in (EmailStatus.PENDING, EmailStatus.SENDING))
@@ -298,13 +418,5 @@ async def get_quality_report(db: AsyncSession, *, days: int = 14,
         "jobs": jobs_summary,
         "approvals": approvals,
         "daily": [daily[label] for label in labels],
-        "closed_loop": {
-            "available": False,
-            "reason": (
-                "a suggestion's kind and attempt are computed when the plan is "
-                "built and never stored next to the sent mail, so replies cannot "
-                "be grouped by what was suggested. Persisting them is the "
-                "prerequisite, not the query."
-            ),
-        },
+        "closed_loop": _closed_loop(email_rows),
     }
