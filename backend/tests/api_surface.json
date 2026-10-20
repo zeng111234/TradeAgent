@@ -1,0 +1,4674 @@
+{
+  "DELETE /api/v1/customers/{customer_id}": {
+    "parameters": [
+      {
+        "in": "path",
+        "name": "customer_id",
+        "required": true,
+        "schema": {
+          "type": "integer"
+        }
+      }
+    ],
+    "responses": {
+      "204": "untyped",
+      "422": "validation_error"
+    }
+  },
+  "DELETE /api/v1/emails/logs/{email_id}": {
+    "parameters": [
+      {
+        "in": "path",
+        "name": "email_id",
+        "required": true,
+        "schema": {
+          "type": "integer"
+        }
+      }
+    ],
+    "responses": {
+      "204": "untyped",
+      "422": "validation_error"
+    }
+  },
+  "DELETE /api/v1/emails/templates/{template_id}": {
+    "parameters": [
+      {
+        "in": "path",
+        "name": "template_id",
+        "required": true,
+        "schema": {
+          "type": "integer"
+        }
+      }
+    ],
+    "responses": {
+      "204": "untyped",
+      "422": "validation_error"
+    }
+  },
+  "DELETE /api/v1/tasks/{task_id}": {
+    "parameters": [
+      {
+        "in": "path",
+        "name": "task_id",
+        "required": true,
+        "schema": {
+          "type": "integer"
+        }
+      }
+    ],
+    "responses": {
+      "204": "untyped",
+      "422": "validation_error"
+    }
+  },
+  "GET /": {
+    "responses": {
+      "200": "untyped"
+    }
+  },
+  "GET /api/v1/agent/capabilities": {
+    "responses": {
+      "200": "untyped"
+    }
+  },
+  "GET /api/v1/agent/follow-up-plan": {
+    "parameters": [
+      {
+        "in": "query",
+        "name": "due_only",
+        "required": false,
+        "schema": {
+          "type": "boolean"
+        }
+      }
+    ],
+    "responses": {
+      "200": "untyped",
+      "422": "validation_error"
+    }
+  },
+  "GET /api/v1/agent/holidays": {
+    "responses": {
+      "200": "untyped"
+    }
+  },
+  "GET /api/v1/agent/import-leads/preview": {
+    "responses": {
+      "200": "untyped"
+    }
+  },
+  "GET /api/v1/agent/runs": {
+    "parameters": [
+      {
+        "in": "query",
+        "name": "limit",
+        "required": false,
+        "schema": {
+          "type": "integer"
+        }
+      },
+      {
+        "in": "query",
+        "name": "status",
+        "required": false,
+        "schema": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    ],
+    "responses": {
+      "200": "untyped",
+      "422": "validation_error"
+    }
+  },
+  "GET /api/v1/agent/runs/{run_id}": {
+    "parameters": [
+      {
+        "in": "path",
+        "name": "run_id",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      }
+    ],
+    "responses": {
+      "200": "untyped",
+      "422": "validation_error"
+    }
+  },
+  "GET /api/v1/agent/runs/{run_id}/events": {
+    "parameters": [
+      {
+        "in": "path",
+        "name": "run_id",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      },
+      {
+        "in": "query",
+        "name": "after",
+        "required": false,
+        "schema": {
+          "type": "integer"
+        }
+      }
+    ],
+    "responses": {
+      "200": "untyped",
+      "422": "validation_error"
+    }
+  },
+  "GET /api/v1/agent/runs/{run_id}/trace.html": {
+    "parameters": [
+      {
+        "in": "path",
+        "name": "run_id",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      }
+    ],
+    "responses": {
+      "200": "untyped",
+      "422": "validation_error"
+    }
+  },
+  "GET /api/v1/analytics/countries": {
+    "responses": {
+      "200": {
+        "items": {
+          "properties": {
+            "count": {
+              "type": "integer"
+            },
+            "country": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "count",
+            "country"
+          ],
+          "type": "object"
+        },
+        "type": "array"
+      }
+    }
+  },
+  "GET /api/v1/analytics/dashboard": {
+    "responses": {
+      "200": {
+        "properties": {
+          "emails_sent_this_month": {
+            "type": "integer"
+          },
+          "new_customers_this_month": {
+            "type": "integer"
+          },
+          "open_rate": {
+            "type": "number"
+          },
+          "overdue_tasks": {
+            "type": "integer"
+          },
+          "pending_tasks": {
+            "type": "integer"
+          },
+          "reply_rate": {
+            "type": "number"
+          },
+          "total_customers": {
+            "type": "integer"
+          },
+          "total_emails_sent": {
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      }
+    }
+  },
+  "GET /api/v1/analytics/pipeline": {
+    "responses": {
+      "200": {
+        "properties": {
+          "stages": {
+            "items": {
+              "properties": {
+                "count": {
+                  "type": "integer"
+                },
+                "percentage": {
+                  "type": "number"
+                },
+                "stage": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "count",
+                "stage"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "total": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "stages"
+        ],
+        "type": "object"
+      }
+    }
+  },
+  "GET /api/v1/analytics/sources": {
+    "responses": {
+      "200": {
+        "items": {
+          "properties": {
+            "count": {
+              "type": "integer"
+            },
+            "percentage": {
+              "type": "number"
+            },
+            "source": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "count",
+            "source"
+          ],
+          "type": "object"
+        },
+        "type": "array"
+      }
+    }
+  },
+  "GET /api/v1/analytics/trends": {
+    "parameters": [
+      {
+        "in": "query",
+        "name": "months",
+        "required": false,
+        "schema": {
+          "type": "integer"
+        }
+      }
+    ],
+    "responses": {
+      "200": {
+        "items": {
+          "properties": {
+            "customers_added": {
+              "type": "integer"
+            },
+            "emails_opened": {
+              "type": "integer"
+            },
+            "emails_replied": {
+              "type": "integer"
+            },
+            "emails_sent": {
+              "type": "integer"
+            },
+            "month": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "month"
+          ],
+          "type": "object"
+        },
+        "type": "array"
+      },
+      "422": "validation_error"
+    }
+  },
+  "GET /api/v1/customers/": {
+    "parameters": [
+      {
+        "in": "query",
+        "name": "country",
+        "required": false,
+        "schema": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      {
+        "in": "query",
+        "name": "page",
+        "required": false,
+        "schema": {
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      {
+        "in": "query",
+        "name": "page_size",
+        "required": false,
+        "schema": {
+          "maximum": 100,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      {
+        "in": "query",
+        "name": "search",
+        "required": false,
+        "schema": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      {
+        "in": "query",
+        "name": "source",
+        "required": false,
+        "schema": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      {
+        "in": "query",
+        "name": "stage",
+        "required": false,
+        "schema": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      {
+        "in": "query",
+        "name": "tag",
+        "required": false,
+        "schema": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    ],
+    "responses": {
+      "200": {
+        "properties": {
+          "items": {
+            "items": {
+              "properties": {
+                "annual_import_value": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "city": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "company_name": {
+                  "maxLength": 200,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "company_name_cn": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "contacts": {
+                  "items": {
+                    "properties": {
+                      "created_at": {
+                        "format": "date-time",
+                        "type": "string"
+                      },
+                      "customer_id": {
+                        "type": "integer"
+                      },
+                      "email": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "id": {
+                        "type": "integer"
+                      },
+                      "is_primary": {
+                        "type": "integer"
+                      },
+                      "linkedin": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "name": {
+                        "maxLength": 100,
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "notes": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "phone": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "title": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "updated_at": {
+                        "format": "date-time",
+                        "type": "string"
+                      },
+                      "whatsapp": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "created_at",
+                      "customer_id",
+                      "id",
+                      "name",
+                      "updated_at"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                },
+                "country": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "created_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "id": {
+                  "type": "integer"
+                },
+                "industry": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "last_contacted_at": {
+                  "anyOf": [
+                    {
+                      "format": "date-time",
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "next_follow_up_at": {
+                  "anyOf": [
+                    {
+                      "format": "date-time",
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "notes": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "notes_list": {
+                  "items": {
+                    "properties": {
+                      "content": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "created_at": {
+                        "format": "date-time",
+                        "type": "string"
+                      },
+                      "customer_id": {
+                        "type": "integer"
+                      },
+                      "id": {
+                        "type": "integer"
+                      },
+                      "note_type": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "content",
+                      "created_at",
+                      "customer_id",
+                      "id"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                },
+                "products": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "region": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "score": {
+                  "type": "number"
+                },
+                "source": {
+                  "type": "string"
+                },
+                "stage": {
+                  "type": "string"
+                },
+                "tags": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "updated_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "website": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "company_name",
+                "created_at",
+                "id",
+                "updated_at"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "page": {
+            "type": "integer"
+          },
+          "page_size": {
+            "type": "integer"
+          },
+          "pages": {
+            "type": "integer"
+          },
+          "total": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "page",
+          "page_size",
+          "pages",
+          "total"
+        ],
+        "type": "object"
+      },
+      "422": "validation_error"
+    }
+  },
+  "GET /api/v1/customers/{customer_id}": {
+    "parameters": [
+      {
+        "in": "path",
+        "name": "customer_id",
+        "required": true,
+        "schema": {
+          "type": "integer"
+        }
+      }
+    ],
+    "responses": {
+      "200": {
+        "properties": {
+          "annual_import_value": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "city": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "company_name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          },
+          "company_name_cn": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "contacts": {
+            "items": {
+              "properties": {
+                "created_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "customer_id": {
+                  "type": "integer"
+                },
+                "email": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "id": {
+                  "type": "integer"
+                },
+                "is_primary": {
+                  "type": "integer"
+                },
+                "linkedin": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "name": {
+                  "maxLength": 100,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "notes": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "phone": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "title": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "updated_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "whatsapp": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "created_at",
+                "customer_id",
+                "id",
+                "name",
+                "updated_at"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "country": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "type": "integer"
+          },
+          "industry": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "last_contacted_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "next_follow_up_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "notes_list": {
+            "items": {
+              "properties": {
+                "content": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "created_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "customer_id": {
+                  "type": "integer"
+                },
+                "id": {
+                  "type": "integer"
+                },
+                "note_type": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "content",
+                "created_at",
+                "customer_id",
+                "id"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "products": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "region": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "score": {
+            "type": "number"
+          },
+          "source": {
+            "type": "string"
+          },
+          "stage": {
+            "type": "string"
+          },
+          "tags": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "website": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "company_name",
+          "created_at",
+          "id",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "422": "validation_error"
+    }
+  },
+  "GET /api/v1/customers/{customer_id}/contacts": {
+    "parameters": [
+      {
+        "in": "path",
+        "name": "customer_id",
+        "required": true,
+        "schema": {
+          "type": "integer"
+        }
+      }
+    ],
+    "responses": {
+      "200": {
+        "items": {
+          "properties": {
+            "created_at": {
+              "format": "date-time",
+              "type": "string"
+            },
+            "customer_id": {
+              "type": "integer"
+            },
+            "email": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "id": {
+              "type": "integer"
+            },
+            "is_primary": {
+              "type": "integer"
+            },
+            "linkedin": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "name": {
+              "maxLength": 100,
+              "minLength": 1,
+              "type": "string"
+            },
+            "notes": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "phone": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "title": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "updated_at": {
+              "format": "date-time",
+              "type": "string"
+            },
+            "whatsapp": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "created_at",
+            "customer_id",
+            "id",
+            "name",
+            "updated_at"
+          ],
+          "type": "object"
+        },
+        "type": "array"
+      },
+      "422": "validation_error"
+    }
+  },
+  "GET /api/v1/customers/{customer_id}/debug": {
+    "parameters": [
+      {
+        "in": "path",
+        "name": "customer_id",
+        "required": true,
+        "schema": {
+          "type": "integer"
+        }
+      }
+    ],
+    "responses": {
+      "200": "untyped",
+      "422": "validation_error"
+    }
+  },
+  "GET /api/v1/customers/{customer_id}/notes": {
+    "parameters": [
+      {
+        "in": "path",
+        "name": "customer_id",
+        "required": true,
+        "schema": {
+          "type": "integer"
+        }
+      }
+    ],
+    "responses": {
+      "200": {
+        "items": {
+          "properties": {
+            "content": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "created_at": {
+              "format": "date-time",
+              "type": "string"
+            },
+            "customer_id": {
+              "type": "integer"
+            },
+            "id": {
+              "type": "integer"
+            },
+            "note_type": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "content",
+            "created_at",
+            "customer_id",
+            "id"
+          ],
+          "type": "object"
+        },
+        "type": "array"
+      },
+      "422": "validation_error"
+    }
+  },
+  "GET /api/v1/emails/logs": {
+    "parameters": [
+      {
+        "in": "query",
+        "name": "customer_id",
+        "required": false,
+        "schema": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      {
+        "in": "query",
+        "name": "status",
+        "required": false,
+        "schema": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    ],
+    "responses": {
+      "200": {
+        "items": {
+          "properties": {
+            "already_sent": {
+              "type": "boolean"
+            },
+            "body": {
+              "type": "string"
+            },
+            "created_at": {
+              "format": "date-time",
+              "type": "string"
+            },
+            "customer_id": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "error_message": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "id": {
+              "type": "integer"
+            },
+            "open_count": {
+              "type": "integer"
+            },
+            "opened_at": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "replayed": {
+              "type": "boolean"
+            },
+            "replied_at": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "sent_at": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "simulated": {
+              "type": "boolean"
+            },
+            "status": {
+              "type": "string"
+            },
+            "subject": {
+              "type": "string"
+            },
+            "template_id": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "to_email": {
+              "type": "string"
+            },
+            "to_name": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "tracking_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "body",
+            "created_at",
+            "id",
+            "open_count",
+            "status",
+            "subject",
+            "to_email"
+          ],
+          "type": "object"
+        },
+        "type": "array"
+      },
+      "422": "validation_error"
+    }
+  },
+  "GET /api/v1/emails/stats": {
+    "responses": {
+      "200": {
+        "properties": {
+          "open_rate": {
+            "type": "number"
+          },
+          "reply_rate": {
+            "type": "number"
+          },
+          "total_bounced": {
+            "type": "integer"
+          },
+          "total_failed": {
+            "type": "integer"
+          },
+          "total_opened": {
+            "type": "integer"
+          },
+          "total_replied": {
+            "type": "integer"
+          },
+          "total_sent": {
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      }
+    }
+  },
+  "GET /api/v1/emails/templates": {
+    "parameters": [
+      {
+        "in": "query",
+        "name": "category",
+        "required": false,
+        "schema": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      {
+        "in": "query",
+        "name": "language",
+        "required": false,
+        "schema": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    ],
+    "responses": {
+      "200": {
+        "items": {
+          "properties": {
+            "body": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "category": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "created_at": {
+              "format": "date-time",
+              "type": "string"
+            },
+            "id": {
+              "type": "integer"
+            },
+            "is_ai_generated": {
+              "type": "integer"
+            },
+            "language": {
+              "type": "string"
+            },
+            "name": {
+              "maxLength": 200,
+              "minLength": 1,
+              "type": "string"
+            },
+            "subject": {
+              "maxLength": 500,
+              "minLength": 1,
+              "type": "string"
+            },
+            "updated_at": {
+              "format": "date-time",
+              "type": "string"
+            },
+            "use_count": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "body",
+            "created_at",
+            "id",
+            "name",
+            "subject",
+            "updated_at",
+            "use_count"
+          ],
+          "type": "object"
+        },
+        "type": "array"
+      },
+      "422": "validation_error"
+    }
+  },
+  "GET /api/v1/emails/templates/{template_id}": {
+    "parameters": [
+      {
+        "in": "path",
+        "name": "template_id",
+        "required": true,
+        "schema": {
+          "type": "integer"
+        }
+      }
+    ],
+    "responses": {
+      "200": {
+        "properties": {
+          "body": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "category": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "type": "integer"
+          },
+          "is_ai_generated": {
+            "type": "integer"
+          },
+          "language": {
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          },
+          "subject": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "use_count": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "body",
+          "created_at",
+          "id",
+          "name",
+          "subject",
+          "updated_at",
+          "use_count"
+        ],
+        "type": "object"
+      },
+      "422": "validation_error"
+    }
+  },
+  "GET /api/v1/emails/track/{tracking_id}/pixel": {
+    "parameters": [
+      {
+        "in": "path",
+        "name": "tracking_id",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      }
+    ],
+    "responses": {
+      "200": "untyped",
+      "422": "validation_error"
+    }
+  },
+  "GET /api/v1/scheduler/history": {
+    "responses": {
+      "200": "untyped"
+    }
+  },
+  "GET /api/v1/scheduler/jobs": {
+    "responses": {
+      "200": "untyped"
+    }
+  },
+  "GET /api/v1/tasks/": {
+    "parameters": [
+      {
+        "in": "query",
+        "name": "customer_id",
+        "required": false,
+        "schema": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      {
+        "in": "query",
+        "name": "priority",
+        "required": false,
+        "schema": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      {
+        "in": "query",
+        "name": "status",
+        "required": false,
+        "schema": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    ],
+    "responses": {
+      "200": {
+        "items": {
+          "properties": {
+            "completed_at": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "created_at": {
+              "format": "date-time",
+              "type": "string"
+            },
+            "customer_id": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "due_date": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "id": {
+              "type": "integer"
+            },
+            "priority": {
+              "type": "string"
+            },
+            "status": {
+              "type": "string"
+            },
+            "task_type": {
+              "type": "string"
+            },
+            "title": {
+              "maxLength": 300,
+              "minLength": 1,
+              "type": "string"
+            },
+            "updated_at": {
+              "format": "date-time",
+              "type": "string"
+            }
+          },
+          "required": [
+            "created_at",
+            "id",
+            "status",
+            "title",
+            "updated_at"
+          ],
+          "type": "object"
+        },
+        "type": "array"
+      },
+      "422": "validation_error"
+    }
+  },
+  "GET /api/v1/tasks/overdue/list": {
+    "responses": {
+      "200": {
+        "items": {
+          "properties": {
+            "completed_at": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "created_at": {
+              "format": "date-time",
+              "type": "string"
+            },
+            "customer_id": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "due_date": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "id": {
+              "type": "integer"
+            },
+            "priority": {
+              "type": "string"
+            },
+            "status": {
+              "type": "string"
+            },
+            "task_type": {
+              "type": "string"
+            },
+            "title": {
+              "maxLength": 300,
+              "minLength": 1,
+              "type": "string"
+            },
+            "updated_at": {
+              "format": "date-time",
+              "type": "string"
+            }
+          },
+          "required": [
+            "created_at",
+            "id",
+            "status",
+            "title",
+            "updated_at"
+          ],
+          "type": "object"
+        },
+        "type": "array"
+      }
+    }
+  },
+  "GET /api/v1/tasks/{task_id}": {
+    "parameters": [
+      {
+        "in": "path",
+        "name": "task_id",
+        "required": true,
+        "schema": {
+          "type": "integer"
+        }
+      }
+    ],
+    "responses": {
+      "200": {
+        "properties": {
+          "completed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "customer_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "due_date": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "id": {
+            "type": "integer"
+          },
+          "priority": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "task_type": {
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 300,
+            "minLength": 1,
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "created_at",
+          "id",
+          "status",
+          "title",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "422": "validation_error"
+    }
+  },
+  "GET /api/v1/usage": {
+    "responses": {
+      "200": "untyped"
+    }
+  },
+  "GET /health": {
+    "responses": {
+      "200": "untyped"
+    }
+  },
+  "POST /api/v1/agent/analyze-email": {
+    "request": {
+      "required": true,
+      "schema": {
+        "properties": {
+          "email_content": {
+            "maxLength": 20000,
+            "type": "string"
+          }
+        },
+        "required": [
+          "email_content"
+        ],
+        "type": "object"
+      }
+    },
+    "responses": {
+      "200": "untyped",
+      "422": "validation_error"
+    }
+  },
+  "POST /api/v1/agent/analyze-inquiry": {
+    "request": {
+      "required": true,
+      "schema": {
+        "properties": {
+          "email_content": {
+            "maxLength": 20000,
+            "type": "string"
+          }
+        },
+        "required": [
+          "email_content"
+        ],
+        "type": "object"
+      }
+    },
+    "responses": {
+      "200": "untyped",
+      "422": "validation_error"
+    }
+  },
+  "POST /api/v1/agent/analyze-website": {
+    "request": {
+      "required": true,
+      "schema": {
+        "properties": {
+          "url": {
+            "type": "string"
+          },
+          "your_products": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "type": "object"
+      }
+    },
+    "responses": {
+      "200": "untyped",
+      "422": "validation_error"
+    }
+  },
+  "POST /api/v1/agent/batch-emails": {
+    "request": {
+      "required": true,
+      "schema": {
+        "properties": {
+          "company_name": {
+            "type": "string"
+          },
+          "customer_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array"
+          },
+          "product_name": {
+            "type": "string"
+          },
+          "selling_points": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "product_name"
+        ],
+        "type": "object"
+      }
+    },
+    "responses": {
+      "200": "untyped",
+      "422": "validation_error"
+    }
+  },
+  "POST /api/v1/agent/churn-alerts": {
+    "responses": {
+      "200": "untyped"
+    }
+  },
+  "POST /api/v1/agent/daily-intelligence": {
+    "parameters": [
+      {
+        "in": "query",
+        "name": "due_only",
+        "required": false,
+        "schema": {
+          "type": "boolean"
+        }
+      }
+    ],
+    "responses": {
+      "200": "untyped",
+      "422": "validation_error"
+    }
+  },
+  "POST /api/v1/agent/generate-pi": {
+    "request": {
+      "required": true,
+      "schema": {
+        "properties": {
+          "customer_address": {
+            "type": "string"
+          },
+          "customer_company": {
+            "type": "string"
+          },
+          "customer_email": {
+            "type": "string"
+          },
+          "customer_name": {
+            "type": "string"
+          },
+          "notes": {
+            "type": "string"
+          },
+          "payment_terms": {
+            "type": "string"
+          },
+          "products": {
+            "items": {
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "qty": {
+                  "type": "number"
+                },
+                "spec": {
+                  "type": "string"
+                },
+                "unit": {
+                  "type": "string"
+                },
+                "unit_price": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "name",
+                "qty",
+                "unit_price"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "trade_terms": {
+            "type": "string"
+          },
+          "validity_days": {
+            "type": "integer"
+          },
+          "your_address": {
+            "type": "string"
+          },
+          "your_company": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "customer_company",
+          "customer_name",
+          "products"
+        ],
+        "type": "object"
+      }
+    },
+    "responses": {
+      "200": "untyped",
+      "422": "validation_error"
+    }
+  },
+  "POST /api/v1/agent/holiday-emails": {
+    "request": {
+      "required": true,
+      "schema": {
+        "properties": {
+          "company_name": {
+            "type": "string"
+          },
+          "custom_message": {
+            "type": "string"
+          },
+          "holiday_name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "holiday_name"
+        ],
+        "type": "object"
+      }
+    },
+    "responses": {
+      "200": "untyped",
+      "422": "validation_error"
+    }
+  },
+  "POST /api/v1/agent/import-leads": {
+    "responses": {
+      "200": "untyped"
+    }
+  },
+  "POST /api/v1/agent/negotiation-advice": {
+    "request": {
+      "required": true,
+      "schema": {
+        "properties": {
+          "context": {
+            "type": "string"
+          },
+          "customer_message": {
+            "type": "string"
+          },
+          "product_name": {
+            "type": "string"
+          },
+          "your_cost": {
+            "type": "number"
+          },
+          "your_quote": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "customer_message",
+          "product_name"
+        ],
+        "type": "object"
+      }
+    },
+    "responses": {
+      "200": "untyped",
+      "422": "validation_error"
+    }
+  },
+  "POST /api/v1/agent/run": {
+    "request": {
+      "required": true,
+      "schema": {
+        "properties": {
+          "context": {
+            "type": "string"
+          },
+          "customer_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "goal": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "max_rounds": {
+            "anyOf": [
+              {
+                "maximum": 30.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "max_seconds": {
+            "anyOf": [
+              {
+                "maximum": 900.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "max_tool_calls": {
+            "anyOf": [
+              {
+                "maximum": 60.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "wait": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "goal"
+        ],
+        "type": "object"
+      }
+    },
+    "responses": {
+      "200": "untyped",
+      "422": "validation_error"
+    }
+  },
+  "POST /api/v1/agent/scan-leads": {
+    "request": {
+      "required": true,
+      "schema": {
+        "properties": {
+          "max_results": {
+            "maximum": 20.0,
+            "minimum": 1.0,
+            "type": "integer"
+          },
+          "product_keywords": {
+            "type": "string"
+          },
+          "target_country": {
+            "type": "string"
+          },
+          "target_region": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "product_keywords"
+        ],
+        "type": "object"
+      }
+    },
+    "responses": {
+      "200": "untyped",
+      "422": "validation_error"
+    }
+  },
+  "POST /api/v1/agent/scan-leads-draft": {
+    "request": {
+      "required": true,
+      "schema": {
+        "properties": {
+          "max_results": {
+            "maximum": 20.0,
+            "minimum": 1.0,
+            "type": "integer"
+          },
+          "product_keywords": {
+            "type": "string"
+          },
+          "target_country": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      }
+    },
+    "responses": {
+      "200": "untyped",
+      "422": "validation_error"
+    }
+  },
+  "POST /api/v1/agent/send-drafted-emails": {
+    "request": {
+      "required": true,
+      "schema": {
+        "properties": {
+          "product_keywords": {
+            "type": "string"
+          },
+          "selected_leads": {
+            "items": {},
+            "type": "array"
+          }
+        },
+        "required": [
+          "selected_leads"
+        ],
+        "type": "object"
+      }
+    },
+    "responses": {
+      "200": "untyped",
+      "422": "validation_error"
+    }
+  },
+  "POST /api/v1/customers/": {
+    "request": {
+      "required": true,
+      "schema": {
+        "properties": {
+          "annual_import_value": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "city": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "company_name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          },
+          "company_name_cn": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "country": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "industry": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "products": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "region": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "score": {
+            "type": "number"
+          },
+          "source": {
+            "type": "string"
+          },
+          "stage": {
+            "type": "string"
+          },
+          "tags": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "website": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "company_name"
+        ],
+        "type": "object"
+      }
+    },
+    "responses": {
+      "201": {
+        "properties": {
+          "annual_import_value": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "city": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "company_name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          },
+          "company_name_cn": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "contacts": {
+            "items": {
+              "properties": {
+                "created_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "customer_id": {
+                  "type": "integer"
+                },
+                "email": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "id": {
+                  "type": "integer"
+                },
+                "is_primary": {
+                  "type": "integer"
+                },
+                "linkedin": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "name": {
+                  "maxLength": 100,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "notes": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "phone": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "title": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "updated_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "whatsapp": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "created_at",
+                "customer_id",
+                "id",
+                "name",
+                "updated_at"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "country": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "type": "integer"
+          },
+          "industry": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "last_contacted_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "next_follow_up_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "notes_list": {
+            "items": {
+              "properties": {
+                "content": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "created_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "customer_id": {
+                  "type": "integer"
+                },
+                "id": {
+                  "type": "integer"
+                },
+                "note_type": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "content",
+                "created_at",
+                "customer_id",
+                "id"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "products": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "region": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "score": {
+            "type": "number"
+          },
+          "source": {
+            "type": "string"
+          },
+          "stage": {
+            "type": "string"
+          },
+          "tags": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "website": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "company_name",
+          "created_at",
+          "id",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "422": "validation_error"
+    }
+  },
+  "POST /api/v1/customers/import": {
+    "request": {
+      "required": true,
+      "schema": {
+        "items": {
+          "properties": {
+            "city": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "company_name": {
+              "type": "string"
+            },
+            "company_name_cn": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "contact_email": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "contact_name": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "contact_phone": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "country": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "industry": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "products": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "website": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "company_name"
+          ],
+          "type": "object"
+        },
+        "type": "array"
+      }
+    },
+    "responses": {
+      "200": "untyped",
+      "422": "validation_error"
+    }
+  },
+  "POST /api/v1/customers/{customer_id}/contacts": {
+    "parameters": [
+      {
+        "in": "path",
+        "name": "customer_id",
+        "required": true,
+        "schema": {
+          "type": "integer"
+        }
+      }
+    ],
+    "request": {
+      "required": true,
+      "schema": {
+        "properties": {
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "is_primary": {
+            "type": "integer"
+          },
+          "linkedin": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "name": {
+            "maxLength": 100,
+            "minLength": 1,
+            "type": "string"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "phone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "whatsapp": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      }
+    },
+    "responses": {
+      "201": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "customer_id": {
+            "type": "integer"
+          },
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "id": {
+            "type": "integer"
+          },
+          "is_primary": {
+            "type": "integer"
+          },
+          "linkedin": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "name": {
+            "maxLength": 100,
+            "minLength": 1,
+            "type": "string"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "phone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "whatsapp": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "created_at",
+          "customer_id",
+          "id",
+          "name",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "422": "validation_error"
+    }
+  },
+  "POST /api/v1/customers/{customer_id}/notes": {
+    "parameters": [
+      {
+        "in": "path",
+        "name": "customer_id",
+        "required": true,
+        "schema": {
+          "type": "integer"
+        }
+      }
+    ],
+    "request": {
+      "required": true,
+      "schema": {
+        "properties": {
+          "content": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "note_type": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "content"
+        ],
+        "type": "object"
+      }
+    },
+    "responses": {
+      "201": {
+        "properties": {
+          "content": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "customer_id": {
+            "type": "integer"
+          },
+          "id": {
+            "type": "integer"
+          },
+          "note_type": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "content",
+          "created_at",
+          "customer_id",
+          "id"
+        ],
+        "type": "object"
+      },
+      "422": "validation_error"
+    }
+  },
+  "POST /api/v1/emails/generate": {
+    "request": {
+      "required": true,
+      "schema": {
+        "properties": {
+          "company_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "language": {
+            "type": "string"
+          },
+          "product_name": {
+            "type": "string"
+          },
+          "selling_points": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "target_country": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "target_industry": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tone": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "product_name"
+        ],
+        "type": "object"
+      }
+    },
+    "responses": {
+      "200": {
+        "properties": {
+          "ai_powered": {
+            "type": "boolean"
+          },
+          "body": {
+            "type": "string"
+          },
+          "fallback_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "subject": {
+            "type": "string"
+          },
+          "suggestions": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "body",
+          "subject"
+        ],
+        "type": "object"
+      },
+      "422": "validation_error"
+    }
+  },
+  "POST /api/v1/emails/logs/{email_id}/reject": {
+    "parameters": [
+      {
+        "in": "path",
+        "name": "email_id",
+        "required": true,
+        "schema": {
+          "type": "integer"
+        }
+      }
+    ],
+    "request": {
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "properties": {
+              "reason": {
+                "anyOf": [
+                  {
+                    "maxLength": 500,
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      }
+    },
+    "responses": {
+      "200": "untyped",
+      "422": "validation_error"
+    }
+  },
+  "POST /api/v1/emails/logs/{email_id}/reply": {
+    "parameters": [
+      {
+        "in": "path",
+        "name": "email_id",
+        "required": true,
+        "schema": {
+          "type": "integer"
+        }
+      }
+    ],
+    "request": {
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "properties": {
+              "replied_at": {
+                "anyOf": [
+                  {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      }
+    },
+    "responses": {
+      "200": "untyped",
+      "422": "validation_error"
+    }
+  },
+  "POST /api/v1/emails/send": {
+    "parameters": [
+      {
+        "in": "header",
+        "name": "Idempotency-Key",
+        "required": false,
+        "schema": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    ],
+    "request": {
+      "required": true,
+      "schema": {
+        "properties": {
+          "body": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "contact_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "customer_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "subject": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "template_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "to_email": {
+            "type": "string"
+          },
+          "to_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "variables": {
+            "anyOf": [
+              {
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "to_email"
+        ],
+        "type": "object"
+      }
+    },
+    "responses": {
+      "200": {
+        "properties": {
+          "already_sent": {
+            "type": "boolean"
+          },
+          "body": {
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "customer_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "error_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "id": {
+            "type": "integer"
+          },
+          "open_count": {
+            "type": "integer"
+          },
+          "opened_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "replayed": {
+            "type": "boolean"
+          },
+          "replied_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sent_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "simulated": {
+            "type": "boolean"
+          },
+          "status": {
+            "type": "string"
+          },
+          "subject": {
+            "type": "string"
+          },
+          "template_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "to_email": {
+            "type": "string"
+          },
+          "to_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tracking_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "body",
+          "created_at",
+          "id",
+          "open_count",
+          "status",
+          "subject",
+          "to_email"
+        ],
+        "type": "object"
+      },
+      "422": "validation_error"
+    }
+  },
+  "POST /api/v1/emails/send-pending": {
+    "parameters": [
+      {
+        "in": "query",
+        "name": "limit",
+        "required": false,
+        "schema": {
+          "type": "integer"
+        }
+      }
+    ],
+    "responses": {
+      "200": "untyped",
+      "422": "validation_error"
+    }
+  },
+  "POST /api/v1/emails/send-pending/{email_id}": {
+    "parameters": [
+      {
+        "in": "path",
+        "name": "email_id",
+        "required": true,
+        "schema": {
+          "type": "integer"
+        }
+      }
+    ],
+    "responses": {
+      "200": "untyped",
+      "422": "validation_error"
+    }
+  },
+  "POST /api/v1/emails/templates": {
+    "request": {
+      "required": true,
+      "schema": {
+        "properties": {
+          "body": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "category": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "is_ai_generated": {
+            "type": "integer"
+          },
+          "language": {
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          },
+          "subject": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "body",
+          "name",
+          "subject"
+        ],
+        "type": "object"
+      }
+    },
+    "responses": {
+      "201": {
+        "properties": {
+          "body": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "category": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "type": "integer"
+          },
+          "is_ai_generated": {
+            "type": "integer"
+          },
+          "language": {
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          },
+          "subject": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "use_count": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "body",
+          "created_at",
+          "id",
+          "name",
+          "subject",
+          "updated_at",
+          "use_count"
+        ],
+        "type": "object"
+      },
+      "422": "validation_error"
+    }
+  },
+  "POST /api/v1/scheduler/run-daily": {
+    "parameters": [
+      {
+        "in": "query",
+        "name": "search_keywords",
+        "required": false,
+        "schema": {
+          "type": "string"
+        }
+      },
+      {
+        "in": "query",
+        "name": "target_country",
+        "required": false,
+        "schema": {
+          "type": "string"
+        }
+      }
+    ],
+    "responses": {
+      "200": "untyped",
+      "422": "validation_error"
+    }
+  },
+  "POST /api/v1/tasks/": {
+    "request": {
+      "required": true,
+      "schema": {
+        "properties": {
+          "customer_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "due_date": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "priority": {
+            "type": "string"
+          },
+          "task_type": {
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 300,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "title"
+        ],
+        "type": "object"
+      }
+    },
+    "responses": {
+      "201": {
+        "properties": {
+          "completed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "customer_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "due_date": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "id": {
+            "type": "integer"
+          },
+          "priority": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "task_type": {
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 300,
+            "minLength": 1,
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "created_at",
+          "id",
+          "status",
+          "title",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "422": "validation_error"
+    }
+  },
+  "PUT /api/v1/customers/{customer_id}": {
+    "parameters": [
+      {
+        "in": "path",
+        "name": "customer_id",
+        "required": true,
+        "schema": {
+          "type": "integer"
+        }
+      }
+    ],
+    "request": {
+      "required": true,
+      "schema": {
+        "properties": {
+          "annual_import_value": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "city": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "company_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "company_name_cn": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "country": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "expected_updated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "industry": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "last_contacted_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "next_follow_up_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "products": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "region": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "stage": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tags": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "website": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object"
+      }
+    },
+    "responses": {
+      "200": {
+        "properties": {
+          "annual_import_value": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "city": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "company_name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          },
+          "company_name_cn": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "contacts": {
+            "items": {
+              "properties": {
+                "created_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "customer_id": {
+                  "type": "integer"
+                },
+                "email": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "id": {
+                  "type": "integer"
+                },
+                "is_primary": {
+                  "type": "integer"
+                },
+                "linkedin": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "name": {
+                  "maxLength": 100,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "notes": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "phone": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "title": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "updated_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "whatsapp": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "created_at",
+                "customer_id",
+                "id",
+                "name",
+                "updated_at"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "country": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "type": "integer"
+          },
+          "industry": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "last_contacted_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "next_follow_up_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "notes_list": {
+            "items": {
+              "properties": {
+                "content": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "created_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "customer_id": {
+                  "type": "integer"
+                },
+                "id": {
+                  "type": "integer"
+                },
+                "note_type": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "content",
+                "created_at",
+                "customer_id",
+                "id"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "products": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "region": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "score": {
+            "type": "number"
+          },
+          "source": {
+            "type": "string"
+          },
+          "stage": {
+            "type": "string"
+          },
+          "tags": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "website": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "company_name",
+          "created_at",
+          "id",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "422": "validation_error"
+    }
+  },
+  "PUT /api/v1/emails/logs/{email_id}": {
+    "parameters": [
+      {
+        "in": "path",
+        "name": "email_id",
+        "required": true,
+        "schema": {
+          "type": "integer"
+        }
+      }
+    ],
+    "request": {
+      "required": true,
+      "schema": {
+        "type": "object"
+      }
+    },
+    "responses": {
+      "200": "untyped",
+      "422": "validation_error"
+    }
+  },
+  "PUT /api/v1/emails/templates/{template_id}": {
+    "parameters": [
+      {
+        "in": "path",
+        "name": "template_id",
+        "required": true,
+        "schema": {
+          "type": "integer"
+        }
+      }
+    ],
+    "request": {
+      "required": true,
+      "schema": {
+        "properties": {
+          "body": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "category": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "subject": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object"
+      }
+    },
+    "responses": {
+      "200": {
+        "properties": {
+          "body": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "category": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "type": "integer"
+          },
+          "is_ai_generated": {
+            "type": "integer"
+          },
+          "language": {
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          },
+          "subject": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "use_count": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "body",
+          "created_at",
+          "id",
+          "name",
+          "subject",
+          "updated_at",
+          "use_count"
+        ],
+        "type": "object"
+      },
+      "422": "validation_error"
+    }
+  },
+  "PUT /api/v1/tasks/{task_id}": {
+    "parameters": [
+      {
+        "in": "path",
+        "name": "task_id",
+        "required": true,
+        "schema": {
+          "type": "integer"
+        }
+      }
+    ],
+    "request": {
+      "required": true,
+      "schema": {
+        "properties": {
+          "customer_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "due_date": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "priority": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "task_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object"
+      }
+    },
+    "responses": {
+      "200": {
+        "properties": {
+          "completed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "customer_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "due_date": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "id": {
+            "type": "integer"
+          },
+          "priority": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "task_type": {
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 300,
+            "minLength": 1,
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "created_at",
+          "id",
+          "status",
+          "title",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "422": "validation_error"
+    }
+  }
+}

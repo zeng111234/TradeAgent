@@ -32,6 +32,16 @@ class AgentRun(Base):
         Integer, ForeignKey("customers.id"), nullable=True, index=True
     )
 
+    #: Fingerprint of the system prompt this run used (12 hex chars).
+    #:
+    #: Added by migration ``0006_agent_runs_prompt_version``. The trace records
+    #: what the model *did*; this records what it was *told*. Without it a change
+    #: in behaviour cannot be attributed to a prompt edit rather than to the
+    #: model, the data, or the tools -- and a run produced by instructions that
+    #: are no longer in the tree cannot be told apart from one produced today.
+    #: Nullable: rows written before the column existed have nothing to invent.
+    prompt_version = Column(String(32), nullable=True)
+
     goal = Column(Text, nullable=False)
     # running | succeeded | truncated | error | stalled
     status = Column(String(32), nullable=False, default="running")

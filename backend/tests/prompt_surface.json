@@ -1,0 +1,82 @@
+{
+  "prompts": {
+    "app.agent.loop:DEFAULT_SYSTEM_PROMPT": {
+      "chars": 1948,
+      "fingerprint": "6df7d363546f",
+      "lines": 32,
+      "opens": "You are an autonomous foreign-trade assistant."
+    },
+    "app.agent.scan_runner:SCAN_SYSTEM_PROMPT": {
+      "chars": 1939,
+      "fingerprint": "bc06cd31e493",
+      "lines": 15,
+      "opens": "You are a foreign-trade prospecting agent for a Chinese supp"
+    },
+    "app.agent.subagent:CHILD_SYSTEM_PROMPT": {
+      "chars": 815,
+      "fingerprint": "ed3e02a4ba86",
+      "lines": 15,
+      "opens": "You are a research assistant working on one specific questio"
+    },
+    "app.services.agent_service:_ai_analyze_website:system": {
+      "chars": 78,
+      "fingerprint": "dc53e4593885",
+      "lines": 1,
+      "opens": "You are a B2B trade intelligence analyst. Always respond wit"
+    },
+    "app.services.agent_service:_build_follow_up_plan:system": {
+      "chars": 78,
+      "fingerprint": "4ea74834874b",
+      "lines": 1,
+      "opens": "You are a professional foreign trade email writer. Write con"
+    },
+    "app.services.agent_service:analyze_email_reply:system": {
+      "chars": 66,
+      "fingerprint": "b30972ea8767",
+      "lines": 1,
+      "opens": "You are a B2B trade email analyst. Always respond with valid"
+    },
+    "app.services.agent_service:analyze_inquiry:system": {
+      "chars": 68,
+      "fingerprint": "6d94d45b4c3b",
+      "lines": 1,
+      "opens": "You are a B2B trade inquiry analyst. Always respond with val"
+    },
+    "app.services.agent_service:batch_personalize_emails:system": {
+      "chars": 55,
+      "fingerprint": "dfbe1f4fae3a",
+      "lines": 1,
+      "opens": "Write B2B cold outreach emails. Return valid JSON only."
+    },
+    "app.services.agent_service:customer_churn_alerts:system": {
+      "chars": 86,
+      "fingerprint": "06ce0e9fa305",
+      "lines": 1,
+      "opens": "You are a professional foreign trade email writer. Write con"
+    },
+    "app.services.agent_service:generate_holiday_emails:system": {
+      "chars": 71,
+      "fingerprint": "53bd225c7598",
+      "lines": 1,
+      "opens": "Write professional B2B holiday greeting emails. Return valid"
+    },
+    "app.services.agent_service:get_negotiation_advice:system": {
+      "chars": 72,
+      "fingerprint": "cee5a049c3c8",
+      "lines": 1,
+      "opens": "You are an expert B2B negotiation coach. Always respond with"
+    },
+    "app.services.ai_service:_generate_with_openai:system": {
+      "chars": 54,
+      "fingerprint": "b49fc113b0b4",
+      "lines": 1,
+      "opens": "You are a professional foreign trade email copywriter."
+    },
+    "app.workflows:_generate_lead_draft_email:system": {
+      "chars": 208,
+      "fingerprint": "5c7722118735",
+      "lines": 1,
+      "opens": "You write personalized B2B cold emails for a Chinese textile"
+    }
+  }
+}

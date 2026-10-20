@@ -7,9 +7,12 @@ breaking change and needs an explicit decision.
 """
 from __future__ import annotations
 
-# Snapshot of the API surface as of the commit this refactor started from
-# (f8f8836). 42 paths / 54 operations. One path was added on purpose since
-# (/api/v1/usage, see the note in the table); nothing was removed.
+# Snapshot of the API surface. The original snapshot, taken at the commit this
+# refactor started from (f8f8836), was 42 paths / 54 operations; the table has
+# grown since (the follow-up plan's read-only GET, the customer debug view, the
+# scheduler history, /usage -- each addition marked below). It now stands at
+# 54 paths / 66 operations, and ``test_route_count_unchanged`` is what keeps
+# that number honest: the declared table and the live app must agree exactly.
 EXPECTED_ROUTES: dict[str, set[str]] = {
     "/": {"get"},
     "/health": {"get"},
@@ -36,6 +39,7 @@ EXPECTED_ROUTES: dict[str, set[str]] = {
     "/api/v1/agent/run": {"post"},
     "/api/v1/agent/runs": {"get"},
     "/api/v1/agent/runs/{run_id}": {"get"},
+    "/api/v1/agent/runs/{run_id}/events": {"get"},
     "/api/v1/agent/runs/{run_id}/trace.html": {"get"},
     # --- analytics router (5) ---
     "/api/v1/analytics/countries": {"get"},
@@ -134,3 +138,66 @@ def test_unknown_route_is_404_not_500():
 
     with TestClient(app) as c:
         assert c.get("/api/v1/definitely-not-a-route").status_code == 404
+
+
+def test_the_typed_surface_matches_the_snapshot():
+    """The route table is not the contract; the shapes are.
+
+    ``test_route_count_unchanged`` catches a deleted route. It cannot see a new
+    required field, a renamed one, a type widened from ``int`` to ``str``, a
+    constraint, or a status code changed from 201 to 200 -- all of which break a
+    client while leaving the route table identical. ``api_surface.json`` is the
+    normalised OpenAPI surface (parameters, required fields, types, constraints,
+    status codes), and this is the assertion that it did not move.
+
+    When this fails, do not just re-run ``--update``. The question is whether a
+    current client can break: if yes, the change needs a new path version or a
+    deprecation window, not a new snapshot.
+    """
+    import json
+
+    import api_surface
+
+    previous = json.loads(api_surface.SNAPSHOT.read_text(encoding="utf-8"))
+    current = api_surface.build_surface()
+    changes = api_surface.diff(previous, current)
+
+    assert not changes, (
+        "the HTTP contract changed. Decide whether it is additive (then accept "
+        "the snapshot) or breaking (then add /api/v2 or a deprecation window):\n"
+        "  - " + "\n  - ".join(changes[:40])
+    )
+
+
+def test_the_surface_diff_names_the_field_that_changed():
+    """The guard is only useful if its failure says *what* broke."""
+    import api_surface
+
+    before = {
+        "POST /x": {"request": {"schema": {"properties": {"email": {"maxLength": 20000}}}}}
+    }
+    after = {
+        "POST /x": {"request": {"schema": {"properties": {"email": {"maxLength": 40000}}}}}
+    }
+
+    assert api_surface.diff(before, after) == [
+        "POST /x.request.schema.properties.email.maxLength: 20000 -> 40000"
+    ]
+
+
+def test_prose_does_not_change_the_surface():
+    """A docstring edit must not fail the contract -- or people delete the test.
+
+    Only types, names, required-ness, constraints and status codes are kept.
+    Descriptions, summaries, examples and model titles are documentation.
+    """
+    import api_surface
+
+    old = api_surface._resolve(
+        {"type": "string", "title": "Email", "description": "old wording"}, {}
+    )
+    new = api_surface._resolve(
+        {"type": "string", "title": "Email address", "description": "new wording"}, {}
+    )
+
+    assert old == new == {"type": "string"}
