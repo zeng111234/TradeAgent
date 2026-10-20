@@ -1,6 +1,8 @@
 """Task management API routes."""
 from datetime import datetime
-from fastapi import APIRouter, Depends, Query
+from typing import Optional
+
+from fastapi import APIRouter, Depends, Header, Query, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -8,17 +10,36 @@ from app.errors import ApiError, ErrorCode
 from app.database import get_db
 from app.models.task import Task, TaskStatus
 from app.schemas.task import TaskCreate, TaskUpdate, TaskResponse
+from app.services.idempotency import clean_key, create_once
 
 router = APIRouter(prefix="/tasks", tags=["Tasks"])
 
 
 @router.post("/", response_model=TaskResponse, status_code=201)
-async def create_task(data: TaskCreate, db: AsyncSession = Depends(get_db)):
-    """Create a new task."""
-    task = Task(**data.model_dump())
-    db.add(task)
-    await db.flush()
-    await db.refresh(task)
+async def create_task(
+    data: TaskCreate,
+    response: Response,
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a new task. Retry-safe with ``Idempotency-Key``."""
+    async def _create():
+        task = Task(**data.model_dump())
+        db.add(task)
+        await db.flush()
+        await db.refresh(task)
+        return task
+
+    task, replayed = await create_once(
+        db,
+        scope="task",
+        key=clean_key(idempotency_key),
+        payload=data.model_dump(mode="json"),
+        model=Task,
+        create=_create,
+    )
+    if replayed:
+        response.headers["Idempotent-Replay"] = "true"
     return task
 
 

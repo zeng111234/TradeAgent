@@ -2597,6 +2597,23 @@
     }
   },
   "POST /api/v1/customers/": {
+    "parameters": [
+      {
+        "in": "header",
+        "name": "Idempotency-Key",
+        "required": false,
+        "schema": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    ],
     "request": {
       "required": true,
       "schema": {
@@ -3128,6 +3145,21 @@
   "POST /api/v1/customers/{customer_id}/contacts": {
     "parameters": [
       {
+        "in": "header",
+        "name": "Idempotency-Key",
+        "required": false,
+        "schema": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      {
         "in": "path",
         "name": "customer_id",
         "required": true,
@@ -3315,6 +3347,21 @@
   },
   "POST /api/v1/customers/{customer_id}/notes": {
     "parameters": [
+      {
+        "in": "header",
+        "name": "Idempotency-Key",
+        "required": false,
+        "schema": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
       {
         "in": "path",
         "name": "customer_id",
@@ -3831,6 +3878,23 @@
     }
   },
   "POST /api/v1/emails/templates": {
+    "parameters": [
+      {
+        "in": "header",
+        "name": "Idempotency-Key",
+        "required": false,
+        "schema": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    ],
     "request": {
       "required": true,
       "schema": {
@@ -3961,6 +4025,23 @@
     }
   },
   "POST /api/v1/tasks/": {
+    "parameters": [
+      {
+        "in": "header",
+        "name": "Idempotency-Key",
+        "required": false,
+        "schema": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    ],
     "request": {
       "required": true,
       "schema": {

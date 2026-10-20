@@ -5,6 +5,7 @@ from app.models.email_log import EmailLog
 from app.models.task import Task
 from app.models.agent_run import AgentRun
 from app.models.job_run import JobRun
+from app.models.idempotency_key import IdempotencyKey
 
 __all__ = [
     "Customer",
@@ -15,4 +16,5 @@ __all__ = [
     "Task",
     "AgentRun",
     "JobRun",
+    "IdempotencyKey",
 ]

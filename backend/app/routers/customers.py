@@ -1,23 +1,46 @@
 """Customer management API routes."""
-from fastapi import APIRouter, Depends, Query
+from typing import Optional
+
+from fastapi import APIRouter, Depends, Header, Query, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.errors import ApiError, ErrorCode
 from app.database import get_db
+from app.models.customer import Customer, CustomerContact, CustomerNote
 from app.schemas.customer import (
     CustomerCreate, CustomerUpdate, CustomerResponse,
     CustomerListResponse, CustomerContactCreate, CustomerContactResponse,
     CustomerNoteCreate, CustomerNoteResponse, CustomerImportItem,
 )
 from app.services import customer_service
+from app.services.idempotency import clean_key, create_once
 
 router = APIRouter(prefix="/customers", tags=["Customers"])
 
 
 @router.post("/", response_model=CustomerResponse, status_code=201)
-async def create_customer(data: CustomerCreate, db: AsyncSession = Depends(get_db)):
-    """Create a new customer."""
-    customer = await customer_service.create_customer(db, data)
+async def create_customer(
+    data: CustomerCreate,
+    response: Response,
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a new customer.
+
+    ``Idempotency-Key`` makes a retry safe: the same key and body returns the
+    original customer instead of a second one.
+    """
+    customer, replayed = await create_once(
+        db,
+        scope="customer",
+        key=clean_key(idempotency_key),
+        payload=data.model_dump(mode="json"),
+        model=Customer,
+        create=lambda: customer_service.create_customer(db, data),
+        load=lambda customer_id: customer_service.get_customer(db, customer_id),
+    )
+    if replayed:
+        response.headers["Idempotent-Replay"] = "true"
     return customer
 
 
@@ -142,12 +165,27 @@ async def delete_customer(customer_id: int, db: AsyncSession = Depends(get_db)):
 # --- Contacts ---
 @router.post("/{customer_id}/contacts", response_model=CustomerContactResponse, status_code=201)
 async def add_contact(
-    customer_id: int, data: CustomerContactCreate, db: AsyncSession = Depends(get_db)
+    customer_id: int,
+    data: CustomerContactCreate,
+    response: Response,
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    db: AsyncSession = Depends(get_db),
 ):
-    """Add a contact to a customer."""
-    contact = await customer_service.add_contact(db, customer_id, data)
-    if not contact:
+    """Add a contact to a customer. Retry-safe with ``Idempotency-Key``."""
+    contact, replayed = await create_once(
+        db,
+        scope="customer_contact",
+        key=clean_key(idempotency_key),
+        # The customer id is part of the request: the same key used for another
+        # customer is a different request, not a retry.
+        payload={"customer_id": customer_id, "data": data.model_dump(mode="json")},
+        model=CustomerContact,
+        create=lambda: customer_service.add_contact(db, customer_id, data),
+    )
+    if contact is None:
         raise ApiError(status_code=404, code=ErrorCode.CUSTOMER_NOT_FOUND, detail="Customer not found")
+    if replayed:
+        response.headers["Idempotent-Replay"] = "true"
     return contact
 
 
@@ -160,10 +198,24 @@ async def get_contacts(customer_id: int, db: AsyncSession = Depends(get_db)):
 # --- Notes ---
 @router.post("/{customer_id}/notes", response_model=CustomerNoteResponse, status_code=201)
 async def add_note(
-    customer_id: int, data: CustomerNoteCreate, db: AsyncSession = Depends(get_db)
+    customer_id: int,
+    data: CustomerNoteCreate,
+    response: Response,
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    db: AsyncSession = Depends(get_db),
 ):
-    """Add a note to a customer."""
-    return await customer_service.add_note(db, customer_id, data)
+    """Add a note to a customer. Retry-safe with ``Idempotency-Key``."""
+    note, replayed = await create_once(
+        db,
+        scope="customer_note",
+        key=clean_key(idempotency_key),
+        payload={"customer_id": customer_id, "data": data.model_dump(mode="json")},
+        model=CustomerNote,
+        create=lambda: customer_service.add_note(db, customer_id, data),
+    )
+    if replayed:
+        response.headers["Idempotent-Replay"] = "true"
+    return note
 
 
 @router.get("/{customer_id}/notes", response_model=list[CustomerNoteResponse])

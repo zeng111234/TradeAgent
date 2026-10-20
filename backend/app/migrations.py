@@ -191,6 +191,20 @@ async def _stop_code_settled(conn: AsyncConnection) -> bool:
     return column and index
 
 
+async def _idempotency_table_settled(conn: AsyncConnection) -> bool:
+    """The table and its unique index, because either alone is useless.
+
+    A table without the unique constraint accepts the duplicate it exists to
+    refuse. A fresh install gets both from the model's ``create_all``; an
+    upgraded database has neither until this migration runs.
+    """
+    if not await _table_exists(conn, "idempotency_keys"):
+        return False
+    return await _indexes_settled(
+        conn, "idempotency_keys", ["uq_idempotency_scope_key"]
+    )
+
+
 # --------------------------------------------------------------------------
 # The migrations, oldest first
 # --------------------------------------------------------------------------
@@ -332,6 +346,29 @@ MIGRATIONS: list[Migration] = [
             "WHERE stop_code IS NULL AND stop_reason IS NOT NULL",
         ],
         guard=_stop_code_settled,
+    ),
+    Migration(
+        id="0009_idempotency_keys",
+        description=(
+            "one table for every create endpoint's Idempotency-Key. A retried "
+            "POST must not produce a second customer, contact, note, task or "
+            "template; the unique (scope, key) index is what makes that true "
+            "under concurrency, and request_hash is what separates a retry from "
+            "a key being reused for a different request"
+        ),
+        statements=[
+            "CREATE TABLE IF NOT EXISTS idempotency_keys ("
+            "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            "  scope VARCHAR(40) NOT NULL,"
+            "  key VARCHAR(120) NOT NULL,"
+            "  request_hash VARCHAR(64) NOT NULL,"
+            "  response_id INTEGER NOT NULL,"
+            "  created_at DATETIME NOT NULL"
+            ")",
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_idempotency_scope_key "
+            "ON idempotency_keys (scope, key)",
+        ],
+        guard=_idempotency_table_settled,
     ),
 ]
 

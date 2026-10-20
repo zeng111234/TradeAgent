@@ -46,6 +46,7 @@ from app.services.email_claims import (
     release,
     as_replay,
 )
+from app.services.idempotency import clean_key, create_once
 from app.utils.email_sender import send_email, send_batch_emails, render_template, generate_tracking_id
 from app.services.ai_service import generate_cold_email
 from app.services.analytics_service import get_dashboard_stats
@@ -55,12 +56,30 @@ router = APIRouter(prefix="/emails", tags=["Emails"])
 
 # --- Templates ---
 @router.post("/templates", response_model=EmailTemplateResponse, status_code=201)
-async def create_template(data: EmailTemplateCreate, db: AsyncSession = Depends(get_db)):
-    """Create an email template."""
-    template = EmailTemplate(**data.model_dump())
-    db.add(template)
-    await db.flush()
-    await db.refresh(template)
+async def create_template(
+    data: EmailTemplateCreate,
+    response: Response,
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create an email template. Retry-safe with ``Idempotency-Key``."""
+    async def _create():
+        template = EmailTemplate(**data.model_dump())
+        db.add(template)
+        await db.flush()
+        await db.refresh(template)
+        return template
+
+    template, replayed = await create_once(
+        db,
+        scope="email_template",
+        key=clean_key(idempotency_key),
+        payload=data.model_dump(mode="json"),
+        model=EmailTemplate,
+        create=_create,
+    )
+    if replayed:
+        response.headers["Idempotent-Replay"] = "true"
     return template
 
 

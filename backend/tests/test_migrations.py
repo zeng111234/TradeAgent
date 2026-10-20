@@ -208,6 +208,31 @@ def test_legacy_stop_reasons_are_backfilled_with_a_code(scratch):
     assert codes["r-weird"] == "legacy_unknown"
 
 
+def test_a_legacy_database_gains_the_idempotency_table(scratch):
+    """Without the unique index the table accepts the duplicate it exists to stop."""
+    import asyncio
+
+    as_legacy_database(scratch)
+    report = asyncio.run(scratch.run(apply_migrations))
+
+    assert "0009_idempotency_keys" in report["applied"], report
+
+    async def inspect(conn):
+        table = await conn.execute(text(
+            "SELECT name FROM sqlite_master WHERE type='table' "
+            "AND name='idempotency_keys'"
+        ))
+        index = await conn.execute(text(
+            "SELECT name FROM sqlite_master WHERE type='index' "
+            "AND name='uq_idempotency_scope_key'"
+        ))
+        return table.fetchone(), index.fetchone()
+
+    table, index = asyncio.run(scratch.run(inspect))
+    assert table is not None
+    assert index is not None, "the unique (scope, key) index is the guarantee"
+
+
 def test_a_legacy_row_survives_the_migration(scratch):
     """The rows that were already there are the ones this exists for."""
     import asyncio
