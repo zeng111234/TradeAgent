@@ -25,53 +25,11 @@
       </p>
     </el-alert>
 
-    <!-- Boundary -->
-    <el-card v-if="capabilities.tool_count" shadow="never" style="margin-bottom: 16px">
-      <template #header>
-        <span style="font-weight: 600">
-          权限边界 —— agent 有 {{ capabilities.tool_count }} 个工具，但发送权不在它手上
-        </span>
-      </template>
-
-      <div class="boundary-grid">
-        <div class="boundary-cell">
-          <p class="section-label">可写工具（仅此两个）</p>
-          <div class="tag-cloud">
-            <el-tag v-for="t in capabilities.write_capable" :key="t" size="small" style="margin: 0">
-              {{ t }}
-            </el-tag>
-          </div>
-          <p class="hint">
-            两个都能写，但都写不到客户手上：一个只存 <code>pending</code> 草稿，一个遇到已存在的客户直接
-            <code>skipped</code>。
-          </p>
-        </div>
-
-        <div class="boundary-cell">
-          <p class="section-label">
-            刻意不存在的工具
-            <span class="badge">不是缺失，是设计</span>
-          </p>
-          <div class="tag-cloud">
-            <el-tag v-for="c in capabilities.cannot" :key="c" type="danger" size="small" effect="plain"
-              style="margin: 0">
-              {{ c }}
-            </el-tag>
-          </div>
-          <p class="hint">
-            这些不是我忘了加，是<strong>故意没有注册</strong>。边界靠"工具不存在"实现，不靠提示词要求模型自觉 ——
-            一条提示词可以被绕过，一个不存在的工具不行。
-          </p>
-        </div>
-      </div>
-
-      <p class="hint boundary-foot">{{ capabilities.sending }}</p>
-    </el-card>
-
-    <!-- Run form -->
+    <!-- Run form first: it is the only action this page offers, and it used to
+         sit below a wall of boundary documentation. -->
     <el-card shadow="never" style="margin-bottom: 16px">
       <template #header>
-        <span style="font-weight: 600">运行</span>
+        <span class="card-title">运行</span>
       </template>
       <el-form label-position="top">
         <el-form-item label="目标（用自然语言描述，不要描述步骤）">
@@ -169,8 +127,8 @@
           </div>
         </div>
       </template>
-      <el-descriptions :column="4" border size="small" style="margin-bottom: 12px">
-        <el-descriptions-item label="工具路径">
+      <el-descriptions :column="2" border size="small" style="margin-bottom: 12px">
+        <el-descriptions-item label="工具路径" :span="2">
           <code>{{ result.tool_sequence?.join(' → ') || '(未调用工具)' }}</code>
         </el-descriptions-item>
         <el-descriptions-item label="轮次 / 调用">
@@ -181,7 +139,7 @@
             {{ result.did_investigate ? '是' : '否' }}
           </el-tag>
         </el-descriptions-item>
-        <el-descriptions-item label="耗时">
+        <el-descriptions-item label="耗时" :span="2">
           {{ result.elapsed }}s · {{ result.prompt_tokens }}+{{ result.completion_tokens }} tokens
         </el-descriptions-item>
       </el-descriptions>
@@ -214,29 +172,42 @@
       </template>
 
       <el-table v-if="runs.length" :data="runs" size="small" @row-click="openRun" style="cursor: pointer">
-        <el-table-column prop="run_id" label="run id" width="120">
+        <el-table-column prop="run_id" label="run id" width="100">
           <template #default="{ row }"><code>{{ row.run_id.slice(0, 8) }}</code></template>
         </el-table-column>
-        <el-table-column prop="status" label="状态" width="110">
+        <el-table-column prop="status" label="状态" width="96">
           <template #default="{ row }">
             <el-tag :type="statusType(row.status)" size="small">{{ row.status }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="工具路径" min-width="320">
+        <!-- The tool path is the signal this page exists for, so it gets room
+             but not lines: the first two tools, a +N, and the whole sequence on
+             hover. Truncating it to an ellipsis hid the point; moving it into
+             the expansion row would fight the row click that opens the drawer. -->
+        <el-table-column label="工具路径" width="220">
           <template #default="{ row }">
-            <code style="font-size: 12px">{{ row.tool_sequence?.join(' → ') || '—' }}</code>
+            <el-tooltip v-if="row.tool_sequence && row.tool_sequence.length" placement="top">
+              <template #content>
+                <span class="tool-path-full">{{ row.tool_sequence.join(' → ') }}</span>
+              </template>
+              <span class="tool-path-cell">
+                <code>{{ row.tool_sequence.slice(0, 2).join(' → ') }}</code>
+                <span v-if="row.tool_sequence.length > 2" class="tool-path-more">+{{ row.tool_sequence.length - 2 }}</span>
+              </span>
+            </el-tooltip>
+            <span v-else class="text-muted">—</span>
           </template>
         </el-table-column>
-        <el-table-column prop="rounds" label="轮次" width="70" />
-        <el-table-column prop="tool_calls" label="调用" width="70" />
-        <el-table-column label="目标" min-width="200">
+        <el-table-column prop="rounds" label="轮次" width="56" align="center" />
+        <el-table-column prop="tool_calls" label="调用" width="56" align="center" />
+        <el-table-column label="目标" min-width="230">
           <template #default="{ row }">
             <span class="goal-cell">{{ row.goal }}</span>
           </template>
         </el-table-column>
         <!-- An explicit action, because the diagram is the whole point of this
              page and a row click is not a visible affordance. -->
-        <el-table-column label="操作" width="150" align="right">
+        <el-table-column label="操作" width="146" align="right">
           <template #default="{ row }">
             <el-button size="small" type="primary" link @click.stop="openRun(row)">
               查看轨迹
@@ -278,6 +249,46 @@
         </p>
       </div>
     </el-drawer>
+
+    <!-- Boundary, demoted to a callout: it documents the permission model and
+         is not an action, so it does not get a card of equal weight. The
+         "deliberately absent" tools are a design note, not an error -- they
+         are plain tags now, not danger. -->
+    <div v-if="capabilities.tool_count" class="callout" style="margin-top: 16px">
+      <p class="section-label">
+        权限边界 —— agent 有 {{ capabilities.tool_count }} 个工具，但发送权不在它手上
+      </p>
+      <div class="boundary-grid">
+        <div class="boundary-cell">
+          <p class="callout-label">可写工具（仅此两个）</p>
+          <div class="tag-cloud">
+            <el-tag v-for="t in capabilities.write_capable" :key="t" size="small">
+              {{ t }}
+            </el-tag>
+          </div>
+          <p class="hint">
+            两个都能写，但都写不到客户手上：一个只存 <code>pending</code> 草稿，一个遇到已存在的客户直接
+            <code>skipped</code>。
+          </p>
+        </div>
+        <div class="boundary-cell">
+          <p class="callout-label">
+            刻意不存在的工具
+            <span class="badge">不是缺失，是设计</span>
+          </p>
+          <div class="tag-cloud">
+            <el-tag v-for="c in capabilities.cannot" :key="c" size="small" effect="plain">
+              {{ c }}
+            </el-tag>
+          </div>
+          <p class="hint">
+            这些不是我忘了加，是<strong>故意没有注册</strong>。边界靠"工具不存在"实现，不靠提示词要求模型自觉 ——
+            一条提示词可以被绕过，一个不存在的工具不行。
+          </p>
+        </div>
+      </div>
+      <p class="hint boundary-foot">{{ capabilities.sending }}</p>
+    </div>
   </div>
 </template>
 
@@ -675,8 +686,14 @@ onUnmounted(() => {
 .section-label {
   font-weight: 600;
   font-size: 13px;
-  color: #606266;
+  color: var(--text-2);
   margin: 0 0 8px;
+}
+.callout-label {
+  font-weight: 600;
+  font-size: var(--fs-caption);
+  color: var(--text-2);
+  margin: 0 0 var(--space-2);
 }
 /* A two-column el-row with :span="12" clipped the tag list on narrower windows,
    which is how the boundary came to look truncated. Flex wrap instead. */
@@ -695,6 +712,17 @@ onUnmounted(() => {
   gap: 6px;
   margin-bottom: 8px;
 }
+/* `cannot` entries are whole sentences ("promise a ship date: there is no
+   schedule…"), not identifiers. An el-tag is nowrap by default, so one long
+   sentence became a 550px pill and pushed the page 31px wide. Let the tag
+   wrap and stay inside its cell. */
+.tag-cloud :deep(.el-tag) {
+  white-space: normal;
+  height: auto;
+  max-width: 100%;
+  line-height: 1.5;
+  padding: 2px 9px;
+}
 .badge {
   display: inline-block;
   margin-left: 8px;
@@ -702,23 +730,23 @@ onUnmounted(() => {
   border-radius: 10px;
   font-size: 11px;
   font-weight: 500;
-  color: #b88230;
-  background: #fdf6ec;
-  border: 1px solid #f5dab1;
+  color: var(--warning);
+  background: var(--warning-weak);
+  border: 1px solid var(--warning-border);
 }
 .boundary-foot {
   margin-top: 14px;
   padding-top: 12px;
-  border-top: 1px solid #f0f2f5;
+  border-top: 1px solid var(--border-subtle);
 }
 .hint {
-  color: #909399;
+  color: var(--text-3);
   font-size: 12px;
   margin: 6px 0 0;
 }
 .conclusion {
-  border-left: 3px solid #409eff;
-  background: #f5f7fa;
+  border-left: 3px solid var(--accent);
+  background: var(--bg-subtle);
   padding: 12px 16px;
   border-radius: 6px;
 }
@@ -726,13 +754,13 @@ onUnmounted(() => {
   white-space: pre-wrap;
   font-size: 14px;
   line-height: 1.65;
-  color: #303133;
+  color: var(--text-1);
 }
 /* Rendered agent markdown. Kept in step with the standalone trace page. */
 .md {
   font-size: 14px;
   line-height: 1.65;
-  color: #303133;
+  color: var(--text-1);
   word-break: break-word;
 }
 .md :deep(h2),
@@ -748,14 +776,14 @@ onUnmounted(() => {
 .md :deep(ol) { margin: 0.35rem 0 0.55rem; padding-left: 1.25rem; }
 .md :deep(li) { margin: 0.18rem 0; }
 .md :deep(code) {
-  background: #eef1f6;
+  background: var(--bg-subtle);
   padding: 0.1em 0.35em;
   border-radius: 4px;
   font-size: 0.88em;
 }
 .md :deep(pre.md-block) {
-  background: #f5f7fa;
-  border: 1px solid #ebeef5;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border-subtle);
   padding: 0.7rem 0.9rem;
   border-radius: 6px;
   overflow-x: auto;
@@ -764,15 +792,35 @@ onUnmounted(() => {
 }
 .md :deep(table) { border-collapse: collapse; margin: 0.6rem 0; font-size: 0.9rem; }
 .md :deep(th),
-.md :deep(td) { border: 1px solid #dcdfe6; padding: 0.3rem 0.6rem; text-align: left; }
-.md :deep(th) { background: #f5f7fa; }
-.md :deep(hr) { border: 0; border-top: 1px solid #dcdfe6; margin: 0.9rem 0; }
+.md :deep(td) { border: 1px solid var(--border); padding: 0.3rem 0.6rem; text-align: left; }
+.md :deep(th) { background: var(--bg-subtle); }
+.md :deep(hr) { border: 0; border-top: 1px solid var(--border); margin: 0.9rem 0; }
 .goal-cell {
   display: inline-block;
   max-width: 340px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* History row: two tools, then a count. Whole sequence on hover. */
+.tool-path-cell {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
+.tool-path-more {
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  flex: none;
+}
+.tool-path-full {
+  white-space: pre-wrap;
+  font-family: var(--font-mono);
+  font-size: var(--fs-caption);
 }
 code {
   font-size: 12px;
