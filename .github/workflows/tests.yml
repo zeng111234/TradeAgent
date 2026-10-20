@@ -51,6 +51,12 @@ jobs:
         # that needs one fails here the same way it fails locally.
         run: python -m pytest
 
+      - name: Scripts compile
+        # The smoke scripts are outside the suite (they need a credential and
+        # the network). Syntax errors should still be caught here rather than
+        # by the scheduled job that finally runs them.
+        run: python -m py_compile ../scripts/*.py
+
       - name: API surface has not drifted
         run: python tests/api_surface.py
 

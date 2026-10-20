@@ -751,8 +751,15 @@ Write a warm, professional follow-up. Be specific to their situation. Return ONL
                     scope="email_draft",
                 )
                 action["draft_subject"] = f"Following up - {action['company_name']}"
-            except Exception as e:
-                logger.error(f"Draft email error: {e}")
+            except Exception as exc:
+                # Do not let a failed draft look like "this action needed no
+                # draft": the action is in the plan precisely because it does.
+                # The field is the record; the log alone is invisible to the
+                # caller reading the plan.
+                logger.exception(
+                    "follow-up draft failed for customer %s", action.get("customer_id")
+                )
+                action["draft_error"] = f"{type(exc).__name__}: {exc}"
 
     return {
         "as_of": now.isoformat(),
@@ -1006,14 +1013,20 @@ Return ONLY valid JSON."""
 
     except LLMTruncated as e:
         logger.error(f"inquiry analysis hit the token cap, keyword rules used: {e}")
-        return _basic_inquiry_analysis(email_content)
+        return _basic_inquiry_analysis(
+            email_content,
+            reason="the model's answer was cut off at the token cap, so it is incomplete",
+        )
     except Exception as e:
         logger.error(f"Inquiry analysis error: {e}")
-        return _basic_inquiry_analysis(email_content)
+        return _basic_inquiry_analysis(
+            email_content,
+            reason=f"the model call failed: {type(e).__name__}: {e}",
+        )
 
 
-def _basic_inquiry_analysis(email_content: str) -> dict:
-    """Basic keyword-based inquiry analysis."""
+def _basic_inquiry_analysis(email_content: str, reason: str = "no_api_key") -> dict:
+    """Basic keyword-based inquiry analysis, labelled with why it is not model output."""
     text_lower = email_content.lower()
 
     inquiry_type = "general"
@@ -1073,7 +1086,53 @@ def _basic_inquiry_analysis(email_content: str) -> dict:
         "follow_up_strategy": "Reply promptly with product details and ask for missing specifications",
         "ai_powered": False,
         "judgement_source": "keyword_rules",
+        "fallback_reason": reason,
     }
+
+
+async def _attach_rescue_drafts(alerts: list[dict], now) -> None:
+    """Add a rescue draft -- or the reason there is none -- to the top alerts.
+
+    Extracted from ``customer_churn_alerts`` so the failure path can be tested
+    on one synthetic alert. Through the full function the test depended on the
+    customer landing in the first five alerts, which other tests' leftovers
+    could push out; that made a real assertion order-dependent.
+
+    The failure is written to ``rescue_error`` rather than only logged: an
+    at-risk customer with no draft and no reason is indistinguishable from one
+    that deliberately needed no draft.
+    """
+    from datetime import datetime
+
+    if not is_configured() or not alerts:
+        return
+
+    for alert in alerts[:5]:
+        if alert["risk_level"] not in ("critical", "high") or not alert["contact_email"]:
+            continue
+        try:
+            prompt = f"""Write a rescue email for a customer at risk of being lost.
+
+Company: {alert['company_name']}
+Stage: {alert['stage']}
+Risk reasons: {'; '.join(alert['risk_reasons'])}
+Days since last contact: {(now - datetime.fromisoformat(alert['last_contacted'])).days if alert['last_contacted'] else 'Never'}
+
+Write a warm, non-pushy email that re-engages the customer. Offer value (new products, special pricing, industry insights). Keep under 100 words. Return ONLY the email body in HTML."""
+
+            alert["rescue_email"] = await complete_text(
+                prompt,
+                system="You are a professional foreign trade email writer. Write concise re-engagement emails.",
+                temperature=0.7,
+                max_tokens=300,
+                scope="email_draft",
+            )
+            alert["rescue_subject"] = f"Something new for {alert['company_name']} - Let's reconnect"
+        except Exception as exc:
+            logger.exception(
+                "rescue draft failed for customer %s", alert.get("customer_id")
+            )
+            alert["rescue_error"] = f"{type(exc).__name__}: {exc}"
 
 
 async def customer_churn_alerts(db_session=None) -> dict:
@@ -1182,29 +1241,7 @@ async def customer_churn_alerts(db_session=None) -> dict:
     alerts.sort(key=lambda x: risk_order.get(x["risk_level"], 4))
 
     # Generate AI rescue emails for critical/high risk customers with API key
-    if is_configured() and alerts:
-        for alert in alerts[:5]:
-            if alert["risk_level"] in ("critical", "high") and alert["contact_email"]:
-                try:
-                    prompt = f"""Write a rescue email for a customer at risk of being lost.
-
-Company: {alert['company_name']}
-Stage: {alert['stage']}
-Risk reasons: {'; '.join(alert['risk_reasons'])}
-Days since last contact: {(now - datetime.fromisoformat(alert['last_contacted'])).days if alert['last_contacted'] else 'Never'}
-
-Write a warm, non-pushy email that re-engages the customer. Offer value (new products, special pricing, industry insights). Keep under 100 words. Return ONLY the email body in HTML."""
-
-                    alert["rescue_email"] = await complete_text(
-                        prompt,
-                        system="You are a professional foreign trade email writer. Write concise re-engagement emails.",
-                        temperature=0.7,
-                        max_tokens=300,
-                        scope="email_draft",
-                    )
-                    alert["rescue_subject"] = f"Something new for {alert['company_name']} - Let's reconnect"
-                except Exception as e:
-                    logger.error(f"Rescue email error: {e}")
+    await _attach_rescue_drafts(alerts, now)
 
     return {
         "total_alerts": len(alerts),
@@ -1296,6 +1333,7 @@ async def generate_holiday_emails(
             continue
 
         # AI or template-based email generation
+        fallback_reason = None
         if is_configured():
             try:
                 prompt = f"""Write a warm holiday greeting email for a business contact.
@@ -1335,10 +1373,19 @@ Return JSON: {{"subject": "email subject", "body": "email body in HTML"}}"""
                     "subject": result_data.get("subject", f"{holiday_info['greeting']} - {company_name or 'Warm wishes'}"),
                     "body": result_data.get("body", ""),
                     "personalized": True,
+                    "fallback_reason": None,
                 })
                 continue
-            except Exception as e:
-                logger.error(f"Holiday email AI error for {c.company_name}: {e}")
+            except Exception as exc:
+                # The template below still produces a usable email, but the
+                # result must say it is not model-written and why -- otherwise
+                # a provider outage looks like a deliberate template choice.
+                logger.exception(
+                    "holiday email AI failed for customer %s", c.id
+                )
+                fallback_reason = f"{type(exc).__name__}: {exc}"
+        else:
+            fallback_reason = "no_api_key"
 
         # Fallback: template-based
         subject = f"{holiday_info['greeting']} - {company_name or 'Best Wishes'}"
@@ -1357,6 +1404,7 @@ Return JSON: {{"subject": "email subject", "body": "email body in HTML"}}"""
             "subject": subject,
             "body": body,
             "personalized": False,
+            "fallback_reason": fallback_reason,
         })
 
     return {

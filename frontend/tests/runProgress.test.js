@@ -79,7 +79,24 @@ test('the result panel gets the fields the detail endpoint does not send', () =>
 
   assert.deepEqual(normalised.tool_sequence, ['search_leads', 'inspect_website', 'draft_email'])
   assert.equal(normalised.did_investigate, true)
-  assert.equal(normalised.elapsed, 12.5, 'elapsed_ms holds seconds, not milliseconds')
+  assert.equal(
+    normalised.elapsed,
+    0.0125,
+    'elapsed_ms is milliseconds; treating it as seconds renders 12.5ms as 12.5s'
+  )
+})
+
+test('a six-second run renders as six seconds, not six thousand', () => {
+  const normalised = normaliseRun({ run_id: 'r4', status: 'succeeded', elapsed_ms: 6000, steps: [] })
+
+  assert.equal(normalised.elapsed, 6)
+})
+
+test('a seconds-shaped snapshot still passes through', () => {
+  // The SSE progress event sends `elapsed` in seconds; no `elapsed_ms` key.
+  const normalised = normaliseRun({ run_id: 'r5', status: 'running', elapsed: 3.2 })
+
+  assert.equal(normalised.elapsed, 3.2)
 })
 
 test('a run that used no tools says so', () => {

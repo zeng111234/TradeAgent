@@ -36,6 +36,12 @@
       "lines": 1,
       "opens": "You are a B2B trade intelligence analyst. Always respond wit"
     },
+    "app.services.agent_service:_attach_rescue_drafts:system": {
+      "chars": 86,
+      "fingerprint": "06ce0e9fa305",
+      "lines": 1,
+      "opens": "You are a professional foreign trade email writer. Write con"
+    },
     "app.services.agent_service:_build_follow_up_plan:system": {
       "chars": 78,
       "fingerprint": "4ea74834874b",
@@ -59,12 +65,6 @@
       "fingerprint": "dfbe1f4fae3a",
       "lines": 1,
       "opens": "Write B2B cold outreach emails. Return valid JSON only."
-    },
-    "app.services.agent_service:customer_churn_alerts:system": {
-      "chars": 86,
-      "fingerprint": "06ce0e9fa305",
-      "lines": 1,
-      "opens": "You are a professional foreign trade email writer. Write con"
     },
     "app.services.agent_service:generate_holiday_emails:system": {
       "chars": 71,

@@ -54,20 +54,29 @@ export function mergeSteps(current, incoming) {
  * (`tool_sequence`, `did_investigate`, `elapsed` in seconds). The detail
  * endpoint returns `steps`, `elapsed_ms`, and neither of the other two.
  *
- * `elapsed_ms` holds **seconds**, despite the name: it is assigned from
- * `row.elapsed`, and the loop writes `round(self.elapsed, 3)`. Renaming a field
- * is a breaking change for every client (R49), so this adapter treats it as
- * seconds and the mismatch is recorded rather than papered over.
+ * The two elapsed fields do **not** share a unit:
+ *
+ * - `elapsed_ms` is milliseconds. ``repository.save_run`` stores
+ *   ``int(payload["elapsed"] * 1000)``, and the snapshot passes the column
+ *   through under that name.
+ * - ``elapsed`` (from the SSE progress event) is seconds; the stream divides
+ *   the column by 1000 before sending it.
+ *
+ * Treating both as seconds is how a six-second run rendered as "6000s". The
+ * adapter converts only the millisecond field and leaves the seconds field
+ * alone. Renaming the API field is a breaking change for every client (R49),
+ * so the fix belongs here, not in the response shape.
  */
 export function normaliseRun(snapshot) {
   const steps = snapshot?.steps || []
   const toolSequence = steps.flatMap((step) =>
     (step.tool_calls || []).map((call) => call.name)
   )
+  const hasMillis = snapshot?.elapsed_ms !== null && snapshot?.elapsed_ms !== undefined
   return {
     ...snapshot,
     steps,
-    elapsed: snapshot?.elapsed_ms ?? snapshot?.elapsed ?? 0,
+    elapsed: hasMillis ? snapshot.elapsed_ms / 1000 : (snapshot?.elapsed ?? 0),
     tool_sequence: snapshot?.tool_sequence || toolSequence,
     // ``did_investigate`` is "at least one tool was actually called", which is
     // exactly what the steps show. Deriving it here keeps the badge honest for

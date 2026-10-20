@@ -36,8 +36,8 @@ QUESTION = (
 PARENT_CEILING_SECONDS = 120.0
 
 
-async def _prepare_database() -> None:
-    """A fresh ``DATABASE_URL`` has no tables; create and seed the demo book.
+async def _prepare_database() -> int:
+    """Create and seed the book, then return how many customers it holds.
 
     Without this the child truthfully reports "the CRM is not readable", the
     verdict still passes because it only checks the deadline and the spawn count,
@@ -45,11 +45,17 @@ async def _prepare_database() -> None:
     running it against a throwaway database: seven tool calls, all failing on
     ``no such table: customers``.
     """
-    from app.database import init_db
+    from sqlalchemy import func, select
+
+    from app.database import async_session, init_db
     from app.main import _insert_demo_data
+    from app.models.customer import Customer
 
     await init_db()
     await _insert_demo_data()
+
+    async with async_session() as session:
+        return (await session.execute(select(func.count(Customer.id)))).scalar() or 0
 
 
 async def main() -> int:
@@ -57,7 +63,12 @@ async def main() -> int:
         print("VERDICT: SKIP — no OPENAI_API_KEY in the environment")
         return 0
 
-    await _prepare_database()
+    book_size = await _prepare_database()
+    if book_size == 0:
+        # A delegation over an empty book can "succeed" while proving nothing
+        # about the tools. Fail here, not in the verdict's blind spot.
+        print("VERDICT: FAIL — the CRM is empty; delegation over no data proves nothing")
+        return 1
 
     client = build_llm_client()
     registry = build_registry()
@@ -75,12 +86,24 @@ async def main() -> int:
     wall = time.monotonic() - started
     totals = record.as_dict()
 
+    # A call that was executed but failed still counts in ``totals['tool_calls']``.
+    # The verdict needs "the child got data", not "the child tried".
+    successful_calls = sum(
+        1
+        for child in record.children
+        if child.run
+        for step in child.run.steps
+        for call in step.tool_calls
+        if call.ok and not call.refused
+    )
+
     print(f"ok                     : {result.ok}")
     print(f"wall clock             : {wall:.1f}s "
           f"(ceiling {PARENT_CEILING_SECONDS}s, unwind margin {DEFAULT_UNWIND_SECONDS}s)")
     print(f"inside the ceiling     : {wall <= PARENT_CEILING_SECONDS}")
     print(f"delegations            : {totals['spawned']} spawned, {totals['refused']} refused")
     print(f"child tool calls       : {totals['tool_calls']}")
+    print(f"child calls succeeded  : {successful_calls}")
     print(f"child tokens           : {totals['tokens']}")
     print(f"child elapsed          : {totals['elapsed']}s")
 
@@ -97,6 +120,7 @@ async def main() -> int:
         and wall <= PARENT_CEILING_SECONDS
         and totals["spawned"] == 1
         and totals["tool_calls"] > 0
+        and successful_calls > 0
         and len(answer) > 0
     )
     print(f"VERDICT: {'PASS' if passed else 'FAIL'} — "

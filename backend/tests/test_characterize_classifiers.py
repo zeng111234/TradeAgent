@@ -215,8 +215,12 @@ async def test_inquiry_response_shape_is_stable():
         # Added when the boundary between deterministic code and the model was
         # made explicit: this response is keyword rules, and it says so.
         "judgement_source",
+        # Added when the silent fallback was closed: the response now says why
+        # it is keyword rules, not only that it is.
+        "fallback_reason",
     }
     assert result["judgement_source"] == "keyword_rules"
+    assert result["fallback_reason"] == "no_api_key"
 
 
 async def test_the_inquiry_fallback_stops_scoring_intent():

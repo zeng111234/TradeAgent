@@ -18,9 +18,10 @@ from app.models.customer import Customer
 from app.services import agent_service
 from app.services.follow_up_plan import KIND_SEND_FOLLOW_UP, CustomerPlanInput
 from app.services.follow_up_policy import derive_thread_state
+from app.llm import LLMTransient
 
 
-async def test_a_follow_up_action_gets_the_draft_it_asked_for(db, monkeypatch):
+async def _plan_for_a_due_follow_up(db, monkeypatch, complete):
     customer = Customer(company_name="Draft Regression Co", country="DE",
                         stage="contacted")
     db.add(customer)
@@ -44,12 +45,9 @@ async def test_a_follow_up_action_gets_the_draft_it_asked_for(db, monkeypatch):
     async def fake_inputs(_db, _customers, _now):
         return [plan_input]
 
-    async def fake_complete(*_args, **_kwargs):
-        return "<p>Following up on the quote.</p>"
-
     monkeypatch.setattr(agent_service, "_plan_inputs_for", fake_inputs)
     monkeypatch.setattr(agent_service, "is_configured", lambda: True)
-    monkeypatch.setattr(agent_service, "complete_text", fake_complete)
+    monkeypatch.setattr(agent_service, "complete_text", complete)
 
     try:
         plan = await agent_service._build_follow_up_plan(
@@ -59,9 +57,38 @@ async def test_a_follow_up_action_gets_the_draft_it_asked_for(db, monkeypatch):
         await db.delete(customer)
         await db.commit()
 
-    action = next(
+    return next(
         item for item in plan["actions"] if item["customer_id"] == customer.id
     )
+
+
+async def test_a_follow_up_action_gets_the_draft_it_asked_for(db, monkeypatch):
+    async def fake_complete(*_args, **_kwargs):
+        return "<p>Following up on the quote.</p>"
+
+    action = await _plan_for_a_due_follow_up(db, monkeypatch, fake_complete)
+
     assert action["kind"] == KIND_SEND_FOLLOW_UP
     assert action["draft_email"] == "<p>Following up on the quote.</p>"
-    assert action["draft_subject"] == f"Following up - {customer.company_name}"
+    assert action["draft_subject"] == "Following up - Draft Regression Co"
+    assert "draft_error" not in action
+
+
+async def test_a_failed_draft_is_a_field_not_a_missing_field(db, monkeypatch):
+    """The failure this test exists for: no `draft_email` and no explanation.
+
+    The exception handler still allows the rest of the plan to be returned, but
+    the action must carry `draft_error`. A caller reading the plan cannot see a
+    log line.
+    """
+    async def failing_complete(*_args, **_kwargs):
+        raise LLMTransient("the provider returned HTTP 503")
+
+    action = await _plan_for_a_due_follow_up(db, monkeypatch, failing_complete)
+
+    assert action["kind"] == KIND_SEND_FOLLOW_UP
+    assert "draft_email" not in action
+    assert "draft_error" in action
+    assert "LLMTransient" in action["draft_error"]
+    # Exactly one of the two, never both and never neither.
+    assert ("draft_email" in action) != ("draft_error" in action)

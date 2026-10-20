@@ -1,0 +1,66 @@
+# Ask the real provider the questions the offline suite cannot.
+#
+# The offline suite proves the code matches the shape we believe; the canary
+# proves the belief still matches the provider; the three smoke scripts prove
+# the wiring end to end. They need a credential and the network, so they are a
+# separate weekly/manual job rather than a step in Tests -- but they are in CI,
+# because "we ran it once locally" is how all three drifted last time.
+name: Real-model Smoke
+
+on:
+  schedule:
+    # Mondays 04:41 UTC. Off the hour on purpose: every scheduler fires at :00.
+    - cron: '41 4 * * 1'
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+
+      - name: Run the four real-provider checks
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL || 'https://api.deepseek.com' }}
+          OPENAI_MODEL: ${{ secrets.OPENAI_MODEL || 'deepseek-chat' }}
+        run: |
+          if [ -z "$OPENAI_API_KEY" ]; then
+            echo "::warning::Real-model smoke skipped: OPENAI_API_KEY is not configured."
+            exit 0
+          fi
+          set -e
+          # Each script creates whatever schema it needs. A throwaway database
+          # keeps the job from depending on a checked-in file.
+          DB_DIR="$(mktemp -d)"
+          export DATABASE_URL="sqlite+aiosqlite:///$DB_DIR/smoke.db"
+          export DEBUG=false
+          export SMTP_USER=""
+          export SMTP_PASSWORD=""
+          unset REPORT_EMAIL
+
+          python scripts/contract_canary.py
+          python scripts/smoke_legacy_llm.py
+          python scripts/smoke_real_model.py
+          python scripts/smoke_delegation.py
+
+      - name: Keep the records
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: real-smoke-${{ github.run_id }}
+          path: artifacts/
+          if-no-files-found: ignore
