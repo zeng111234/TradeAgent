@@ -38,7 +38,7 @@
                       <p v-if="a.contact_email" style="margin: 4px 0 0; color: #909399; font-size: 12px">Contact: {{ a.contact_name }} ({{ a.contact_email }})</p>
                     </el-col>
                     <el-col :span="8" style="text-align: right">
-                      <el-button v-if="a.draft_email" size="small" type="success" @click="showDraftEmail(a)">View Draft</el-button>
+                      <el-button v-if="a.draft_email" size="small" @click="showDraftEmail(a)">View Draft</el-button>
                       <el-button v-if="a.contact_email" size="small" type="primary" @click="sendQuickEmail(a)">Quick Send</el-button>
                     </el-col>
                   </el-row>
@@ -89,7 +89,7 @@
                     <el-tag :type="leadResult.ai_powered ? 'success' : 'info'" size="small">
                       {{ leadResult.ai_powered ? 'AI Enhanced' : 'Basic' }}
                     </el-tag>
-                    <el-button v-if="leadResult.leads && leadResult.leads.length" size="small" type="success" style="margin-left: 8px" @click="importLeads">Import to CRM</el-button>
+                    <el-button v-if="leadResult.leads && leadResult.leads.length" size="small" style="margin-left: 8px" @click="importLeads">Import to CRM</el-button>
                   </div>
                 </div>
               </template>
@@ -240,7 +240,7 @@
           <template #header>
             <div style="display: flex; justify-content: space-between; align-items: center">
               <span style="font-weight: 600">Customer Churn Risk Scanner</span>
-              <el-button type="danger" @click="runChurnScan" :loading="churnLoading" size="large">
+              <el-button @click="runChurnScan" :loading="churnLoading" size="large">
                 <el-icon><WarningFilled /></el-icon> Scan for At-Risk Customers
               </el-button>
             </div>
@@ -279,7 +279,7 @@
                   </div>
                 </el-col>
                 <el-col :span="10" style="text-align: right">
-                  <el-button v-if="a.rescue_email" size="small" type="success" @click="a.showRescue = !a.showRescue">Rescue Email</el-button>
+                  <el-button v-if="a.rescue_email" size="small" @click="a.showRescue = !a.showRescue">Rescue Email</el-button>
                   <el-button v-if="a.contact_email" size="small" type="primary" @click="sendRescueEmail(a)">Send Now</el-button>
                 </el-col>
               </el-row>
@@ -330,7 +330,7 @@
               <template #header>
                 <div style="display: flex; justify-content: space-between; align-items: center">
                   <span style="font-weight: 600">{{ holidayResult.holiday }} Emails ({{ holidayResult.generated }})</span>
-                  <el-button type="success" size="small" @click="sendAllHolidayEmails">Send All</el-button>
+                  <el-button size="small" @click="sendAllHolidayEmails">Send All</el-button>
                 </div>
               </template>
               <div v-for="e in (holidayResult.emails || [])" :key="e.customer_id"
@@ -343,7 +343,7 @@
                 </div>
                 <p style="margin: 0 0 4px; font-weight: 600; font-size: 13px">Subject: {{ e.subject }}</p>
                 <div v-html="e.body" style="background: #f5f7fa; padding: 12px; border-radius: 6px; font-size: 13px; color: #303133"></div>
-                <el-button size="small" type="success" style="margin-top: 8px"
+                <el-button size="small" style="margin-top: 8px"
                   @click="sendSingleHolidayEmail(e)">Send to {{ e.to_email }}</el-button>
               </div>
             </el-card>
@@ -541,7 +541,7 @@
                 </div>
                 <p style="margin: 0 0 4px; font-weight: 600; font-size: 13px" v-if="e.subject">Subject: {{ e.subject }}</p>
                 <div v-if="e.body" v-html="e.body" style="background: #f5f7fa; padding: 12px; border-radius: 6px; font-size: 13px; color: #303133"></div>
-                <el-button v-if="e.body && e.to_email" size="small" type="success" style="margin-top: 8px"
+                <el-button v-if="e.body && e.to_email" size="small" style="margin-top: 8px"
                   @click="sendBatchEmail(e)">Send to {{ e.to_email }}</el-button>
               </div>
             </el-card>
@@ -662,7 +662,7 @@
                     <el-col :span="8"><el-input-number v-model="p.qty" :min="0" placeholder="Qty" size="small" style="width: 100%" /></el-col>
                     <el-col :span="4"><el-input v-model="p.unit" placeholder="pcs" size="small" /></el-col>
                     <el-col :span="8"><el-input-number v-model="p.unit_price" :min="0" :precision="2" placeholder="Price" size="small" style="width: 100%" /></el-col>
-                    <el-col :span="4"><el-button size="small" type="danger" @click="piForm.products.splice(i, 1)" circle>X</el-button></el-col>
+                    <el-col :span="4"><el-button size="small" @click="piForm.products.splice(i, 1)" circle>X</el-button></el-col>
                   </el-row>
                 </div>
                 <el-button size="small" @click="piForm.products.push({name:'',spec:'',qty:0,unit:'pcs',unit_price:0})" style="margin-bottom: 12px">+ Add Product</el-button>
@@ -696,7 +696,7 @@
                   <span style="font-weight: 600">PI {{ piResult.pi_number }}</span>
                   <div>
                     <el-button size="small" type="primary" @click="printPI">Print / Save PDF</el-button>
-                    <el-button size="small" type="success" @click="emailPI">Email to Customer</el-button>
+                    <el-button size="small" @click="emailPI">Email to Customer</el-button>
                   </div>
                 </div>
               </template>
@@ -727,6 +727,12 @@
 import { ref, reactive, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { agentApi, emailApi } from '../api'
+import {
+  intentColor,
+  scoreColor,
+  sentimentColor,
+  urgencyColor,
+} from '../constants/status.js'
 
 const activeTab = ref('daily')
 
@@ -949,9 +955,5 @@ const emailPI = async () => {
 }
 
 // Helpers
-const scoreColor = (s) => s >= 70 ? '#67c23a' : s >= 40 ? '#e6a23c' : '#f56c6c'
-const intentColor = (i) => ({ inquiry: 'success', price_negotiation: 'warning', sample_request: '', rejection: 'danger', order: 'success', follow_up: 'info' }[i] || '')
-const sentimentColor = (s) => ({ positive: 'success', neutral: '', negative: 'danger' }[s] || '')
-const urgencyColor = (u) => ({ high: 'danger', medium: 'warning', low: 'info', not_assessed: 'info' }[u] || '')
 const urgencyLabel = (u) => (u === 'not_assessed' ? 'not assessed' : u)
 </script>

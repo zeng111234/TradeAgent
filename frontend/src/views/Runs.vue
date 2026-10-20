@@ -125,7 +125,7 @@
         <div style="display: flex; justify-content: space-between; align-items: center">
           <span style="font-weight: 600">正在运行</span>
           <div>
-            <el-tag type="warning" size="small" effect="plain">{{ active.status }}</el-tag>
+            <el-tag :type="statusType(active.status)" size="small" effect="plain">{{ active.status }}</el-tag>
             <span class="hint" style="margin-left: 8px">
               第 {{ active.rounds }} 轮 · {{ active.toolCalls }} 次工具调用 · {{ elapsedSeconds }}s
             </span>
@@ -286,6 +286,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 
 import { runApi } from '../api'
+import { runStatusType as statusType } from '../constants/status.js'
 import { renderMarkdown } from '../utils/markdown'
 import { isTerminal, mergeSteps, normaliseRun } from '../utils/runProgress'
 import { readEventStream, reconnectDelay } from '../utils/sse'
@@ -336,15 +337,6 @@ const runs = ref([])
 const statusFilter = ref('')
 const selected = ref(null)
 const drawerOpen = ref(false)
-
-function statusType(status) {
-  return {
-    succeeded: 'success',
-    truncated: 'warning',
-    stalled: 'warning',
-    error: 'danger',
-  }[status] || 'info'
-}
 
 function traceUrl(runId) {
   return runApi.traceUrl(runId)

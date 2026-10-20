@@ -25,11 +25,11 @@
           </el-select>
         </el-col>
         <el-col :span="12" style="text-align: right">
-          <el-button type="warning" @click="toggleOverdue">
+          <el-button @click="toggleOverdue">
             <el-icon><Warning /></el-icon>
             {{ overdueOnly ? 'Show all tasks' : 'Overdue (' + overdueCount + ')' }}
           </el-button>
-          <el-button type="success" @click="showDialog()">
+          <el-button type="primary" @click="showDialog()">
             <el-icon><Plus /></el-icon> New Task
           </el-button>
         </el-col>
@@ -70,7 +70,7 @@
         </el-table-column>
         <el-table-column label="Actions" width="200" fixed="right">
           <template #default="{ row }">
-            <el-button v-if="row.status === 'pending'" size="small" type="success" link @click="completeTask(row)">Complete</el-button>
+            <el-button v-if="row.status === 'pending'" size="small" link @click="completeTask(row)">Complete</el-button>
             <el-button size="small" type="primary" link @click="showDialog(row)">Edit</el-button>
             <el-button size="small" type="danger" link @click="handleDelete(row)">Delete</el-button>
           </template>
@@ -130,6 +130,7 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { taskApi } from '../api'
+import { priorityType, taskStatusType as statusType } from '../constants/status.js'
 import { failureDetail, patchRow, reconcile, removeRow } from '../utils/optimistic'
 
 const tasks = ref([])
@@ -161,8 +162,6 @@ const form = reactive({
   customer_id: null,
 })
 
-const priorityType = (p) => ({ urgent: 'danger', high: 'warning', medium: '', low: 'info' }[p] || '')
-const statusType = (s) => ({ pending: 'warning', in_progress: '', completed: 'success', cancelled: 'info' }[s] || '')
 const formatDate = (d) => d ? new Date(d).toLocaleString() : ''
 const isOverdue = (row) => row.due_date && row.status === 'pending' && new Date(row.due_date) < new Date()
 

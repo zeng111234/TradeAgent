@@ -41,10 +41,10 @@
           </el-select>
         </el-col>
         <el-col :span="6" style="text-align: right">
-          <el-button type="primary" @click="loadCustomers">
+          <el-button @click="loadCustomers">
             <el-icon><Search /></el-icon> Search
           </el-button>
-          <el-button type="success" @click="showAddDialog">
+          <el-button type="primary" @click="showAddDialog">
             <el-icon><Plus /></el-icon> Add Customer
           </el-button>
         </el-col>
@@ -149,6 +149,7 @@ import { ref, reactive, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { customerApi } from '../api'
+import { stageLabel, stageTagType } from '../constants/status.js'
 
 const router = useRouter()
 const loading = ref(false)
@@ -178,24 +179,6 @@ const form = reactive({
   stage: 'new',
   tags: '',
 })
-
-const stageLabel = (stage) => {
-  const map = {
-    new: 'New', contacted: 'Contacted', interested: 'Interested',
-    quoting: 'Quoting', sample: 'Sample', ordering: 'Ordering',
-    completed: 'Completed', lost: 'Lost',
-  }
-  return map[stage] || stage
-}
-
-const stageTagType = (stage) => {
-  const map = {
-    new: 'info', contacted: '', interested: 'success',
-    quoting: 'warning', sample: 'warning', ordering: 'warning',
-    completed: 'success', lost: 'danger',
-  }
-  return map[stage] || ''
-}
 
 const loadCustomers = async () => {
   loading.value = true

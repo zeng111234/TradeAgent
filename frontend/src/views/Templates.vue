@@ -24,7 +24,7 @@
           </el-select>
         </el-col>
         <el-col :span="8" style="text-align: right">
-          <el-button type="success" @click="showDialog()">
+          <el-button type="primary" @click="showDialog()">
             <el-icon><Plus /></el-icon> New Template
           </el-button>
         </el-col>

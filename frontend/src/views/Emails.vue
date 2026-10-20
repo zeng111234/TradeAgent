@@ -46,7 +46,7 @@
               <el-icon><Refresh /></el-icon> Refresh
             </el-button>
             <span v-if="batchProgress" style="margin-right: 8px; font-size: 12px; color: #909399">{{ batchProgress }}</span>
-          <el-button type="success" size="small" @click="sendAllPending" :loading="sendingAll" :disabled="!pendingEmails.length">
+          <el-button size="small" @click="sendAllPending" :loading="sendingAll" :disabled="!pendingEmails.length">
               <el-icon><Promotion /></el-icon> Send All ({{ pendingEmails.length }})
             </el-button>
           </div>
@@ -90,7 +90,7 @@
             </el-button>
           </template>
           <template v-else>
-            <el-button type="success" size="small" @click="saveEdit(email)">
+            <el-button type="primary" size="small" @click="saveEdit(email)">
               <el-icon><Check /></el-icon> Save
             </el-button>
             <el-button size="small" @click="cancelEdit">Cancel</el-button>
@@ -194,7 +194,7 @@
             />
             <p><strong>Subject:</strong> {{ aiResult.subject }}</p>
             <div v-html="aiResult.body" style="margin: 8px 0; color: #606266"></div>
-            <el-button size="small" type="success" @click="useAiResult">
+            <el-button size="small" @click="useAiResult">
               Use This Email
             </el-button>
           </div>
@@ -264,6 +264,7 @@
 import { ref, reactive, onMounted } from 'vue'
 import { ElMessage, ElMessageBox, ElNotification } from 'element-plus'
 import { emailApi } from '../api'
+import { emailStatusType as statusType } from '../constants/status.js'
 import { failureDetail, removeRow } from '../utils/optimistic'
 
 const sending = ref(false)
@@ -307,11 +308,6 @@ const aiForm = reactive({
   tone: 'professional',
   language: 'en',
 })
-
-const statusType = (status) => {
-  const map = { sent: 'success', opened: 'success', replied: 'success', failed: 'danger', bounced: 'danger', pending: 'info' }
-  return map[status] || ''
-}
 
 const formatDate = (d) => d ? new Date(d).toLocaleString() : ''
 

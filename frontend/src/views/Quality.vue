@@ -246,6 +246,7 @@
 <script setup>
 import { onMounted, ref } from 'vue'
 import { analyticsApi } from '../api'
+import { runStatusType as statusType } from '../constants/status.js'
 import {
   attemptLabel,
   coverageSentence,
@@ -260,14 +261,6 @@ const days = ref(14)
 const loading = ref(false)
 const error = ref('')
 const report = ref(null)
-
-const statusType = (status) => ({
-  succeeded: 'success',
-  error: 'danger',
-  stalled: 'warning',
-  truncated: 'warning',
-  running: 'info',
-}[status] || 'info')
 
 const load = async () => {
   loading.value = true

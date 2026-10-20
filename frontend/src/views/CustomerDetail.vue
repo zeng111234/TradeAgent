@@ -129,7 +129,7 @@
                 <li v-for="s in followUpAdvice.next_steps" :key="s" style="font-size: 12px; color: #606266; margin-bottom: 2px">{{ s }}</li>
               </ul>
             </div>
-            <el-button v-if="followUpAdvice.draft_email" size="small" type="success" style="margin-top: 8px" @click="showFollowUpDraft = !showFollowUpDraft">
+            <el-button v-if="followUpAdvice.draft_email" size="small" style="margin-top: 8px" @click="showFollowUpDraft = !showFollowUpDraft">
               {{ showFollowUpDraft ? 'Hide' : 'Show' }} Draft Email
             </el-button>
             <div v-if="showFollowUpDraft && followUpAdvice.draft_email" style="background: #f5f7fa; padding: 12px; border-radius: 6px; margin-top: 8px">
@@ -149,7 +149,7 @@
           <el-button style="width: 100%; margin-bottom: 8px" @click="$router.push('/tasks')">
             <el-icon><Calendar /></el-icon> Create Task
           </el-button>
-          <el-button type="success" style="width: 100%; margin-bottom: 8px" @click="$router.push('/agent')">
+          <el-button style="width: 100%; margin-bottom: 8px" @click="$router.push('/agent')">
             <el-icon><MagicStick /></el-icon> AI Agent
           </el-button>
         </el-card>
@@ -219,6 +219,7 @@ import { ref, reactive, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { customerApi } from '../api'
+import { noteTypeColor, scoreColor, stageLabel, stageTagType } from '../constants/status.js'
 
 const route = useRoute()
 const loading = ref(false)
@@ -228,27 +229,6 @@ const showNoteDialog = ref(false)
 
 const contactForm = reactive({ name: '', title: '', email: '', phone: '', whatsapp: '' })
 const noteForm = reactive({ content: '', note_type: 'general' })
-
-const scoreColor = [
-  { color: '#f56c6c', percentage: 30 },
-  { color: '#e6a23c', percentage: 60 },
-  { color: '#67c23a', percentage: 100 },
-]
-
-const stageLabel = (stage) => {
-  const map = { new: 'New', contacted: 'Contacted', interested: 'Interested', quoting: 'Quoting', sample: 'Sample', ordering: 'Ordering', completed: 'Completed', lost: 'Lost' }
-  return map[stage] || stage
-}
-
-const stageTagType = (stage) => {
-  const map = { new: 'info', contacted: '', interested: 'success', quoting: 'warning', sample: 'warning', ordering: 'warning', completed: 'success', lost: 'danger' }
-  return map[stage] || ''
-}
-
-const noteTypeColor = (type) => {
-  const map = { general: '', email: 'primary', call: 'success', meeting: 'warning', quotation: 'danger' }
-  return map[type] || ''
-}
 
 const formatDate = (d) => {
   if (!d) return ''

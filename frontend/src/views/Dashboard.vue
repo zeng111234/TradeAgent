@@ -114,7 +114,7 @@
             <div style="display: flex; justify-content: space-between; align-items: center">
               <span style="font-weight: 600">Daily Auto Report</span>
             <div>
-                <el-button type="danger" @click="runSearchNewLeads" :loading="scanAndSendLoading" size="large" style="margin-right: 8px">
+                <el-button @click="runSearchNewLeads" :loading="scanAndSendLoading" size="large" style="margin-right: 8px">
                   <el-icon><Search /></el-icon> 搜索新客户
                 </el-button>
                 <el-button @click="runDailyReport" :loading="dailyLoading" size="default">
@@ -163,7 +163,7 @@
                 <el-button @click="toggleSelectAllLeads" size="default">
                   {{ selectedLeadIndices.size > 0 ? 'Deselect All' : 'Select All' }}
                 </el-button>
-                <el-button type="success" @click="sendSelectedDrafts" :loading="sendDraftsLoading" size="large">
+                <el-button @click="sendSelectedDrafts" :loading="sendDraftsLoading" size="large">
                   <el-icon><Promotion /></el-icon> Send Selected ({{ selectedLeadsCount }})
                 </el-button>
               </div>
