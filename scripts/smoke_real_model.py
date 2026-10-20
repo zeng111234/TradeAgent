@@ -57,6 +57,33 @@ def redact(text: str) -> str:
     return text
 
 
+def wait_for_run(client, started: dict, *, timeout: float = 300.0) -> dict:
+    """Follow the poll URL until the run leaves ``running``.
+
+    ``POST /agent/run`` answers with a run id unless ``wait=true`` -- and
+    ``wait=true`` caps the request at ``WAIT_MODE_MAX_SECONDS`` (100s), below the
+    goal this script asks for. Polling is both the only way to see the finished
+    trace and the path a real caller uses.
+    """
+    import time
+
+    poll = started.get("poll") or f"/api/v1/agent/runs/{started['run_id']}"
+    body = started
+    deadline = time.monotonic() + timeout
+
+    while body.get("status") == "running":
+        if time.monotonic() > deadline:
+            raise RuntimeError(
+                f"run {started.get('run_id')} did not finish within {timeout:.0f}s"
+            )
+        time.sleep(0.5)
+        response = client.get(poll)
+        if response.status_code == 200:
+            body = response.json()
+
+    return body
+
+
 def main() -> int:
     from fastapi.testclient import TestClient
 
@@ -92,24 +119,37 @@ def main() -> int:
             "/api/v1/agent/run",
             json={"goal": GOAL, "context": CONTEXT, "max_rounds": 10, "max_seconds": 240},
         )
+        if response.status_code not in (200, 202):
+            print(redact(f"[fatal] HTTP {response.status_code}: {response.text[:600]}"))
+            return 2
 
-    if response.status_code != 200:
-        print(redact(f"[fatal] HTTP {response.status_code}: {response.text[:600]}"))
-        return 2
+        body = response.json()
+        if "stop_reason" not in body:
+            print(f"  started      : {body['run_id']} (polling until it finishes)")
+            body = wait_for_run(client, body)
 
-    body = response.json()
+    # The detail endpoint carries the steps, not the list summary's derived
+    # fields. Deriving them here is deliberate: it is the same arithmetic a
+    # reader would do, and it keeps this script honest about what the API
+    # actually returns rather than asking the API to grow a shape for a script.
+    steps = body["steps"]
+    calls = [call for step in steps for call in step["tool_calls"]]
+    tool_sequence = [call["name"] for call in calls if call.get("ok")]
+    refused = sum(1 for call in calls if call.get("refused_reason"))
+    did_investigate = bool(tool_sequence)
+    elapsed = round((body.get("elapsed_ms") or 0) / 1000, 1)
 
     print(f"  status       : {body['status']} ({body['stop_reason']})")
-    print(f"  tool path    : {' -> '.join(body['tool_sequence']) or '(none)'}")
+    print(f"  tool path    : {' -> '.join(tool_sequence) or '(none)'}")
     print(f"  rounds/calls : {body['rounds']}/{body['tool_calls']}")
-    print(f"  refused      : {body.get('refused_calls', 0)}")
-    print(f"  did research : {body['did_investigate']}")
-    print(f"  elapsed      : {body['elapsed']}s")
+    print(f"  refused      : {refused}")
+    print(f"  did research : {did_investigate}")
+    print(f"  elapsed      : {elapsed}s")
     print(f"  tokens       : {body['prompt_tokens']} in / {body['completion_tokens']} out")
     print(f"  run id       : {body['run_id']}")
 
     print("\n--- per-round trace ---")
-    for step in body["steps"]:
+    for step in steps:
         thought = (step.get("thought") or "").strip().replace("\n", " ")
         print(f"\n  round {step['round']}" + (f": {thought[:150]}" if thought else ""))
         for call in step["tool_calls"]:
@@ -125,8 +165,11 @@ def main() -> int:
     # The diagram must be renderable from a real run, not only from a scripted one.
     out = SCRIPT_DIR.parent / "artifacts" / "smoke"
     out.mkdir(parents=True, exist_ok=True)
-    (out / "last-run.mmd").write_text(body["mermaid_sequence"], encoding="utf-8")
-    (out / "last-run-flow.mmd").write_text(body["mermaid_flowchart"], encoding="utf-8")
+    (out / "last-run.mmd").write_text(body.get("mermaid_sequence", ""), encoding="utf-8")
+    if body.get("mermaid_flowchart"):
+        (out / "last-run-flow.mmd").write_text(
+            body["mermaid_flowchart"], encoding="utf-8"
+        )
     (out / f"{body['run_id']}.json").write_text(
         json.dumps(body, ensure_ascii=False, indent=2), encoding="utf-8"
     )
@@ -136,7 +179,7 @@ def main() -> int:
     problems = []
     if body["status"] != "succeeded":
         problems.append(f"run ended '{body['status']}' ({body['stop_reason']})")
-    if not body["did_investigate"]:
+    if not did_investigate:
         problems.append("the agent answered without calling a single tool")
     if not body["final_output"]:
         problems.append("no conclusion was produced")

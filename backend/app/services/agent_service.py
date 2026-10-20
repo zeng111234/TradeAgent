@@ -663,6 +663,7 @@ async def _build_follow_up_plan(
 ) -> dict:
     from sqlalchemy import select
     from app.models.customer import Customer
+    from app.models.email_log import EmailLog
     from datetime import datetime
 
     from app.services.follow_up_plan import (

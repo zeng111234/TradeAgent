@@ -36,10 +36,28 @@ QUESTION = (
 PARENT_CEILING_SECONDS = 120.0
 
 
+async def _prepare_database() -> None:
+    """A fresh ``DATABASE_URL`` has no tables; create and seed the demo book.
+
+    Without this the child truthfully reports "the CRM is not readable", the
+    verdict still passes because it only checks the deadline and the spawn count,
+    and the smoke stops proving the tool path it was written for. Found by
+    running it against a throwaway database: seven tool calls, all failing on
+    ``no such table: customers``.
+    """
+    from app.database import init_db
+    from app.main import _insert_demo_data
+
+    await init_db()
+    await _insert_demo_data()
+
+
 async def main() -> int:
     if not os.environ.get("OPENAI_API_KEY"):
         print("VERDICT: SKIP — no OPENAI_API_KEY in the environment")
         return 0
+
+    await _prepare_database()
 
     client = build_llm_client()
     registry = build_registry()

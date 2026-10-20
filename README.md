@@ -150,7 +150,7 @@ python scripts/demo_agent_run.py             # 两个不同目标 → 两条不�
 
 ```bash
 cd backend
-python -m pytest          # 978 个，约 70 秒，不需要网络
+python -m pytest          # 979 个，约 57 秒，不需要网络
 ```
 
 ### 运维视图
