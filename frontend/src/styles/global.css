@@ -280,6 +280,9 @@ code, pre, kbd, samp {
   font-size: var(--fs-caption);
   color: var(--text-3);
   margin-top: var(--space-1);
+  /* Long bilingual labels ("运行成功率 · 已结束 12 次") must wrap inside the
+     track rather than widen it. */
+  overflow-wrap: anywhere;
 }
 
 .stat-card .stat-hint {

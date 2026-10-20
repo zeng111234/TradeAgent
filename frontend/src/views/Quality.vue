@@ -86,7 +86,7 @@
           <div class="two-col">
             <div>
               <p class="section-label">终止原因（可分组的那一列）</p>
-              <el-table :data="report.runs.by_stop_code" size="small" border>
+              <el-table :data="report.runs.by_stop_code" size="small">
                 <el-table-column prop="value" label="stop_code" />
                 <el-table-column prop="count" label="次数" width="80" align="right" />
               </el-table>
@@ -97,7 +97,7 @@
             </div>
             <div>
               <p class="section-label">Prompt 版本</p>
-              <el-table :data="report.runs.by_prompt_version" size="small" border>
+              <el-table :data="report.runs.by_prompt_version" size="small">
                 <el-table-column prop="value" label="指纹" />
                 <el-table-column prop="count" label="次数" width="80" align="right" />
               </el-table>
@@ -119,7 +119,7 @@
         <el-empty v-if="!report.jobs.total" :image-size="60"
           description="窗口内没有调度记录。" />
 
-        <el-table v-else :data="report.jobs.by_job" size="small" border>
+        <el-table v-else :data="report.jobs.by_job" size="small">
           <el-table-column prop="job_id" label="任务" />
           <el-table-column prop="total" label="总次数" width="90" align="right" />
           <el-table-column prop="succeeded" label="成功" width="80" align="right" />
@@ -165,7 +165,7 @@
           <div class="two-col">
             <div>
               <p class="section-label">按建议类型</p>
-              <el-table :data="report.closed_loop.by_kind" size="small" border>
+              <el-table :data="report.closed_loop.by_kind" size="small">
                 <el-table-column label="建议">
                   <template #default="{ row }">{{ kindLabel(row.kind) }}</template>
                 </el-table-column>
@@ -178,7 +178,7 @@
             </div>
             <div>
               <p class="section-label">按第几次跟进</p>
-              <el-table :data="report.closed_loop.by_attempt" size="small" border>
+              <el-table :data="report.closed_loop.by_attempt" size="small">
                 <el-table-column label="尝试">
                   <template #default="{ row }">{{ attemptLabel(row.attempt) }}</template>
                 </el-table-column>
@@ -222,7 +222,7 @@
           <span class="section-note">没有活动的日子也在表里 —— 缺失的一天看起来像好的一天</span>
         </template>
 
-        <el-table :data="report.daily" size="small" border max-height="360">
+        <el-table :data="report.daily" size="small" max-height="360">
           <el-table-column prop="date" label="日期 (UTC)" width="120" />
           <el-table-column prop="runs_total" label="运行" width="80" align="right" />
           <el-table-column prop="runs_succeeded" label="成功" width="80" align="right" />
@@ -287,18 +287,26 @@ onMounted(load)
   margin-bottom: 16px;
 }
 .window-label {
-  color: #909399;
+  color: var(--text-3);
   font-size: 12px;
 }
+/* Four tracks that may shrink (minmax(0, 1fr)), not four 220px minimums: the
+   card labels are long Chinese sentences and a non-zero min track made the
+   fourth card overflow instead of wrap. Below 1200px two columns are enough. */
 .stat-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 16px;
   margin-bottom: 16px;
 }
+@media (max-width: 1200px) {
+  .stat-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
 .stat-hint {
   font-size: 12px;
-  color: #b1b3b8;
+  color: var(--text-3);
   margin-top: 6px;
 }
 .section {
@@ -310,12 +318,12 @@ onMounted(load)
 .section-note {
   margin-left: 12px;
   font-size: 12px;
-  color: #909399;
+  color: var(--text-3);
 }
 .section-label {
   font-size: 13px;
   font-weight: 600;
-  color: #606266;
+  color: var(--text-2);
   margin: 8px 0;
 }
 .tag-row {
@@ -326,7 +334,7 @@ onMounted(load)
 }
 .two-col {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 16px;
 }
 @media (max-width: 900px) {
@@ -336,7 +344,7 @@ onMounted(load)
 }
 .hint {
   font-size: 12px;
-  color: #909399;
+  color: var(--text-3);
   margin-top: 6px;
   line-height: 1.6;
 }
@@ -347,18 +355,18 @@ onMounted(load)
 }
 .stat-mini-value {
   font-size: 20px;
-  font-weight: 700;
-  color: #303133;
+  font-weight: 600;
+  color: var(--text-1);
 }
 .stat-mini-label {
   font-size: 12px;
-  color: #909399;
+  color: var(--text-3);
   margin-left: 6px;
 }
 .excluded {
   margin-top: 12px;
   font-size: 12px;
-  color: #606266;
+  color: var(--text-2);
 }
 .excluded .el-tag {
   margin-right: 6px;
@@ -367,16 +375,16 @@ onMounted(load)
   margin: 12px 0 0;
   padding-left: 18px;
   font-size: 12px;
-  color: #909399;
+  color: var(--text-3);
   line-height: 1.7;
 }
 .quiet {
-  color: #c0c4cc;
+  color: var(--text-disabled);
   font-size: 12px;
 }
 .generated {
   margin-top: 4px;
   font-size: 12px;
-  color: #b1b3b8;
+  color: var(--text-3);
 }
 </style>
