@@ -26,6 +26,13 @@ class Settings(BaseSettings):
     SMTP_USER: str = ""
     SMTP_PASSWORD: str = ""
     SMTP_USE_TLS: bool = True
+    #: The public origin this service is reachable at from the outside world,
+    #: e.g. "https://tradeagent.example.com". Used to make tracking-pixel URLs
+    #: absolute. A relative URL resolves against nothing inside a mail client,
+    #: so the pixel is a dead link and opens never record. Empty by default:
+    #: a local tool has no public origin, and inventing one would silently
+    #: point pixels at somebody else's host.
+    PUBLIC_BASE_URL: str = ""
 
     # LLM (OpenAI-compatible API: MiMo, DeepSeek, OpenAI, etc.)
     OPENAI_API_KEY: str = ""

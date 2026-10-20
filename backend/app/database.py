@@ -113,11 +113,17 @@ async def init_db():
 
     import app.models  # noqa: F401  (registers every table on Base.metadata)
 
-    from app.migrations import apply_migrations
+    from app.migrations import run_migrations
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-        report = await apply_migrations(conn)
+
+    # In its own transaction, with its own retry: two processes starting at
+    # once (a restart that overlaps, a CLI while the server boots) both run
+    # this, and the loser's migration statements fail against the winner's
+    # committed schema. That is a race to survive, not a reason to refuse to
+    # start -- see run_migrations.
+    report = await run_migrations(engine)
 
     logging.getLogger(__name__).info(
         "schema: %d migration(s) applied, %d already present, %d pending",

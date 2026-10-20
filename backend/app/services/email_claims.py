@@ -76,12 +76,20 @@ async def release(
     sent: bool,
     error: str | None = None,
     unknown: bool = False,
+    simulated: bool = False,
 ) -> None:
     """Finish a claim: the row moves to a settled state, or back to pending.
 
     ``unknown`` is for the one case that cannot be resolved: the attempt was
     made and its outcome is not knowable. The row goes to ``FAILED`` with a
     message that says so, rather than being quietly retried.
+
+    ``simulated`` records that the "send" never left the process -- the sender
+    had no SMTP credentials and reported success for a message it did not hand
+    to any server. The status is still ``SENT`` (the flows that follow a send
+    treat it like any other outbound message), but the row must carry the
+    difference, or "the mail was sent but never arrived" cannot even be
+    triaged.
     """
     row = (
         await db.execute(select(EmailLog).where(EmailLog.id == email_id))
@@ -93,6 +101,7 @@ async def release(
         row.status = EmailStatus.SENT
         row.sent_at = datetime.utcnow()
         row.error_message = None
+        row.simulated = bool(simulated)
     else:
         row.status = EmailStatus.FAILED
         row.error_message = error or "Unknown error"

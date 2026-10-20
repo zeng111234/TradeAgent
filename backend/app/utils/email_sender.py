@@ -15,6 +15,9 @@ logger = logging.getLogger(__name__)
 # In-memory tracking pixel store (replace with DB in production)
 tracking_pixels: dict[str, dict] = {}
 
+#: Warn once per process about dead pixels, not once per message.
+_pixel_base_warned = False
+
 
 def generate_tracking_id() -> str:
     """Generate a unique tracking ID for email tracking."""
@@ -32,9 +35,27 @@ def render_template(template_str: str, variables: dict) -> str:
 
 
 def create_tracking_pixel(tracking_id: str) -> str:
-    """Create an HTML tracking pixel for open tracking."""
-    # This pixel URL would be served by your tracking endpoint
-    tracking_url = f"/api/v1/emails/track/{tracking_id}/pixel"
+    """Create an HTML tracking pixel for open tracking.
+
+    The URL has to be absolute. Inside a mail client there is no page origin,
+    so a relative ``/api/v1/...`` src resolves against nothing -- the pixel is
+    a dead link and no open is ever recorded. With ``PUBLIC_BASE_URL`` set the
+    link points at this service; without it, the pixel is still emitted (the
+    HTML stays valid) and the fact that opens cannot work is said out loud
+    once, rather than leaving a silent gap.
+    """
+    global _pixel_base_warned
+    base = settings.PUBLIC_BASE_URL.rstrip("/")
+    if base:
+        tracking_url = f"{base}/api/v1/emails/track/{tracking_id}/pixel"
+    else:
+        if not _pixel_base_warned:
+            logger.warning(
+                "PUBLIC_BASE_URL is not set: tracking pixels in outgoing mail "
+                "are dead links and email opens will not be recorded"
+            )
+            _pixel_base_warned = True
+        tracking_url = f"/api/v1/emails/track/{tracking_id}/pixel"
     return f'<img src="{tracking_url}" width="1" height="1" style="display:none;" />'
 
 

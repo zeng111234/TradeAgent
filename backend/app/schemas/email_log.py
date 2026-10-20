@@ -43,6 +43,10 @@ class EmailLogResponse(EmailLogBase):
     error_message: Optional[str] = None
     created_at: datetime
     sent_at: Optional[datetime] = None
+    #: True when this "send" never left the process (no SMTP credentials).
+    #: Status reads ``sent`` either way -- this flag is the difference between
+    #: "sent and not arrived" and "never sent at all".
+    simulated: bool = False
     #: True when this is a replay of a request that was already handled, and the
     #: answer came from the record instead of sending again. A caller must be able
     #: to tell a replay from a fresh delivery -- otherwise idempotency is

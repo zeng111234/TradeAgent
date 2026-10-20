@@ -58,14 +58,19 @@ def scratch(tmp_path):
     )
 
     class Scratch:
+        def __init__(self, engine):
+            #: The engine itself, for callers that need to own the transaction
+            #: (``run_migrations`` does, so it can retry in a fresh one).
+            self.engine = engine
+
         async def run(self, coro_factory):
-            async with engine.begin() as conn:
+            async with self.engine.begin() as conn:
                 return await coro_factory(conn)
 
         async def dispose(self):
-            await engine.dispose()
+            await self.engine.dispose()
 
-    handle = Scratch()
+    handle = Scratch(engine)
     yield handle
     asyncio.run(handle.dispose())
 
@@ -127,6 +132,24 @@ def test_a_legacy_database_gains_the_column(scratch):
     )
 
 
+def test_a_legacy_database_gains_the_prompt_identity_column(scratch):
+    """Old runs cannot say what they were told; new ones must.
+
+    The column is nullable on purpose: a row written before it existed has no
+    prompt to name, and inventing one would make a legacy run look reproducible
+    when it is not.
+    """
+    as_legacy_database(scratch)
+    assert "prompt_version" not in columns(scratch, "agent_runs")
+
+    import asyncio
+
+    report = asyncio.run(scratch.run(apply_migrations))
+
+    assert "0006_agent_runs_prompt_version" in report["applied"], report
+    assert "prompt_version" in columns(scratch, "agent_runs")
+
+
 def test_a_legacy_row_survives_the_migration(scratch):
     """The rows that were already there are the ones this exists for."""
     import asyncio
@@ -136,7 +159,7 @@ def test_a_legacy_row_survives_the_migration(scratch):
 
     async def read(conn):
         rows = await conn.execute(
-            text("SELECT goal, customer_id FROM agent_runs")
+            text("SELECT goal, customer_id, prompt_version FROM agent_runs")
         )
         return rows.fetchall()
 
@@ -146,6 +169,10 @@ def test_a_legacy_row_survives_the_migration(scratch):
     assert rows[0][0] == "an old run"
     assert rows[0][1] is None, (
         "a legacy row has no customer to claim; inventing one would be a lie"
+    )
+    assert rows[0][2] is None, (
+        "a legacy run cannot name the prompt it ran under; filling in a default "
+        "would make it look reproducible when it is not"
     )
 
 
@@ -374,3 +401,147 @@ def test_the_tracking_table_is_not_a_model():
     from app.migrations import TRACKING_TABLE
 
     assert TRACKING_TABLE not in Base.metadata.tables
+
+
+# --------------------------------------------------------------------------
+# Two processes migrating at once
+# --------------------------------------------------------------------------
+
+def _dbapi_error(message: str):
+    """What the loser's statements actually raise, in either flavour.
+
+    SQLAlchemy wraps the driver's error; the message is what tells the two
+    apart. ``OperationalError`` covers "duplicate column name" and "database is
+    locked"; ``IntegrityError`` covers two processes recording the same
+    migration id in ``schema_migrations``.
+    """
+    from sqlalchemy.exc import OperationalError
+
+    return OperationalError("ALTER TABLE ...", None, Exception(message))
+
+
+def test_a_loser_against_a_concurrent_migrator_retries_instead_of_refusing_to_start(
+    scratch, monkeypatch
+):
+    """The race used to be a startup crash, not a race.
+
+    Two starters find the migrations unapplied and both run them. The loser's
+    statements fail against the winner's schema ("duplicate column name") or
+    its snapshot goes stale ("database is locked"). That is the winner having
+    done the work -- not a bad migration -- so the run is retried in a fresh
+    transaction and reports the migrations as already present.
+    """
+    import asyncio
+
+    from app import migrations
+
+    as_legacy_database(scratch)
+
+    real = migrations.apply_migrations
+    calls = {"n": 0}
+
+    async def lose_once_then_recover(conn):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise _dbapi_error("duplicate column name: customer_id")
+        return await real(conn)
+
+    monkeypatch.setattr(migrations, "apply_migrations", lose_once_then_recover)
+
+    report = asyncio.run(migrations.run_migrations(scratch.engine))
+
+    assert calls["n"] == 2, "the loser must retry, not give up"
+    assert report["applied"], report
+    assert "customer_id" in columns(scratch, "agent_runs")
+
+
+def test_a_genuine_migration_error_is_not_retried(scratch, monkeypatch):
+    """Retrying a bug three times hides the bug three times.
+
+    Only a recognisable race is retried. A syntax error is not a race, and the
+    error must surface on the first attempt, pointing at the migration.
+    """
+    import asyncio
+
+    from app import migrations
+
+    as_legacy_database(scratch)
+    calls = {"n": 0}
+
+    async def explode(conn):
+        calls["n"] += 1
+        raise _dbapi_error('near "THIS": syntax error')
+
+    monkeypatch.setattr(migrations, "apply_migrations", explode)
+
+    with pytest.raises(Exception):
+        asyncio.run(migrations.run_migrations(scratch.engine))
+
+    assert calls["n"] == 1, "a syntax error is not a race; it must not be retried"
+
+
+def test_two_starters_on_one_database_both_survive(tmp_path):
+    """The real thing: two engines, one database file, one migration run each.
+
+    Whoever wins writes the columns and the version rows; the loser's retry
+    sees that and records them as already present. Neither starter may die
+    over it -- that is the whole point of the retry. (The version table's
+    primary key is what turns the loser's record attempt into the very
+    IntegrityError the retry exists for.)
+    """
+    import asyncio
+
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    from app.migrations import run_migrations
+
+    db_file = (tmp_path / "shared.db").as_posix()
+    engine_a = create_async_engine(f"sqlite+aiosqlite:///{db_file}")
+    engine_b = create_async_engine(f"sqlite+aiosqlite:///{db_file}")
+
+    async def legacy():
+        async with engine_a.begin() as conn:
+            await conn.execute(text(LEGACY_AGENT_RUNS))
+
+    async def both():
+        return await asyncio.gather(
+            run_migrations(engine_a),
+            run_migrations(engine_b),
+            return_exceptions=True,
+        )
+
+    try:
+        asyncio.run(legacy())
+        results = asyncio.run(both())
+
+        for r in results:
+            assert not isinstance(r, BaseException), f"a starter died over the race: {r}"
+
+        # The run is one transaction: one starter applied what was pending,
+        # the other found it done. Both outcomes must be in the reports.
+        applied_counts = sorted(len(r["applied"]) for r in results)
+        assert applied_counts[0] == 0, f"the loser applied nothing: {applied_counts}"
+        assert applied_counts[1] > 0, f"someone applied the pending work: {applied_counts}"
+
+        async def cols():
+            async with engine_a.begin() as conn:
+                rows = await conn.execute(text("PRAGMA table_info(agent_runs)"))
+                return [row[1] for row in rows.fetchall()]
+
+        names = asyncio.run(cols())
+        assert "customer_id" in names
+        assert "cached_prompt_tokens" in names
+
+        async def tracking():
+            async with engine_a.begin() as conn:
+                rows = await conn.execute(
+                    text("SELECT id FROM schema_migrations ORDER BY id")
+                )
+                return [row[0] for row in rows.fetchall()]
+
+        recorded = asyncio.run(tracking())
+        assert len(recorded) == len(set(recorded)), "a migration was recorded twice"
+        assert set(recorded) == {m.id for m in MIGRATIONS}, recorded
+    finally:
+        asyncio.run(engine_a.dispose())
+        asyncio.run(engine_b.dispose())

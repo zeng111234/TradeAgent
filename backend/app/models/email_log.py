@@ -1,6 +1,6 @@
 """Email log model for tracking sent emails."""
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Enum as SQLEnum
+from sqlalchemy import Boolean, Column, Integer, String, Text, DateTime, ForeignKey, Enum as SQLEnum
 from sqlalchemy.orm import relationship
 import enum
 
@@ -58,7 +58,9 @@ class EmailLog(Base):
     __tablename__ = "email_logs"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    customer_id = Column(Integer, ForeignKey("customers.id"), nullable=True)
+    # Indexed: "this customer's mail" is the query the plan, the history view
+    # and the debug view all ask (migration 0004).
+    customer_id = Column(Integer, ForeignKey("customers.id"), nullable=True, index=True)
     template_id = Column(Integer, ForeignKey("email_templates.id"), nullable=True)
 
     # 邮件信息
@@ -66,7 +68,8 @@ class EmailLog(Base):
     to_name = Column(String(200), nullable=True)
     subject = Column(String(500), nullable=False)
     body = Column(Text, nullable=False)
-    status = Column(SQLEnum(EmailStatus), default=EmailStatus.PENDING)
+    # Indexed: the claim scans WHERE status='pending' and the stats count by it.
+    status = Column(SQLEnum(EmailStatus), default=EmailStatus.PENDING, index=True)
 
     # 追踪
     tracking_id = Column(String(100), nullable=True, unique=True, index=True)  # 追踪ID
@@ -77,7 +80,17 @@ class EmailLog(Base):
     # 错误信息
     error_message = Column(Text, nullable=True)
 
-    created_at = Column(DateTime, default=datetime.utcnow)
+    #: True when the "send" never left the process: no SMTP credentials, so the
+    #: sender reported success for a message it did not hand to any server.
+    #: Without this flag such a row is indistinguishable from a real send -- the
+    #: status is ``sent`` either way -- and "the mail was sent but never
+    #: arrived" cannot be investigated, because the first question ("was it
+    #: ever really sent?") has no answer in the database. Status stays ``sent``
+    #: so the follow-up flows treat it like any other outbound message; the
+    #: flag is what tells a human the difference.
+    simulated = Column(Boolean, default=False, nullable=False)
+
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
     sent_at = Column(DateTime, nullable=True)
 
     # 关联

@@ -144,3 +144,113 @@ def _no_llm_key(monkeypatch):
     monkeypatch.setattr(app_config.settings, "OPENAI_API_KEY", "", raising=False)
     monkeypatch.setattr(app_config.settings, "SMTP_USER", "", raising=False)
     monkeypatch.setattr(app_config.settings, "SMTP_PASSWORD", "", raising=False)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _no_outbound_network():
+    """Make "the suite passes" mean "it passed without a network".
+
+    Clearing ``OPENAI_API_KEY`` only closes the doors we remembered to close. A
+    path that is not stubbed -- a new tool, a refactor that moves a call out
+    from behind ``is_configured`` -- would then quietly use the real service on
+    a developer laptop with credentials and take a different branch in CI
+    without them. Both runs are green; neither describes the same code path.
+
+    Connecting is therefore blocked outright, loopback included: ``TestClient``
+    speaks ASGI in-process, so nothing legitimate in this suite opens a socket.
+    The failure is a ``RuntimeError`` with the seam to use instead, because a
+    test that fails here should be fixed at the seam, not marked slow.
+
+    Refusals are also *recorded*, and the session fails at the end if any
+    happened. Blocking alone is not enough: a caller that catches ``Exception``
+    (the website fetch does, deliberately) would swallow the refusal and its
+    test would go green down the degraded path -- proving the fallback, not that
+    the test was offline.
+
+    ``TRADEAGENT_ALLOW_NETWORK=1`` is the deliberate escape hatch for a live
+    check; it is not meant to make a red test green.
+    """
+    if os.environ.get("TRADEAGENT_ALLOW_NETWORK") == "1":
+        yield
+        return
+
+    import socket
+    import traceback
+
+    real_connect = socket.socket.connect
+    real_connect_ex = socket.socket.connect_ex
+    real_socketpair = socket.socketpair
+
+    def _caller() -> str:
+        """The nearest frame in this repo, so the failure names a file, not a kernel."""
+        for frame in reversed(traceback.extract_stack()[:-1]):
+            name = frame.filename.replace("\\", "/")
+            if name.endswith("/tests/conftest.py"):
+                continue  # the guard's own frames say nothing about the caller
+            if "/app/" in name or "/tests/" in name:
+                return f"{name.rsplit('/', 1)[-1]}:{frame.lineno} in {frame.name}"
+        return "unknown caller"
+
+    # asyncio builds its self-pipe (and the test client's portal builds an
+    # event loop) with ``socketpair()``, which on Windows is a loopback connect.
+    # That one call has to pass; everything the *application* dials does not.
+    # A counter rather than a host allow-list, because the sandbox proxy also
+    # listens on 127.0.0.1 -- an allow-list would let real HTTP through here.
+    allowed = 0
+
+    def _blocked(self, address, *args, **kwargs):
+        if allowed:
+            return real_connect(self, address, *args, **kwargs)
+        REFUSED_CONNECTIONS.append(f"{address!r} from {_caller()}")
+        raise RuntimeError(
+            f"outbound network is blocked in tests (connect to {address!r}). "
+            "Replace the dependency at its seam (tests/fakes.py, ScriptedLLM, "
+            "monkeypatch on the client module) instead of letting the test "
+            "talk to a real service. See tests/conftest.py."
+        )
+
+    def _socketpair(*args, **kwargs):
+        nonlocal allowed
+        allowed += 1
+        try:
+            return real_socketpair(*args, **kwargs)
+        finally:
+            allowed -= 1
+
+    socket.socket.connect = _blocked
+    socket.socket.connect_ex = _blocked
+    socket.socketpair = _socketpair
+    try:
+        yield
+    finally:
+        socket.socket.connect = real_connect
+        socket.socket.connect_ex = real_connect_ex
+        socket.socketpair = real_socketpair
+
+    if REFUSED_CONNECTIONS:
+        attempts = ", ".join(REFUSED_CONNECTIONS[:5])
+        pytest.fail(
+            f"{len(REFUSED_CONNECTIONS)} outbound connection(s) were attempted "
+            f"during the suite: {attempts}. A test that swallows the refusal is "
+            "still a test that needs the network; stub it at the seam. Set "
+            "TRADEAGENT_ALLOW_NETWORK=1 only for a deliberate live run.",
+            pytrace=False,
+        )
+
+
+#: Every refused connect, in order. Session-scoped: the attempt may be made by a
+#: thread or a background run after the test that caused it has moved on.
+REFUSED_CONNECTIONS: list[str] = []
+
+
+@pytest.fixture
+def refused_connections():
+    """Refusals made by the guard's own test, discarded so the session passes.
+
+    The live list, not a slice: the attempt is appended *after* setup, so a
+    copy taken at setup would always be empty (which is how this fixture first
+    failed).
+    """
+    start = len(REFUSED_CONNECTIONS)
+    yield REFUSED_CONNECTIONS
+    del REFUSED_CONNECTIONS[start:]

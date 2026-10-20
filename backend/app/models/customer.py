@@ -44,7 +44,9 @@ class Customer(Base):
     industry = Column(String(200), nullable=True)  # 行业
     products = Column(Text, nullable=True)  # 采购产品关键词
     source = Column(SQLEnum(CustomerSource), default=CustomerSource.MANUAL)
-    stage = Column(SQLEnum(CustomerStage), default=CustomerStage.NEW)
+    # Indexed: every plan, dashboard and churn query filters by stage
+    # (migration 0004).
+    stage = Column(SQLEnum(CustomerStage), default=CustomerStage.NEW, index=True)
     score = Column(Float, default=0.0)  # AI匹配评分 0-100
     tags = Column(String(500), nullable=True)  # 逗号分隔的标签
     annual_import_value = Column(String(100), nullable=True)  # 年进口额

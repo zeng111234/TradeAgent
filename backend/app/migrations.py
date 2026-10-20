@@ -31,10 +31,40 @@ Design, deliberately small:
   ``create_all``, so the column is already there and the migration must record
   itself as applied without trying to add it again. Trusting the version table in
   that case would fail on every new install.
-* **Applied in order, in one transaction per migration**, so a failure stops the
-  sequence rather than leaving half of it silently done.
+* **Applied in order, the whole run in one transaction**, so a failure rolls the
+  run back rather than leaving half of it silently done. It is the whole run and
+  not one transaction per migration -- stronger than the sequence-stop promise,
+  and the version table never claims a schema the database does not have.
 * **It reports what it did**, and startup logs it. A migration that runs without
   anybody knowing is how a schema drifts from what people believe it is.
+
+**On a database that is being read and written right now.** The run is safe next
+to live traffic, and the reasons are worth stating because they are what makes
+*any* of these migrations legal here:
+
+* It runs at startup, **before this process accepts a request** (``init_db`` in
+  the lifespan). The readers and writers to worry about are therefore *other*
+  processes -- an instance still shutting down, the CLI, a second starter.
+* WAL (``journal_mode=WAL``, see ``app/database.py``): readers see the schema as
+  it was before the migration's transaction and the new one after it commits.
+  There is no intermediate state to read, because the run is one transaction.
+* Only ``ALTER TABLE ... ADD COLUMN`` and ``CREATE INDEX`` are used. Both are
+  backward compatible: an old process's ORM does not know the new column and
+  does not select it, and a DEFAULT covers its inserts. Nothing is dropped,
+  renamed or re-typed -- that would need an expand/contract sequence this
+  migrator does not attempt.
+* Writers in other processes block on the single-writer lock for the duration of
+  the transaction, up to ``busy_timeout`` (30s). ``ADD COLUMN`` is metadata-only
+  and fast; ``CREATE INDEX`` on a large table is the one statement that can hold
+  the lock for a while.
+
+**Two processes migrating at once.** Used to crash the loser: both see the
+migration as unapplied, the second one's ``ALTER`` hits "duplicate column" (or
+its read-then-write snapshot fails with "database is locked") and startup died
+over a race that had already been won by the other process. :func:`run_migrations`
+retries the whole run in a *fresh* transaction: the loser's next attempt reads
+the version table and the guards, sees the winner's committed work, and skips
+cleanly. A race between starters is not a reason to refuse to start.
 
 SQLite allows ``ALTER TABLE ... ADD COLUMN`` and ``CREATE INDEX``; those are what
 this needs.
@@ -79,6 +109,22 @@ async def _has_column(conn: AsyncConnection, table: str, column: str) -> bool:
     return any(row[1] == column for row in rows.fetchall())
 
 
+async def _column_settled(conn: AsyncConnection, table: str, column: str) -> bool:
+    """True when there is nothing for an ADD COLUMN migration to do.
+
+    Two settled states, and both mean "record it, do not run it": the column is
+    there (a fresh install, where ``create_all`` produced the current schema),
+    or the *table* is not there at all. The second is for databases that predate
+    the table -- a migration cannot ALTER a table that does not exist, and the
+    table will be created current whenever it is created. Production never sees
+    this case (``init_db`` runs ``create_all`` first), but a migration that
+    assumes it is a migration that only works on a full install.
+    """
+    if not await _table_exists(conn, table):
+        return True
+    return await _has_column(conn, table, column)
+
+
 async def _table_exists(conn: AsyncConnection, table: str) -> bool:
     row = (
         await conn.execute(
@@ -87,6 +133,35 @@ async def _table_exists(conn: AsyncConnection, table: str) -> bool:
         )
     ).first()
     return row is not None
+
+
+async def _has_index(conn: AsyncConnection, name: str) -> bool:
+    row = (
+        await conn.execute(
+            text("SELECT name FROM sqlite_master WHERE type='index' AND name=:name"),
+            {"name": name},
+        )
+    ).first()
+    return row is not None
+
+
+async def _indexes_settled(conn: AsyncConnection, table: str, names: list[str]) -> bool:
+    """True when there is nothing for this CREATE INDEX migration to do.
+
+    Two settled states, the same pair ``_column_settled`` reasons about: the
+    indexes are there (a fresh install, where the model's ``index=True`` had
+    ``create_all`` build them), or the *table* is not there at all -- a
+    migration cannot index a table that does not exist, and the table will be
+    created with its indexes whenever it is created. Production never sees the
+    second case (``init_db`` runs ``create_all`` first), but a migration that
+    assumes a full install is a migration that only works on one.
+    """
+    if not await _table_exists(conn, table):
+        return True
+    for name in names:
+        if not await _has_index(conn, name):
+            return False
+    return True
 
 
 # --------------------------------------------------------------------------
@@ -118,6 +193,73 @@ MIGRATIONS: list[Migration] = [
         ],
         guard=lambda conn: _has_column(conn, "agent_runs", "cached_prompt_tokens"),
     ),
+    Migration(
+        id="0003_email_logs_simulated",
+        description=(
+            "record whether a 'sent' row ever left the process. Without it a "
+            "simulated send (no SMTP credentials) is indistinguishable from a "
+            "real one, and a missing email cannot even be triaged: the first "
+            "question -- was it ever really sent? -- has no answer in the data"
+        ),
+        statements=[
+            # INTEGER, not BOOLEAN: SQLite has no boolean type, and the values
+            # that matter are the 0/1 that SQLAlchemy's Boolean reads back.
+            "ALTER TABLE email_logs ADD COLUMN simulated INTEGER DEFAULT 0",
+        ],
+        guard=lambda conn: _column_settled(conn, "email_logs", "simulated"),
+    ),
+    Migration(
+        id="0004_email_logs_hot_indexes",
+        description=(
+            "index the email_logs columns every hot query filters or sorts by. "
+            "Before this, measured on a synthetic book of 10k customers / 400k "
+            "email rows, the log listing (ORDER BY created_at DESC LIMIT 100) "
+            "took 774 ms because the sort had to walk the whole table, and the "
+            "status counts took 155 ms for the same reason"
+        ),
+        statements=[
+            # The plan, the history view and the debug view all ask "this
+            # customer's mail" -- one index serves every one of them.
+            "CREATE INDEX IF NOT EXISTS ix_email_logs_customer_id "
+            "ON email_logs (customer_id)",
+            # The listing sorts newest-first over the whole table.
+            "CREATE INDEX IF NOT EXISTS ix_email_logs_created_at "
+            "ON email_logs (created_at)",
+            # The claim scans WHERE status='pending'; the stats count by status.
+            "CREATE INDEX IF NOT EXISTS ix_email_logs_status "
+            "ON email_logs (status)",
+        ],
+        guard=lambda conn: _indexes_settled(
+            conn,
+            "email_logs",
+            ["ix_email_logs_customer_id", "ix_email_logs_created_at", "ix_email_logs_status"],
+        ),
+    ),
+    Migration(
+        id="0005_customers_stage_index",
+        description=(
+            "index customers.stage. Every plan, dashboard and churn query "
+            "filters by it and there was no index on it anywhere in the models"
+        ),
+        statements=[
+            "CREATE INDEX IF NOT EXISTS ix_customers_stage ON customers (stage)",
+        ],
+        guard=lambda conn: _indexes_settled(conn, "customers", ["ix_customers_stage"]),
+    ),
+    Migration(
+        id="0006_agent_runs_prompt_version",
+        description=(
+            "record which system prompt produced a run. The trace says what the "
+            "model did; nothing said what it was told. Without the fingerprint a "
+            "change in output cannot be attributed to a prompt edit rather than "
+            "to the model or the data, and a run produced by instructions that "
+            "are no longer in the tree looks exactly like one produced today"
+        ),
+        statements=[
+            "ALTER TABLE agent_runs ADD COLUMN prompt_version VARCHAR(32)",
+        ],
+        guard=lambda conn: _has_column(conn, "agent_runs", "prompt_version"),
+    ),
 ]
 
 
@@ -143,6 +285,10 @@ async def apply_migrations(conn: AsyncConnection) -> dict:
     (guard said yes, so it was recorded without running) and ``pending`` (not
     applied, and the guard could not confirm it -- which for this list means a
     failure, because the sequence stops).
+
+    Runs on a connection the caller owns. Prefer :func:`run_migrations`, which
+    owns its transaction and survives a concurrent migrator; this is the part
+    that does the work, kept separate so tests can drive it directly.
     """
     await _ensure_tracking_table(conn)
     done = await applied_ids(conn)
@@ -182,6 +328,56 @@ async def apply_migrations(conn: AsyncConnection) -> dict:
         and m.id not in report["already_present"]
     ]
     return report
+
+
+#: A concurrent migrator shows up as one of these. The first is the loser's
+#: read-then-write on a WAL snapshot the winner has already moved past; the
+#: second is its ``ALTER`` arriving after the winner's identical one. Neither
+#: means the migration is bad -- both mean someone else did it first.
+_MIGRATION_RACE_MARKERS = (
+    "database is locked",
+    "database table is locked",
+    "duplicate column",
+    "already exists",
+    "UNIQUE constraint failed",
+)
+
+
+def _is_migration_race(exc: BaseException) -> bool:
+    message = str(exc)
+    return any(marker.lower() in message.lower() for marker in _MIGRATION_RACE_MARKERS)
+
+
+async def run_migrations(engine, attempts: int = 3) -> dict:
+    """Apply the pending migrations, surviving a concurrent migrator.
+
+    Two processes starting against the same database -- a restart that overlaps,
+    a CLI while the server boots -- both find the migrations unapplied and both
+    try to run them. The winner commits; the loser's statements fail against the
+    winner's schema (or its snapshot goes stale). The loser's failure is not a
+    startup failure: the whole run is rolled back and retried in a *fresh*
+    transaction, where the version table and the guards now see the winner's
+    committed work and every migration is skipped as already present.
+
+    A genuine migration error is not retried: "THIS IS NOT SQL" is not a race,
+    and pretending it is would just hide the bug three times. Anything that is
+    not recognisably a race raises on the first attempt.
+    """
+    from sqlalchemy.exc import OperationalError, IntegrityError
+
+    for attempt in range(1, attempts + 1):
+        try:
+            async with engine.begin() as conn:
+                return await apply_migrations(conn)
+        except (OperationalError, IntegrityError) as exc:
+            if attempt >= attempts or not _is_migration_race(exc):
+                raise
+            logger.warning(
+                "migration attempt %d/%d lost to a concurrent migrator (%s); "
+                "retrying against what it committed",
+                attempt, attempts, exc,
+            )
+    raise AssertionError("unreachable")  # pragma: no cover - the loop returns or raises
 
 
 async def schema_status(conn: AsyncConnection) -> dict:

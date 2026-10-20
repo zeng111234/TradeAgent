@@ -99,6 +99,10 @@ class CustomerUpdate(BaseModel):
     notes: Optional[str] = None
     last_contacted_at: Optional[datetime] = None
     next_follow_up_at: Optional[datetime] = None
+    #: Not a column: the ``updated_at`` the caller loaded. When given and the
+    #: row has moved since, the write is refused (409) instead of silently
+    #: overwriting the other person's edit. Excluded from the field copy below.
+    expected_updated_at: Optional[datetime] = None
 
 
 class CustomerResponse(CustomerBase):

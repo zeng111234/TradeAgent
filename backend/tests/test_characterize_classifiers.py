@@ -113,9 +113,14 @@ async def test_reply_response_shape_is_stable():
         # Added when the boundary between deterministic code and the model was
         # made explicit: this response is keyword rules, and it says so.
         "judgement_source",
+        # Added when the fallbacks were made to say *why* they are fallbacks.
+        # "no_api_key" here is the real reason (no key in tests); the shape
+        # change is deliberate -- see test_llm_provenance.py's analysis section.
+        "fallback_reason",
     }
     assert result["ai_powered"] is False  # no API key in tests
     assert result["judgement_source"] == "keyword_rules"
+    assert result["fallback_reason"] == "no_api_key"
     assert isinstance(result["extracted_info"], dict)
     # `urgency` used to be the constant "medium" for every message.
     assert result["urgency"] == "not_assessed"

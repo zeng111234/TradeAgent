@@ -189,6 +189,70 @@ def test_a_different_key_with_the_same_body_is_a_new_send(client, db, monkeypatc
     assert len(calls) == 2, "a different key means the caller really does mean to send again"
 
 
+def test_the_same_key_with_a_different_message_is_refused(client, db, monkeypatch):
+    """A key identifies one request; reusing it for another must not say "sent".
+
+    Before this, the second call found the first row and answered 200
+    ``replayed: true`` -- with the *first* recipient. The caller believed a
+    different customer had been emailed; nothing had been sent, and nothing in
+    the response said so. Returning a wrong success is worse than an error: the
+    caller has no reason to look.
+    """
+    calls = stub_send(monkeypatch)
+    customer_id, message = asyncio.run(a_customer(db, "key reuse"))
+    key = str(uuid.uuid4())
+
+    first = post_send(client, message("the first subject"), key=key)
+    assert first.status_code == 200, first.text
+
+    changed = dict(message("the first subject"), to_email="somebody-else@example.test")
+    second = post_send(client, changed, key=key)
+
+    assert second.status_code == 409, second.text
+    body = second.json()
+    assert body["code"] == "idempotency_key_reuse"
+    assert body["retryable"] is False
+    assert body["details"]["email_log_id"] == first.json()["id"]
+    assert "somebody-else@example.test" not in second.text
+    assert len(calls) == 1, "the mismatched request was sent anyway"
+
+
+def test_a_racing_duplicate_loses_the_insert_and_still_answers(client, db, monkeypatch):
+    """The gap between "no row yet" and "insert", closed by UNIQUE, not by luck.
+
+    Both requests can read "nothing for this key" before either inserts. The
+    loser's insert then violates ``tracking_id UNIQUE``. Modelled by making the
+    first read miss once: that is what the race looks like from the loser's
+    side, and it fails deterministically instead of depending on scheduling.
+    """
+    calls = stub_send(monkeypatch)
+    _, message = asyncio.run(a_customer(db, "race"))
+    key = str(uuid.uuid4())
+
+    first = post_send(client, message(), key=key)
+    assert first.status_code == 200, first.text
+
+    from app.routers import emails as emails_router
+
+    real_already_handled = emails_router.already_handled
+    state = {"miss": True}
+
+    async def miss_once(db_session, tracking_id):
+        if state["miss"]:
+            state["miss"] = False
+            return None
+        return await real_already_handled(db_session, tracking_id)
+
+    monkeypatch.setattr(emails_router, "already_handled", miss_once)
+
+    second = post_send(client, message(), key=key)
+
+    assert second.status_code == 200, second.text
+    assert second.json()["replayed"] is True
+    assert second.json()["id"] == first.json()["id"], "the loser invented a second row"
+    assert len(calls) == 1, "the loser sent a second email"
+
+
 def test_the_row_exists_before_the_mail_is_handed_over(client, db, monkeypatch):
     """The ordering is the crash protection, so it is worth asserting.
 

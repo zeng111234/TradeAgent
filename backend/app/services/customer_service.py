@@ -13,12 +13,24 @@ from app.schemas.customer import (
 
 
 async def create_customer(db: AsyncSession, data: CustomerCreate) -> Customer:
-    """Create a new customer."""
+    """Create a customer, and return it shaped the way the response needs.
+
+    ``flush`` + ``refresh`` loads columns, not relationships. ``CustomerResponse``
+    declares ``contacts`` and ``notes_list``, so the serialiser touches both --
+    from outside the async session's greenlet context, where a lazy load raises
+    ``MissingGreenlet``. The first test to call ``POST /customers`` with a new
+    customer got a 500 instead of a 201, for a customer that had in fact been
+    created. Re-reading with the eager loads the read path already uses makes
+    the create path return the same shape as the get path.
+    """
     customer = Customer(**data.model_dump())
     db.add(customer)
     await db.flush()
-    await db.refresh(customer)
-    return customer
+
+    loaded = await get_customer(db, customer.id)
+    if loaded is None:  # pragma: no cover - just flushed, so it exists
+        raise RuntimeError(f"customer {customer.id} disappeared after flush")
+    return loaded
 
 
 async def get_customer(db: AsyncSession, customer_id: int) -> Customer | None:
@@ -87,12 +99,16 @@ async def list_customers(
 
 
 async def update_customer(db: AsyncSession, customer_id: int, data: CustomerUpdate) -> Customer | None:
-    """Update customer fields."""
+    """Update customer fields.
+
+    ``expected_updated_at`` is the caller's concurrency guard, not a column: it
+    is dropped here so it cannot be setattr'd onto the row.
+    """
     customer = await get_customer(db, customer_id)
     if not customer:
         return None
 
-    update_data = data.model_dump(exclude_unset=True)
+    update_data = data.model_dump(exclude_unset=True, exclude={"expected_updated_at"})
     for field, value in update_data.items():
         setattr(customer, field, value)
 

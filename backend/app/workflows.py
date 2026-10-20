@@ -125,6 +125,7 @@ async def send_drafted_emails_workflow(
     async with _get_db_session() as db:
         from app.models.customer import Customer, CustomerContact, CustomerSource, CustomerStage
         from app.models.email_log import EmailLog, EmailStatus
+        from app.services.email_claims import release
         from sqlalchemy import select
 
         for lead in selected_leads:
@@ -141,8 +142,100 @@ async def send_drafted_emails_workflow(
 
             send_result = {"company": company_name, "email": to_email}
 
-            # Send email via SMTP
-            if settings.SMTP_USER and settings.SMTP_PASSWORD:
+            # Record first, then send, then settle -- the same three-step shape
+            # as ``app/services/email_claims.py``, and for the same reason. This
+            # loop used to send every message and write all the records in one
+            # commit at the end, so a crash mid-batch left every mail that had
+            # already gone out with no row at all -- and the next run, finding
+            # no customer and no log, sent them again. The claim is what makes
+            # a crash cost at most the one in-flight attempt.
+            try:
+                customer_id = None
+                if website:
+                    existing_customer = await db.execute(
+                        select(Customer).where(Customer.website == website).limit(1)
+                    )
+                    existing = existing_customer.scalar_one_or_none()
+                    if existing is not None:
+                        # Still record the send against the customer that is
+                        # already there. A mail to a known customer with no log
+                        # row is an invisible send: invisible to the trace, to
+                        # reply tracking, and to anyone asking "did we already
+                        # write to these people?"
+                        customer_id = existing.id
+                        send_result["crm"] = "already_exists"
+
+                if customer_id is None:
+                    new_customer = Customer(
+                        company_name=company_name,
+                        country=country,
+                        website=website,
+                        industry="Textile",
+                        products=product_keywords,
+                        source=CustomerSource.SCRAPER,
+                        stage=CustomerStage.CONTACTED,
+                        score=float(lead.get("relevance_score", 50)),
+                        tags="auto-scan-send",
+                        notes=lead.get("snippet", "")[:500],
+                    )
+                    db.add(new_customer)
+                    await db.flush()
+
+                    contact = CustomerContact(
+                        customer_id=new_customer.id,
+                        name=company_name[:100],
+                        email=to_email,
+                        is_primary=1,
+                    )
+                    db.add(contact)
+                    customer_id = new_customer.id
+                    result_summary["crm_saved"] += 1
+                    send_result["crm"] = "saved"
+                    send_result["customer_id"] = customer_id
+                else:
+                    send_result["customer_id"] = customer_id
+
+                # The claim: a row that says an attempt is in flight, committed
+                # *before* anything leaves the process. If this cannot be
+                # written, the send does not happen -- an unrecorded send is
+                # exactly what the claim exists to prevent.
+                email_log = EmailLog(
+                    customer_id=customer_id,
+                    to_email=to_email,
+                    to_name=company_name[:200],
+                    subject=subject,
+                    body=body,
+                    status=EmailStatus.SENDING,
+                )
+                db.add(email_log)
+                await db.commit()
+
+            except Exception as e:
+                await db.rollback()
+                logger.error(f"CRM claim error for {company_name}: {e}")
+                result_summary["emails_failed"] += 1
+                send_result["status"] = "failed"
+                send_result["error"] = (
+                    f"not sent: the attempt could not be recorded "
+                    f"({type(e).__name__}: {e})"
+                )
+                send_result.setdefault("crm", "error")
+                send_result["crm_error"] = str(e)
+                result_summary["send_results"].append(send_result)
+                continue
+
+            # Send only now, with the claim on disk.
+            simulated = not (settings.SMTP_USER and settings.SMTP_PASSWORD)
+            sent_ok = False
+            send_error = None
+            if simulated:
+                # Known here and lost before: "simulated" went out in the
+                # response and nowhere else, so the row could not say whether
+                # the mail ever left the process. ``release`` now writes it.
+                result_summary["emails_sent"] += 1
+                send_result["status"] = "simulated"
+                sent_ok = True
+            else:
                 try:
                     from app.utils.email_sender import send_email as smtp_send
                     result = await smtp_send(
@@ -154,78 +247,30 @@ async def send_drafted_emails_workflow(
                     if result.get("success"):
                         result_summary["emails_sent"] += 1
                         send_result["status"] = "sent"
+                        sent_ok = True
                     else:
                         result_summary["emails_failed"] += 1
                         send_result["status"] = "failed"
                         send_result["error"] = result.get("error", "Unknown error")
+                        send_error = send_result["error"]
                 except Exception as e:
                     result_summary["emails_failed"] += 1
                     send_result["status"] = "failed"
                     send_result["error"] = str(e)
-            else:
-                result_summary["emails_sent"] += 1
-                send_result["status"] = "simulated"
+                    send_error = str(e)
 
-            # Save to CRM
-            try:
-                if website:
-                    existing_customer = await db.execute(
-                        select(Customer).where(Customer.website == website).limit(1)
-                    )
-                    if existing_customer.scalar_one_or_none():
-                        send_result["crm"] = "already_exists"
-                        result_summary["send_results"].append(send_result)
-                        continue
-
-                new_customer = Customer(
-                    company_name=company_name,
-                    country=country,
-                    website=website,
-                    industry="Textile",
-                    products=product_keywords,
-                    source=CustomerSource.SCRAPER,
-                    stage=CustomerStage.CONTACTED,
-                    score=float(lead.get("relevance_score", 50)),
-                    tags="auto-scan-send",
-                    notes=lead.get("snippet", "")[:500],
-                )
-                db.add(new_customer)
-                await db.flush()
-
-                contact = CustomerContact(
-                    customer_id=new_customer.id,
-                    name=company_name[:100],
-                    email=to_email,
-                    is_primary=1,
-                )
-                db.add(contact)
-
-                email_log = EmailLog(
-                    customer_id=new_customer.id,
-                    to_email=to_email,
-                    to_name=company_name[:200],
-                    subject=subject,
-                    body=body,
-                    status=EmailStatus.SENT if send_result["status"] in ("sent", "simulated") else EmailStatus.FAILED,
-                )
-                db.add(email_log)
-
-                result_summary["crm_saved"] += 1
-                send_result["crm"] = "saved"
-                send_result["customer_id"] = new_customer.id
-
-            except Exception as e:
-                logger.error(f"CRM save error for {company_name}: {e}")
-                send_result["crm"] = "error"
-                send_result["crm_error"] = str(e)
+            # Settle the claim. Through the same release the batch send uses,
+            # so a row here carries the same meaning as a row there (sent_at is
+            # written, a failure carries its reason, simulated is recorded).
+            await release(
+                db,
+                email_log.id,
+                sent=sent_ok,
+                error=send_error,
+                simulated=simulated and sent_ok,
+            )
 
             result_summary["send_results"].append(send_result)
-
-        try:
-            await db.commit()
-        except Exception as e:
-            logger.error(f"DB commit error: {e}")
-            await db.rollback()
 
     send_notification(
         title=f"Scan & Send: {result_summary['emails_sent']} emails sent",

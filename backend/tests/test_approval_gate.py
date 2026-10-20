@@ -253,3 +253,108 @@ async def test_the_agent_can_see_that_a_proposal_is_waiting(db, client):
     assert result["conversation"]["pending_proposals"] == 1
     assert result["conversation"]["pending_proposal_days"] == 0
     assert result["conversation"]["rejected_proposals"] == 0
+
+
+# --------------------------------------------------------------------------
+# The human's other two hands: edit and delete. Both are for proposals only.
+# --------------------------------------------------------------------------
+# The endpoints said "update a pending draft" and "remove a pending draft"
+# and enforced neither -- so a sent row's subject and body could be rewritten
+# and the row deleted, which destroys the record of what a customer actually
+# received (the evidence a "the mail never arrived" investigation reads) and
+# the record of a decision already made. The reject endpoint had the guard;
+# these two did not.
+
+
+async def reloaded(email_id):
+    """Read the row through a *fresh* session.
+
+    The shared test session keeps copies in its identity map
+    (``expire_on_commit=False``), so a SELECT after an API request can return
+    what the row used to be. A new session reads what the database now says.
+    """
+    from sqlalchemy import select
+
+    from app.database import async_session
+
+    async with async_session() as fresh:
+        return (
+            await fresh.execute(select(EmailLog).where(EmailLog.id == email_id))
+        ).scalar_one_or_none()
+
+
+# These four customers are created at a stage the plan does not cover
+# (PLANNED_STAGES is contacted/interested/quoting) on purpose: the plan is
+# a top-N list over the whole book, so a planned-stage customer left behind
+# by one test can push another test's customer out of the list. The guards
+# under test do not care about stage.
+
+async def test_a_sent_row_cannot_be_edited(db, client):
+    customer = await a_customer(db, stage="completed")
+    draft = await a_pending_draft(db, customer)
+    draft.status = EmailStatus.SENT
+    draft.sent_at = datetime.utcnow()
+    draft.subject = "What the customer actually received"
+    await db.commit()
+
+    r = client.put(f"/api/v1/emails/logs/{draft.id}", json={"subject": "Rewritten later"})
+
+    assert r.status_code == 409
+    detail = r.json()["detail"]
+    assert "nothing was changed" in detail, "the reader must know the write did not happen"
+    assert "sent" in detail
+
+    row = await reloaded(draft.id)
+    assert row.subject == "What the customer actually received"
+
+
+async def test_a_sent_row_cannot_be_deleted(db, client):
+    customer = await a_customer(db, stage="completed")
+    draft = await a_pending_draft(db, customer)
+    draft.status = EmailStatus.SENT
+    draft.sent_at = datetime.utcnow()
+    await db.commit()
+
+    r = client.delete(f"/api/v1/emails/logs/{draft.id}")
+
+    assert r.status_code == 409
+    assert "nothing was deleted" in r.json()["detail"]
+
+    assert await reloaded(draft.id) is not None, (
+        "a sent row is the evidence of what went out"
+    )
+
+
+async def test_a_rejected_decision_is_not_deletable_either(db, client):
+    customer = await a_customer(db, stage="completed")
+    draft = await a_pending_draft(db, customer)
+    client.post(f"/api/v1/emails/logs/{draft.id}/reject")
+
+    r = client.delete(f"/api/v1/emails/logs/{draft.id}")
+    assert r.status_code == 409, (
+        "a rejection is a decision the next proposal must not repeat; "
+        "deleting it would make the next run propose the same thing again"
+    )
+
+    row = await reloaded(draft.id)
+    assert row.status == EmailStatus.REJECTED
+
+
+async def test_a_pending_draft_is_still_editable_and_deletable(db, client):
+    """The guards must not close the door they were meant to protect."""
+    customer = await a_customer(db, stage="completed")
+    draft = await a_pending_draft(db, customer)
+
+    r = client.put(
+        f"/api/v1/emails/logs/{draft.id}",
+        json={"subject": "Edited before sending"},
+    )
+    assert r.status_code == 200
+
+    row = await reloaded(draft.id)
+    assert row.subject == "Edited before sending"
+
+    r = client.delete(f"/api/v1/emails/logs/{draft.id}")
+    assert r.status_code == 204
+
+    assert await reloaded(draft.id) is None
