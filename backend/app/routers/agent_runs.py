@@ -22,18 +22,21 @@ brought that to 12 ms with no increase in wall-clock time.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import time
 import uuid
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Response
-from fastapi.responses import HTMLResponse
+from fastapi import APIRouter, Depends, Request, Response
+from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.errors import ApiError, ErrorCode
 from app.agent.loop import AgentBudget
 from app.agent.render import derive_stats, render_html, render_mermaid_sequence
-from app.agent.repository import get_run, list_runs, trace_of
+from app.agent.repository import TERMINAL_STATUSES, get_run, list_runs, trace_of
 from app.agent.service import (
     DEFAULT_BUDGET,
     AgentUnavailable,
@@ -41,7 +44,7 @@ from app.agent.service import (
     is_configured,
     summarise,
 )
-from app.database import get_db
+from app.database import async_session, get_db
 from app.timeouts import BROWSER_REQUEST_SECONDS, WAIT_MODE_MAX_SECONDS
 
 logger = logging.getLogger(__name__)
@@ -51,9 +54,40 @@ router = APIRouter(prefix="/agent", tags=["AI Agent"])
 #: How many runs may be in flight at once. Past this a new one is refused with
 #: 429 rather than queued: an unbounded queue is a backlog nobody can see, and
 #: each run holds a model connection and writes to the same SQLite file.
+#:
+#: Both entry shapes count against it -- the background one and ``wait=true``.
+#: The reason the limit exists (a model connection each, writes to one database)
+#: is as true of a synchronous run, and a shedding boundary with a hole in it is
+#: not a boundary: ``wait=true`` used to bypass the count entirely, so three
+#: background runs plus any number of synchronous ones all ran at once.
 MAX_CONCURRENT_RUNS = 3
 
 _in_flight: set[str] = set()
+
+
+def _refuse_when_full() -> ApiError:
+    """The one message for "at capacity", for both run shapes.
+
+    ``Retry-After`` because this is the one 429 where the server knows what
+    "later" means: a run is bounded, and a slot frees when one finishes. A 429
+    without it leaves the client guessing between one second and one minute --
+    and guessing short is how a refusal becomes a retry storm.
+    """
+    return ApiError(
+        status_code=429,
+        code=ErrorCode.AGENT_AT_CAPACITY,
+        detail=(
+            f"{len(_in_flight)} analyses are already running and the limit is "
+            f"{MAX_CONCURRENT_RUNS}. Each one holds a model connection and "
+            "writes to the same database, so this request was refused rather "
+            "than queued -- an unbounded queue is a backlog nobody can see. "
+            "Poll /api/v1/agent/runs for the ones in flight and retry when one "
+            "finishes."
+        ),
+        retryable=True,
+        details={"in_flight": len(_in_flight), "limit": MAX_CONCURRENT_RUNS},
+        headers={"Retry-After": "5"},
+    )
 
 
 class AgentRunRequest(BaseModel):
@@ -142,6 +176,15 @@ async def api_agent_capabilities():
             "send email to a customer",
             "delete or modify an existing customer",
             "delete or modify an email log",
+            # Absent capabilities, not policies. "We refuse to quote" would be
+            # a promise the code does not keep -- the model can still write a
+            # price into a draft. What is true is that there is nothing to read
+            # a price or a schedule from, so any number in a draft came from
+            # whoever wrote the brief, not from this system.
+            "quote a price from a price list or a live freight rate: there is none",
+            "promise a ship date: there is no schedule or carrier integration",
+            "export contacts in bulk: the list view omits contact details, and "
+            "each customer is a separate lookup",
         ],
         "sending": "Drafts are created with status 'pending'. A human sends them "
                    "through the existing review flow.",
@@ -169,8 +212,9 @@ async def api_agent_run(
     session, and nothing is pinned while the agent works.
     """
     if not is_configured():
-        raise HTTPException(
+        raise ApiError(
             status_code=503,
+            code=ErrorCode.LLM_NOT_CONFIGURED,
             detail=(
                 "No LLM configured. Set OPENAI_API_KEY (and optionally "
                 "OPENAI_BASE_URL / OPENAI_MODEL). There is no fallback: an agent "
@@ -195,8 +239,8 @@ async def api_agent_run(
                 )
             ).scalar_one_or_none()
         if exists is None:
-            raise HTTPException(
-                status_code=404, detail=f"no customer with id {data.customer_id}"
+            raise ApiError(
+                status_code=404, code=ErrorCode.CUSTOMER_NOT_FOUND, detail=f"no customer with id {data.customer_id}"
             )
 
     budget = DEFAULT_BUDGET
@@ -221,8 +265,9 @@ async def api_agent_run(
     # * the caller asked for nothing specific -> clamp to what the connection can
     #   carry. The default run budget is 180s, so this is the common case.
     if data.max_seconds and data.max_seconds > WAIT_MODE_MAX_SECONDS:
-        raise HTTPException(
+        raise ApiError(
             status_code=422,
+            code=ErrorCode.WAIT_BUDGET_TOO_LONG,
             detail=(
                 f"wait=true holds this HTTP request open, so the budget must stay "
                 f"under {WAIT_MODE_MAX_SECONDS:.0f}s (the browser waits "
@@ -240,15 +285,26 @@ async def api_agent_run(
             max_tokens=budget.max_tokens,
         )
 
+    # Same gate as the background path. A synchronous run holds a model
+    # connection and writes to the same database for its whole duration, so it
+    # counts; the only difference is who waits for the answer.
+    gate_key = f"wait:{uuid.uuid4().hex}"
+    if len(_in_flight) >= MAX_CONCURRENT_RUNS:
+        raise _refuse_when_full()
+    _in_flight.add(gate_key)
     try:
         result = await execute(
             data.goal, context=data.context, budget=budget,
             customer_id=data.customer_id,
         )
     except AgentUnavailable as exc:            # pragma: no cover - guarded above
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+        raise ApiError(status_code=503, code=ErrorCode.LLM_NOT_CONFIGURED, detail=str(exc)) from exc
     except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        raise ApiError(status_code=422, code=ErrorCode.VALIDATION_ERROR, detail=str(exc)) from exc
+    finally:
+        # Released on every exit -- a refused or failed run must not leak a
+        # slot, or the limit slowly closes over the process.
+        _in_flight.discard(gate_key)
 
     payload = summarise(result)
     payload["steps"] = result.run.as_dict()["steps"]
@@ -260,15 +316,7 @@ async def api_agent_run(
 async def _start_in_background(data: AgentRunRequest, budget: AgentBudget) -> AgentRunStarted:
     """Write the row, hand out the id, and let the work happen elsewhere."""
     if len(_in_flight) >= MAX_CONCURRENT_RUNS:
-        raise HTTPException(
-            status_code=429,
-            detail=(
-                f"{len(_in_flight)} analyses are already running and the limit is "
-                f"{MAX_CONCURRENT_RUNS}. Poll /agent/runs for the ones in flight "
-                "rather than starting another; each one holds a model connection "
-                "and writes to the same database."
-            ),
-        )
+        raise _refuse_when_full()
 
     from app.agent.service import _persist
     from app.database import async_session
@@ -389,6 +437,7 @@ async def api_agent_runs(limit: int = 20, status: Optional[str] = None,
             {
                 "run_id": row.run_id,
                 "goal": row.goal,
+                "prompt_version": getattr(row, "prompt_version", None),
                 "status": row.status,
                 "stop_reason": row.stop_reason,
                 # Derived from the trace, so the path shown for a run cannot
@@ -404,23 +453,24 @@ async def api_agent_runs(limit: int = 20, status: Optional[str] = None,
     return {"count": len(listing), "runs": listing}
 
 
-@router.get("/runs/{run_id}")
-async def api_agent_run_detail(run_id: str, db: AsyncSession = Depends(get_db)):
-    """One run with its full trace and diagrams."""
-    row = await get_run(db, run_id)
-    if row is None:
-        raise HTTPException(status_code=404, detail=f"no run with id {run_id}")
+def _snapshot(row, *, with_diagram: bool = True) -> dict[str, Any]:
+    """One run, in the shape both the detail endpoint and the stream send.
 
+    Shared on purpose. The stream is a second publisher of the same facts, and
+    two hand-built copies of this dictionary would drift -- the first one to
+    drift would be a field the UI reads that only exists on one path.
+
+    ``with_diagram=False`` for the stream: the Mermaid text is rebuilt from the
+    whole trace on every call, and a stream may call this once a second for
+    three minutes while the client is only rendering the timeline.
+    """
     trace = trace_of(row)
-    diagram_input = {
-        "goal": row.goal,
-        "status": row.status,
-        "stop_reason": row.stop_reason,
-        "steps": trace,
-    }
-    return {
+    payload = {
         "run_id": row.run_id,
         "goal": row.goal,
+        # Which instructions produced this run. Null for rows written before the
+        # column existed -- null is the honest answer, not a guessed version.
+        "prompt_version": getattr(row, "prompt_version", None),
         "status": row.status,
         "stop_reason": row.stop_reason,
         "error": row.error,
@@ -434,8 +484,160 @@ async def api_agent_run_detail(run_id: str, db: AsyncSession = Depends(get_db)):
         "created_at": row.created_at.isoformat() if row.created_at else None,
         "finished_at": row.finished_at.isoformat() if row.finished_at else None,
         "steps": trace,
-        "mermaid_sequence": render_mermaid_sequence(diagram_input),
     }
+    if with_diagram:
+        payload["mermaid_sequence"] = render_mermaid_sequence({
+            "goal": row.goal,
+            "status": row.status,
+            "stop_reason": row.stop_reason,
+            "steps": trace,
+        })
+    return payload
+
+
+@router.get("/runs/{run_id}")
+async def api_agent_run_detail(run_id: str, db: AsyncSession = Depends(get_db)):
+    """One run with its full trace and diagrams."""
+    row = await get_run(db, run_id)
+    if row is None:
+        raise ApiError(status_code=404, code=ErrorCode.RUN_NOT_FOUND, detail=f"no run with id {run_id}")
+
+    return _snapshot(row)
+
+
+#: How often the stream looks for new progress. The loop writes once per round,
+#: so a shorter interval would re-read the same row and send nothing.
+STREAM_TICK_SECONDS = 1.0
+#: A comment line every this often. A proxy closes a connection it believes is
+#: idle after 30-60 s, and a run waiting on a slow model looks exactly like an
+#: idle connection. The comment is ignored by every EventSource/fetch parser,
+#: which is why it is a comment and not an event.
+STREAM_HEARTBEAT_SECONDS = 15.0
+#: How far past the default budget one connection may live. The client resumes
+#: with ``after``, so this bounds a zombie connection, not a run.
+STREAM_GRACE_SECONDS = 600.0
+
+
+def _sse(event: str, data: dict, event_id: Optional[int] = None) -> str:
+    """One Server-Sent Event.
+
+    ``json.dumps`` never leaves a raw newline inside a string, so a single
+    ``data:`` line carries the whole payload. SSE's multi-line form exists for
+    text that contains newlines; JSON has already escaped them.
+    """
+    lines = []
+    if event_id is not None:
+        lines.append(f"id: {event_id}")
+    lines.append(f"event: {event}")
+    lines.append("data: " + json.dumps(data, ensure_ascii=False, separators=(",", ":")))
+    return "\n".join(lines) + "\n\n"
+
+
+@router.get("/runs/{run_id}/events")
+async def api_agent_run_events(run_id: str, request: Request, after: int = 0):
+    """Follow one run as it happens.
+
+    Why a stream when ``GET /runs/{id}`` already returns the same snapshot:
+    polling costs one request per second per open tab, and every one of them
+    re-reads and re-serialises the whole trace. A stream holds one connection
+    and pushes only when the round number moves.
+
+    **Resumption is the client's job and the server's contract.** Every event
+    carries ``id: <round>``. A client that loses the connection reconnects with
+    ``?after=<last id>`` and gets no history it already has. Two consequences
+    worth stating:
+
+    * an event id is a *position*, not a sequence number: two events can carry
+      the same id, because the terminal ``done`` follows the ``snapshot`` of
+      the final round;
+    * a position past the end is not an error. The first tick always sends the
+      current state, so a client that reconnects after the run finished is
+      answered immediately instead of waiting for a round that will never come.
+    """
+    async with async_session() as session:
+        row = await get_run(session, run_id)
+        if row is None:
+            raise ApiError(
+                status_code=404,
+                code=ErrorCode.RUN_NOT_FOUND,
+                detail=f"no run with id {run_id}",
+            )
+        budget_seconds = float(DEFAULT_BUDGET.max_seconds)
+
+    last_sent = max(0, after)
+
+    async def generate():
+        nonlocal last_sent
+        started = time.monotonic()
+        deadline = started + budget_seconds + STREAM_GRACE_SECONDS
+        last_beat = started
+        first_tick = True
+
+        while True:
+            if await request.is_disconnected():
+                # The client left. Not an error: this is the normal end of a
+                # stream whose tab was closed.
+                return
+
+            # A short-lived session per tick, never one held for the stream. A
+            # stream lives for minutes; the pool has fifteen connections and
+            # every other endpoint shares them.
+            async with async_session() as session:
+                fresh = await get_run(session, run_id)
+
+            if fresh is None:
+                yield _sse(
+                    "error",
+                    {"code": "run_not_found", "run_id": run_id},
+                    last_sent + 1,
+                )
+                return
+
+            rounds = fresh.rounds or 0
+            terminal = fresh.status in TERMINAL_STATUSES
+
+            # Send when the round moved, and always send the terminal state: a
+            # reconnecting client has `last_sent == rounds` and still needs the
+            # final answer. The first tick always sends, so a client with a
+            # stale or ahead-of-the-server cursor is resynchronised at once.
+            if first_tick or rounds > last_sent or terminal:
+                first_tick = False
+                last_sent = rounds
+                snapshot = _snapshot(fresh, with_diagram=False)
+                yield _sse("done" if terminal else "snapshot", snapshot, last_sent)
+                if terminal:
+                    return
+
+            now = time.monotonic()
+            if now - last_beat >= STREAM_HEARTBEAT_SECONDS:
+                last_beat = now
+                yield ": heartbeat\n\n"
+            if now > deadline:
+                yield _sse(
+                    "timeout",
+                    {
+                        "code": "stream_timeout",
+                        "message": (
+                            "this connection has been open longer than any run is "
+                            "allowed to take; reconnect with ?after=<last id>"
+                        ),
+                        "last_id": last_sent,
+                    },
+                    last_sent,
+                )
+                return
+            await asyncio.sleep(STREAM_TICK_SECONDS)
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            # A proxy that buffers this delivers the whole "stream" in one piece
+            # when the run ends, which is precisely not the point.
+            "Cache-Control": "no-cache, no-transform",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.get("/runs/{run_id}/trace.html")
@@ -447,7 +649,7 @@ async def api_agent_run_html(run_id: str, db: AsyncSession = Depends(get_db)):
     """
     row = await get_run(db, run_id)
     if row is None:
-        raise HTTPException(status_code=404, detail=f"no run with id {run_id}")
+        raise ApiError(status_code=404, code=ErrorCode.RUN_NOT_FOUND, detail=f"no run with id {run_id}")
 
     trace = trace_of(row)
     stats = derive_stats(trace)

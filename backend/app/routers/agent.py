@@ -1,8 +1,9 @@
 """AI Agent API routes - deep AI integration."""
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 from pydantic import BaseModel, Field
 from typing import Optional
 
+from app.errors import ApiError, ErrorCode
 from app.services.agent_service import (
     analyze_customer_website,
     analyze_email_reply,
@@ -41,13 +42,27 @@ def _read_leads_file(path):
         return _json.load(handle)
 
 
+#: One email, not a mailbox export.
+#:
+#: The prompt is built by concatenating this string, so an unbounded field
+#: makes the request's input tokens -- and therefore its cost and its generation
+#: time -- unbounded too. Twenty thousand characters is roughly fifteen pages,
+#: already far past a reply; anything longer is a thread dump that should be
+#: summarised before it is sent to a model. Refused at the edge with a 422 rather
+#: than truncated silently, because a truncated email produces a confident
+#: analysis of a conversation the model never saw the end of.
+MAX_EMAIL_CHARS = 20_000
+
+
 class WebsiteAnalysisRequest(BaseModel):
     url: str = Field(..., description="Customer website URL to analyze")
     your_products: str = Field("", description="Your products for matching analysis")
 
 
 class EmailAnalysisRequest(BaseModel):
-    email_content: str = Field(..., description="Customer email reply content to analyze")
+    email_content: str = Field(
+        ..., max_length=MAX_EMAIL_CHARS, description="Customer email reply content to analyze"
+    )
 
 
 class BatchEmailRequest(BaseModel):
@@ -80,7 +95,18 @@ async def api_analyze_website(data: WebsiteAnalysisRequest):
         data.url = "https://" + data.url
     result = await analyze_customer_website(data.url, data.your_products)
     if "error" in result:
-        raise HTTPException(status_code=400, detail=result["error"])
+        # 400 because v1 shipped it that way, and changing a status code is a
+        # breaking change (R49). The status is wrong on its own terms -- the
+        # caller's request was well formed; the site did not answer -- which is
+        # why ``retryable`` is set here instead of being derived from the status:
+        # a DNS blip and a dead host are the same body, and a caller that treats
+        # every 400 as "fix your request" would never try again.
+        raise ApiError(
+            status_code=400,
+            code=ErrorCode.WEBSITE_UNREACHABLE,
+            detail=result["error"],
+            retryable=True,
+        )
     return result
 
 
@@ -198,7 +224,9 @@ async def api_negotiation_advice(data: NegotiationRequest):
 # --- New Feature 1: Inquiry Analysis ---
 
 class InquiryAnalysisRequest(BaseModel):
-    email_content: str = Field(..., description="Customer inquiry email content")
+    email_content: str = Field(
+        ..., max_length=MAX_EMAIL_CHARS, description="Customer inquiry email content"
+    )
 
 
 @router.post("/analyze-inquiry")
@@ -414,7 +442,7 @@ async def api_import_leads():
     json_path = script_dir / "daily_leads.json"
 
     if not json_path.exists():
-        raise HTTPException(status_code=404, detail=f"Leads file not found at {json_path}. Run daily_scan.py first.")
+        raise ApiError(status_code=404, code=ErrorCode.LEADS_FILE_MISSING, detail=f"Leads file not found at {json_path}. Run daily_scan.py first.")
 
     try:
         # On a worker thread: this is a file read *and* a JSON parse of whatever
@@ -423,7 +451,13 @@ async def api_import_leads():
         # milliseconds during which every other request waits.
         data = await asyncio.to_thread(_read_leads_file, json_path)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to read leads file: {e}")
+        # The file exists (checked above) and still could not be read, so the
+        # typed cause is the whole story. "No leads were imported" is the part
+        # the reader is actually waiting for: this request changed nothing.
+        raise ApiError(status_code=500, code=ErrorCode.ANALYSIS_FAILED, detail=(
+            f"the leads file at {json_path} exists but could not be read "
+            f"({type(e).__name__}: {e}); no leads were imported"
+        ))
 
     leads = data.get("leads", [])
     if not leads:
@@ -494,7 +528,13 @@ async def api_import_leads():
 
         except Exception as e:
             await db.rollback()
-            raise HTTPException(status_code=500, detail=f"Import failed: {e}")
+            # Rolled back, and the reader needs to know that: the question in
+            # front of a failed import is "is there half-written data?", and
+            # "Import failed: <trace text>" answers something else.
+            raise ApiError(status_code=500, code=ErrorCode.ANALYSIS_FAILED, detail=(
+                f"the import failed and was rolled back ({type(e).__name__}: {e}); "
+                "no customers were written"
+            ))
 
     return {
         "imported": len(imported_ids),
@@ -543,4 +583,7 @@ async def api_preview_leads():
         # Worker thread: file read plus JSON parse, same reason as above.
         return await asyncio.to_thread(_read_leads_file, json_path)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to read leads file: {e}")
+        raise ApiError(status_code=500, code=ErrorCode.ANALYSIS_FAILED, detail=(
+            f"the leads file at {json_path} exists but could not be read "
+            f"({type(e).__name__}: {e})"
+        ))

@@ -1,9 +1,10 @@
 """Task management API routes."""
 from datetime import datetime
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.errors import ApiError, ErrorCode
 from app.database import get_db
 from app.models.task import Task, TaskStatus
 from app.schemas.task import TaskCreate, TaskUpdate, TaskResponse
@@ -46,7 +47,7 @@ async def get_task(task_id: int, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Task).where(Task.id == task_id))
     task = result.scalar_one_or_none()
     if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
+        raise ApiError(status_code=404, code=ErrorCode.TASK_NOT_FOUND, detail="Task not found")
     return task
 
 
@@ -56,7 +57,7 @@ async def update_task(task_id: int, data: TaskUpdate, db: AsyncSession = Depends
     result = await db.execute(select(Task).where(Task.id == task_id))
     task = result.scalar_one_or_none()
     if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
+        raise ApiError(status_code=404, code=ErrorCode.TASK_NOT_FOUND, detail="Task not found")
     for field, value in data.model_dump(exclude_unset=True).items():
         setattr(task, field, value)
     # If marking as completed, set completed_at
@@ -74,7 +75,7 @@ async def delete_task(task_id: int, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Task).where(Task.id == task_id))
     task = result.scalar_one_or_none()
     if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
+        raise ApiError(status_code=404, code=ErrorCode.TASK_NOT_FOUND, detail="Task not found")
     await db.delete(task)
     await db.flush()
 

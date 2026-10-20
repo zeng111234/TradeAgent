@@ -4,11 +4,18 @@ from contextlib import asynccontextmanager
 
 import sqlalchemy
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.config import settings
 from app.database import init_db
+from app.errors import (
+    accept_request_id,
+    http_error_response,
+    validation_error_response,
+)
+from app.errors import error_response as build_error_response
 from app.routers import customers, emails, tasks, analytics, agent, agent_runs, usage
 from app.scheduler import start_scheduler, stop_scheduler, get_job_status, trigger_daily_routine
 
@@ -90,6 +97,60 @@ app.add_middleware(
 )
 
 
+@app.middleware("http")
+async def _request_id(request: Request, call_next):
+    """Give every request an id, and put it on the response.
+
+    The id is in the body of every error and in the log line that records it,
+    which is the whole point: "it failed at 14:02" is not greppable, a
+    sixteen-character id is. A caller's own id is honoured when it is safe to
+    put in a header and a log line, so a trace spans both sides.
+
+    Added *after* CORS on purpose: Starlette runs the last-added middleware
+    outermost, so this one still sees the response CORS has already marked.
+    """
+    request.state.request_id = accept_request_id(request.headers.get("X-Request-Id"))
+    response = await call_next(request)
+    response.headers["X-Request-Id"] = request.state.request_id
+    return response
+
+
+@app.exception_handler(StarletteHTTPException)
+async def _http_error(request: Request, exc: StarletteHTTPException):
+    return http_error_response(request, exc)
+
+
+@app.exception_handler(RequestValidationError)
+async def _invalid_body(request: Request, exc: RequestValidationError):
+    return validation_error_response(request, exc)
+
+
+@app.exception_handler(Exception)
+async def _unhandled(request: Request, exc: Exception):
+    """A 500 that is still JSON, still has an id, and still says nothing.
+
+    Without this, an unhandled exception leaves the process as Starlette's
+    plain-text "Internal Server Error" -- a body no client can parse, no code,
+    no id, and nothing tying it to a log line. The exception text is logged
+    with the id and *not* returned: a stack trace in a response tells an
+    attacker the library versions and tells the caller nothing they can act on.
+    """
+    logger.exception(
+        "unhandled error on %s %s request_id=%s",
+        request.method,
+        request.url.path,
+        getattr(request.state, "request_id", None),
+    )
+    return build_error_response(
+        request,
+        500,
+        "internal_error",
+        "The server failed while handling this request. It has been logged; "
+        "quote the request_id when reporting it.",
+        retryable=False,
+    )
+
+
 @app.exception_handler(sqlalchemy.exc.TimeoutError)
 async def _pool_exhausted(request: Request, exc: Exception):
     """A busy server, said out loud.
@@ -115,18 +176,18 @@ async def _pool_exhausted(request: Request, exc: Exception):
         "connection pool exhausted: %s %s waited %.0fs",
         request.method, request.url.path, DEFAULT_POOL_TIMEOUT_SECONDS,
     )
-    return JSONResponse(
-        status_code=503,
+    return build_error_response(
+        request,
+        503,
+        "db_pool_exhausted",
+        (
+            "The server is at capacity. No free database connection was "
+            f"available within {DEFAULT_POOL_TIMEOUT_SECONDS:.0f}s "
+            f"({DEFAULT_POOL_SIZE + DEFAULT_MAX_OVERFLOW} in the pool). "
+            "This request was not started; retry shortly."
+        ),
+        retryable=True,
         headers={"Retry-After": "2"},
-        content={
-            "detail": (
-                "The server is at capacity. No free database connection was "
-                f"available within {DEFAULT_POOL_TIMEOUT_SECONDS:.0f}s "
-                f"({DEFAULT_POOL_SIZE + DEFAULT_MAX_OVERFLOW} in the pool). "
-                "This request was not started; retry shortly."
-            ),
-            "retryable": True,
-        },
     )
 
 

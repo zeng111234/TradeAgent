@@ -18,11 +18,13 @@ import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from typing import Optional
-from fastapi import APIRouter, Depends, Header, HTTPException, Response
+from fastapi import APIRouter, Depends, Header, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.errors import ApiError, ErrorCode
 from app.database import get_db
 from app.models.customer import Customer, CustomerContact
 from app.models.email_template import EmailTemplate
@@ -85,7 +87,7 @@ async def get_template(template_id: int, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(EmailTemplate).where(EmailTemplate.id == template_id))
     template = result.scalar_one_or_none()
     if not template:
-        raise HTTPException(status_code=404, detail="Template not found")
+        raise ApiError(status_code=404, code=ErrorCode.TEMPLATE_NOT_FOUND, detail="Template not found")
     return template
 
 
@@ -97,7 +99,7 @@ async def update_template(
     result = await db.execute(select(EmailTemplate).where(EmailTemplate.id == template_id))
     template = result.scalar_one_or_none()
     if not template:
-        raise HTTPException(status_code=404, detail="Template not found")
+        raise ApiError(status_code=404, code=ErrorCode.TEMPLATE_NOT_FOUND, detail="Template not found")
     for field, value in data.model_dump(exclude_unset=True).items():
         setattr(template, field, value)
     template.updated_at = datetime.utcnow()
@@ -112,7 +114,7 @@ async def delete_template(template_id: int, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(EmailTemplate).where(EmailTemplate.id == template_id))
     template = result.scalar_one_or_none()
     if not template:
-        raise HTTPException(status_code=404, detail="Template not found")
+        raise ApiError(status_code=404, code=ErrorCode.TEMPLATE_NOT_FOUND, detail="Template not found")
     await db.delete(template)
     await db.flush()
 
@@ -134,6 +136,44 @@ async def generate_email(data: AIGenerateRequest):
 
 
 # --- Send Email ---
+def _is_same_request(
+    row: EmailLog,
+    *,
+    customer_id: Optional[int],
+    to_email: str,
+    subject: str,
+    body: str,
+) -> bool:
+    """Does this stored row describe the request that just arrived?
+
+    An idempotency key identifies **one** logical request. Answering a
+    different request with the first one's record is worse than an error: the
+    caller is told "sent" for a message that was never sent, and nothing in the
+    response says so. Compared on the fields the recipient would actually see,
+    because the row is evidence of what was sent, not of what was asked for.
+    """
+    return (
+        row.customer_id == customer_id
+        and (row.to_email or "") == (to_email or "")
+        and (row.subject or "") == (subject or "")
+        and (row.body or "") == (body or "")
+    )
+
+
+def _key_reuse_error(row: EmailLog) -> ApiError:
+    return ApiError(
+        status_code=409,
+        code=ErrorCode.IDEMPOTENCY_KEY_REUSE,
+        detail=(
+            "this Idempotency-Key was already used for a different message "
+            f"(email log {row.id} went to {row.to_email!r} with subject "
+            f"{row.subject!r}). Nothing was sent. Reuse a key only for an "
+            "identical retry; a new message needs a new key."
+        ),
+        details={"email_log_id": row.id},
+    )
+
+
 @router.post("/send", response_model=EmailLogResponse)
 async def send_single_email(
     data: EmailSendRequest,
@@ -161,7 +201,7 @@ async def send_single_email(
         result = await db.execute(select(EmailTemplate).where(EmailTemplate.id == data.template_id))
         template = result.scalar_one_or_none()
         if not template:
-            raise HTTPException(status_code=404, detail="Template not found")
+            raise ApiError(status_code=404, code=ErrorCode.TEMPLATE_NOT_FOUND, detail="Template not found")
         variables = data.variables or {}
         if data.customer_id:
             cust_result = await db.execute(select(Customer).where(Customer.id == data.customer_id))
@@ -183,7 +223,7 @@ async def send_single_email(
         template.use_count += 1
 
     if not subject or not body:
-        raise HTTPException(status_code=400, detail="Subject and body are required (either directly or via template)")
+        raise ApiError(status_code=400, code=ErrorCode.SUBJECT_OR_BODY_REQUIRED, detail="Subject and body are required (either directly or via template)")
 
     # The idempotency key, if given, decides the tracking id -- and therefore
     # decides that a replay is recognisable.
@@ -195,6 +235,17 @@ async def send_single_email(
 
     seen = await already_handled(db, tracking_id)
     if seen is not None:
+        # The key identified a request. Is it *this* request? A caller that
+        # reused a key for a different recipient gets told so; returning the
+        # first row would report a send that never happened.
+        if not _is_same_request(
+            seen,
+            customer_id=data.customer_id,
+            to_email=data.to_email,
+            subject=subject,
+            body=body,
+        ):
+            raise _key_reuse_error(seen)
         if seen.status in SETTLED_SEND_STATES:
             response.status_code = 200
             return as_replay(seen)
@@ -202,8 +253,9 @@ async def send_single_email(
             # In flight, or abandoned mid-flight. Either way the outcome is not
             # knowable from here, and sending again is the one thing that could
             # make it worse.
-            raise HTTPException(
+            raise ApiError(
                 status_code=409,
+                code=ErrorCode.EMAIL_SEND_IN_PROGRESS,
                 detail=(
                     f"an attempt for this key is already in flight (email log "
                     f"{seen.id}, status sending). Its outcome is not known yet; "
@@ -211,8 +263,9 @@ async def send_single_email(
                 ),
             )
         if seen.status == EmailStatus.FAILED:
-            raise HTTPException(
+            raise ApiError(
                 status_code=409,
+                code=ErrorCode.EMAIL_SEND_FAILED,
                 detail=(
                     f"a previous attempt with this key failed (email log {seen.id}): "
                     f"{seen.error_message}. Retry with a new Idempotency-Key once you "
@@ -233,7 +286,41 @@ async def send_single_email(
         status=EmailStatus.SENDING,
     )
     db.add(claim_row)
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError:
+        # Two requests with the same key can both pass the check above: that
+        # read and this insert are not one transaction, and the UNIQUE
+        # constraint is what makes the gap harmless. The loser must answer with
+        # the winner's row, or say "in flight" -- a 500 here would turn the most
+        # ordinary retry there is (the client timed out; the send did not) into
+        # an error the caller cannot act on.
+        await db.rollback()
+        winner = await already_handled(db, tracking_id)
+        if winner is None:
+            # The competing row was deleted between the two reads. Nothing to
+            # answer from, so let the original exception surface.
+            raise
+        if not _is_same_request(
+            winner,
+            customer_id=data.customer_id,
+            to_email=data.to_email,
+            subject=subject,
+            body=body,
+        ):
+            raise _key_reuse_error(winner) from None
+        if winner.status in SETTLED_SEND_STATES:
+            response.status_code = 200
+            return as_replay(winner)
+        raise ApiError(
+            status_code=409,
+            code=ErrorCode.EMAIL_SEND_IN_PROGRESS,
+            detail=(
+                "an attempt for this key was claimed at the same moment (email "
+                f"log {winner.id}). Its outcome is not known yet; wait for it, "
+                "or check the mailbox before retrying."
+            ),
+        ) from None
     await db.refresh(claim_row)
 
     # Send email
@@ -250,6 +337,7 @@ async def send_single_email(
         claim_row.id,
         sent=bool(send_result["success"]),
         error=send_result.get("error"),
+        simulated=bool(send_result.get("simulated", False)),
     )
     await db.refresh(claim_row)
 
@@ -361,8 +449,9 @@ async def _exclusive_send(what: str):
     length of a batch, which for a hundred customers is minutes.
     """
     if not _SEND_LOCK.acquire(blocking=False):
-        raise HTTPException(
+        raise ApiError(
             status_code=409,
+            code=ErrorCode.EMAIL_SEND_IN_PROGRESS,
             detail=(
                 f"another send is already in progress; {what} was not started. "
                 "Wait for it to finish -- sending the same drafts twice would "
@@ -402,7 +491,7 @@ async def api_send_pending(
     built up instead of whatever order the database felt like returning.
     """
     if limit < 1:
-        raise HTTPException(status_code=422, detail="limit must be at least 1")
+        raise ApiError(status_code=422, code=ErrorCode.INVALID_LIMIT, detail="limit must be at least 1")
     limit = min(limit, 500)
 
     async with _exclusive_send("the batch send"):
@@ -485,6 +574,7 @@ async def api_send_pending(
                 email_log.id,
                 sent=bool(send_result["success"]),
                 error=send_result.get("error"),
+                simulated=bool(send_result.get("simulated", False)),
             )
 
             if send_result["success"]:
@@ -537,10 +627,16 @@ async def api_send_single_pending(email_id: int, db: AsyncSession = Depends(get_
         email_log = result.scalar_one_or_none()
 
         if not email_log:
-            raise HTTPException(status_code=404, detail="Email log not found")
+            raise ApiError(status_code=404, code=ErrorCode.EMAIL_LOG_NOT_FOUND, detail="Email log not found")
         if email_log.status != EmailStatus.PENDING:
-            raise HTTPException(
+            # A separate code from ``EMAIL_NOT_A_DRAFT`` on purpose: this
+            # refusal is a 400 (v1 shipped it that way) and the edit/delete
+            # refusals are 409s. One code mapping to two status codes would
+            # force every client that branches on the code to also check the
+            # status, which is the thing the code exists to avoid.
+            raise ApiError(
                 status_code=400,
+                code=ErrorCode.EMAIL_NOT_SENDABLE,
                 detail=(
                     f"Email is not pending (status: {email_log.status}). "
                     "A draft can only be sent from pending, which is what makes "
@@ -551,8 +647,9 @@ async def api_send_single_pending(email_id: int, db: AsyncSession = Depends(get_
         # Same claim as the batch path, so the two cannot both send this row --
         # the check above is a readable error, this is the guarantee.
         if not await claim(db, email_log.id):
-            raise HTTPException(
+            raise ApiError(
                 status_code=409,
+                code=ErrorCode.EMAIL_DRAFT_CLAIMED,
                 detail="this draft was claimed by another send",
             )
 
@@ -569,6 +666,7 @@ async def api_send_single_pending(email_id: int, db: AsyncSession = Depends(get_
             email_log.id,
             sent=bool(send_result["success"]),
             error=send_result.get("error"),
+            simulated=bool(send_result.get("simulated", False)),
         )
         await db.refresh(email_log)
         return email_log
@@ -576,12 +674,31 @@ async def api_send_single_pending(email_id: int, db: AsyncSession = Depends(get_
 
 @router.put("/logs/{email_id}")
 async def api_update_email_log(email_id: int, data: dict, db: AsyncSession = Depends(get_db)):
-    """Update a pending email log (edit subject/body before sending)."""
+    """Update a pending email log (edit subject/body before sending).
+
+    Only a proposal is editable. The guard is the point of the endpoint: a row
+    in ``sent`` is the record of what the customer actually received, and
+    rewriting its subject or body would rewrite the evidence a "the mail never
+    arrived" investigation reads (see docs/问答记录.md R36). Nothing is changed
+    when the guard refuses.
+    """
     result = await db.execute(select(EmailLog).where(EmailLog.id == email_id))
     email_log = result.scalar_one_or_none()
 
     if not email_log:
-        raise HTTPException(status_code=404, detail="Email log not found")
+        raise ApiError(status_code=404, code=ErrorCode.EMAIL_LOG_NOT_FOUND, detail="Email log not found")
+
+    if email_log.status != EmailStatus.PENDING:
+        raise ApiError(
+            status_code=409,
+            code=ErrorCode.EMAIL_NOT_A_DRAFT,
+            detail=(
+                f"only a draft waiting for approval can be edited; this one is "
+                f"'{email_log.status.value}'. Editing it would rewrite the record "
+                "of what was actually sent (or of a decision already made), and "
+                "nothing was changed. Reject the draft if you want it turned down."
+            ),
+        )
 
     if "subject" in data:
         email_log.subject = data["subject"]
@@ -597,12 +714,32 @@ async def api_update_email_log(email_id: int, data: dict, db: AsyncSession = Dep
 
 @router.delete("/logs/{email_id}", status_code=204)
 async def api_delete_email_log(email_id: int, db: AsyncSession = Depends(get_db)):
-    """Delete an email log entry (remove a pending draft)."""
+    """Delete a pending draft you do not want.
+
+    Same guard as the edit endpoint, for the same reason: a sent row is the
+    evidence of what went out, and a rejected row is the record of a decision
+    the next proposal must not repeat. Only a draft still waiting for approval
+    can be removed -- and rejecting is the way to turn one down, because a
+    rejection is kept and a deletion carries no information.
+    """
     result = await db.execute(select(EmailLog).where(EmailLog.id == email_id))
     email_log = result.scalar_one_or_none()
 
     if not email_log:
-        raise HTTPException(status_code=404, detail="Email log not found")
+        raise ApiError(status_code=404, code=ErrorCode.EMAIL_LOG_NOT_FOUND, detail="Email log not found")
+
+    if email_log.status != EmailStatus.PENDING:
+        raise ApiError(
+            status_code=409,
+            code=ErrorCode.EMAIL_NOT_A_DRAFT,
+            detail=(
+                f"only a pending draft can be deleted; this one is "
+                f"'{email_log.status.value}'. A sent row is the record of what "
+                "went out and a rejected row is a decision the next proposal "
+                "must not repeat -- nothing was deleted. Reject a draft to turn "
+                "it down; that is kept on purpose."
+            ),
+        )
 
     await db.delete(email_log)
     await db.flush()
@@ -643,11 +780,12 @@ async def api_record_reply(
     result = await db.execute(select(EmailLog).where(EmailLog.id == email_id))
     email_log = result.scalar_one_or_none()
     if email_log is None:
-        raise HTTPException(status_code=404, detail="Email log not found")
+        raise ApiError(status_code=404, code=ErrorCode.EMAIL_LOG_NOT_FOUND, detail="Email log not found")
 
     if email_log.status in (EmailStatus.PENDING, EmailStatus.FAILED, EmailStatus.BOUNCED):
-        raise HTTPException(
+        raise ApiError(
             status_code=409,
+            code=ErrorCode.EMAIL_NEVER_DELIVERED,
             detail=(
                 f"this email was never delivered (status '{email_log.status.value}'), "
                 "so it cannot have been answered"
@@ -657,8 +795,9 @@ async def api_record_reply(
     supplied = data.replied_at if data else None
     when = supplied or datetime.utcnow()
     if when > datetime.utcnow():
-        raise HTTPException(
+        raise ApiError(
             status_code=422,
+            code=ErrorCode.REPLY_IN_FUTURE,
             detail="replied_at cannot be in the future",
         )
     was_sent_at = email_log.sent_at or email_log.created_at
@@ -667,8 +806,9 @@ async def api_record_reply(
         # makes the whole conversation derivation nonsense -- every message
         # would look like it was sent after the reply, so none of them would
         # count as awaiting one, and the thread would read as settled.
-        raise HTTPException(
+        raise ApiError(
             status_code=422,
+            code=ErrorCode.REPLY_BEFORE_SENT,
             detail=(
                 f"replied_at ({when.isoformat()}) is before this email was sent "
                 f"({was_sent_at.isoformat()}); a reply cannot answer an email that "
@@ -772,7 +912,7 @@ async def api_reject_draft(
     result = await db.execute(select(EmailLog).where(EmailLog.id == email_id))
     email_log = result.scalar_one_or_none()
     if email_log is None:
-        raise HTTPException(status_code=404, detail="Email log not found")
+        raise ApiError(status_code=404, code=ErrorCode.EMAIL_LOG_NOT_FOUND, detail="Email log not found")
 
     if email_log.status == EmailStatus.REJECTED:
         return {
@@ -785,8 +925,9 @@ async def api_reject_draft(
         }
 
     if email_log.status != EmailStatus.PENDING:
-        raise HTTPException(
+        raise ApiError(
             status_code=409,
+            code=ErrorCode.EMAIL_NOT_A_DRAFT,
             detail=(
                 f"only a draft waiting for approval can be rejected; this one is "
                 f"'{email_log.status.value}'"
