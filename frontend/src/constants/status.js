@@ -113,10 +113,16 @@ export const priorityType = (priority) => PRIORITY_TYPES[priority] || NEUTRAL
 /**
  * Match score -> el-progress colour. Thresholds are 70 / 40; CustomerDetail's
  * old stops array used 30 / 60 and Agent used 70 / 50, so the same number
- * turned up in two colours on two pages. One rule now.
+ * turned up in two colours on two pages. One rule now, shared by the hex form
+ * (progress strokes) and the tag form (table cells).
  */
+const scoreBand = (score) => (score >= 70 ? 'high' : score >= 40 ? 'mid' : 'low')
+
 export const scoreColor = (score) =>
-  score >= 70 ? accent : score >= 40 ? warning : neutral
+  ({ high: accent, mid: warning, low: neutral })[scoreBand(score)]
+
+export const scoreTagType = (score) =>
+  ({ high: ACCENT, mid: WARNING, low: NEUTRAL })[scoreBand(score)]
 
 /** Customer note types -- a category, so: quiet by default, loud only for risk. */
 const NOTE_TYPES = Object.freeze({

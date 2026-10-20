@@ -309,6 +309,107 @@ code, pre, kbd, samp {
   border-left: none;
 }
 
+.kpi-strip__value {
+  font-size: var(--fs-title);
+  font-weight: 600;
+  color: var(--text-1);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
+
+/* Only an overdue count earns colour in this strip: a zero is the good news,
+ * and a red zero trains the eye to ignore red. */
+.kpi-strip__value--alert {
+  color: var(--negative);
+}
+
+.kpi-strip__label {
+  font-size: var(--fs-caption);
+  color: var(--text-3);
+  margin-top: var(--space-1);
+}
+
+/* ------------------------------------------------------- table cells ---- */
+
+.cell-truncate {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cell-link {
+  color: var(--accent);
+  font-size: var(--fs-caption);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.cell-link:hover {
+  text-decoration: underline;
+}
+
+.cell-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.cell-draft {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  cursor: pointer;
+}
+
+.text-muted {
+  color: var(--text-disabled);
+}
+
+.card-title {
+  font-weight: 600;
+}
+
+.chart-box {
+  height: 350px;
+}
+
+.report-body {
+  white-space: pre-wrap;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  color: var(--text-1);
+  background: var(--bg-subtle);
+  padding: var(--space-4);
+  border-radius: var(--radius-sm);
+  line-height: 1.8;
+}
+
+.report-loading {
+  padding: var(--space-5);
+  text-align: center;
+  color: var(--text-3);
+}
+
+.job-row {
+  border-bottom: 1px solid var(--border-subtle);
+  padding: var(--space-2) 0;
+}
+
+.job-row:last-child {
+  border-bottom: none;
+}
+
+.popover-body {
+  white-space: pre-wrap;
+  font-size: var(--fs-sm);
+  line-height: 1.6;
+  max-height: 350px;
+  overflow-y: auto;
+}
+
 .callout {
   background: var(--bg-subtle);
   border-left: 2px solid var(--border-strong);

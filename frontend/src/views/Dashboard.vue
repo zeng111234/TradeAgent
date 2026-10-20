@@ -1,88 +1,85 @@
 <template>
   <div>
-    <div class="page-header">
-      <h2>数据看板</h2>
-      <p>Overview of your foreign trade business</p>
+    <div class="page-header card-header-row">
+      <div>
+        <h2>数据看板</h2>
+        <p>Overview of your foreign trade business</p>
+      </div>
+      <!-- Page-level actions. They used to live in the Daily Auto Report card
+           header, which made the busiest card carry the page's whole command
+           surface. -->
+      <div class="page-header__actions">
+        <el-button @click="runSearchNewLeads" :loading="scanAndSendLoading">
+          <el-icon><Search /></el-icon> 搜索新客户
+        </el-button>
+        <el-button @click="runDailyReport" :loading="dailyLoading">
+          <el-icon><DataAnalysis /></el-icon> Quick Report
+        </el-button>
+        <el-button type="primary" @click="runFullScan" :loading="fullScanLoading">
+          <el-icon><MagicStick /></el-icon> Full Scan + Report
+        </el-button>
+      </div>
     </div>
 
-    <!-- Stats Cards -->
-    <el-row :gutter="20" style="margin-bottom: 24px">
-      <el-col :span="6">
-        <div class="stat-card">
-          <div class="stat-value">{{ stats.total_customers }}</div>
-          <div class="stat-label">客户总数</div>
-          <el-icon class="stat-icon" color="#409eff"><User /></el-icon>
-        </div>
-      </el-col>
-      <el-col :span="6">
-        <div class="stat-card">
-          <div class="stat-value">{{ stats.new_customers_this_month }}</div>
-          <div class="stat-label">本月新增客户</div>
-          <el-icon class="stat-icon" color="#67c23a"><Plus /></el-icon>
-        </div>
-      </el-col>
-      <el-col :span="6">
-        <div class="stat-card">
-          <div class="stat-value">{{ stats.total_emails_sent }}</div>
-          <div class="stat-label">邮件发送总量</div>
-          <el-icon class="stat-icon" color="#e6a23c"><Message /></el-icon>
-        </div>
-      </el-col>
-      <el-col :span="6">
-        <div class="stat-card">
-          <div class="stat-value">{{ stats.open_rate }}%</div>
-          <div class="stat-label">邮件打开率</div>
-          <el-icon class="stat-icon" color="#f56c6c"><TrendCharts /></el-icon>
-        </div>
-      </el-col>
-    </el-row>
+    <!-- Four headline numbers, then the four that explain them. Eight cards at
+         one weight was the page's loudest clutter; the month/task counts are
+         context, not headlines. -->
+    <div class="stat-grid" style="margin-bottom: 16px">
+      <div class="stat-card">
+        <div class="stat-value">{{ stats.total_customers }}</div>
+        <div class="stat-label">客户总数</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value">{{ stats.total_emails_sent }}</div>
+        <div class="stat-label">邮件发送总量</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value">{{ stats.open_rate }}%</div>
+        <div class="stat-label">邮件打开率</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value">{{ stats.reply_rate }}%</div>
+        <div class="stat-label">邮件回复率</div>
+      </div>
+    </div>
 
-    <!-- Second Row -->
-    <el-row :gutter="20" style="margin-bottom: 24px">
-      <el-col :span="6">
-        <div class="stat-card">
-          <div class="stat-value">{{ stats.reply_rate }}%</div>
-          <div class="stat-label">邮件回复率</div>
+    <div class="kpi-strip" style="margin-bottom: 24px">
+      <div class="kpi-strip__item">
+        <div class="kpi-strip__value">{{ stats.new_customers_this_month }}</div>
+        <div class="kpi-strip__label">本月新增客户</div>
+      </div>
+      <div class="kpi-strip__item">
+        <div class="kpi-strip__value">{{ stats.emails_sent_this_month }}</div>
+        <div class="kpi-strip__label">本月发送邮件</div>
+      </div>
+      <div class="kpi-strip__item">
+        <div class="kpi-strip__value">{{ stats.pending_tasks }}</div>
+        <div class="kpi-strip__label">待办任务</div>
+      </div>
+      <div class="kpi-strip__item">
+        <div class="kpi-strip__value" :class="{ 'kpi-strip__value--alert': stats.overdue_tasks > 0 }">
+          {{ stats.overdue_tasks }}
         </div>
-      </el-col>
-      <el-col :span="6">
-        <div class="stat-card">
-          <div class="stat-value">{{ stats.emails_sent_this_month }}</div>
-          <div class="stat-label">本月发送邮件</div>
-        </div>
-      </el-col>
-      <el-col :span="6">
-        <div class="stat-card">
-          <div class="stat-value">{{ stats.pending_tasks }}</div>
-          <div class="stat-label">待办任务</div>
-        </div>
-      </el-col>
-      <el-col :span="6">
-        <div class="stat-card">
-          <div class="stat-value" :style="{ color: stats.overdue_tasks > 0 ? '#f56c6c' : '#303133' }">
-            {{ stats.overdue_tasks }}
-          </div>
-          <div class="stat-label">逾期任务</div>
-        </div>
-      </el-col>
-    </el-row>
+        <div class="kpi-strip__label">逾期任务</div>
+      </div>
+    </div>
 
     <!-- Charts -->
     <el-row :gutter="20" style="margin-bottom: 24px">
       <el-col :span="12">
         <el-card shadow="never">
           <template #header>
-            <span style="font-weight: 600">销售漏斗</span>
+            <span class="card-title">销售漏斗</span>
           </template>
-          <div ref="funnelChartRef" style="height: 350px"></div>
+          <div ref="funnelChartRef" class="chart-box"></div>
         </el-card>
       </el-col>
       <el-col :span="12">
         <el-card shadow="never">
           <template #header>
-            <span style="font-weight: 600">月度趋势</span>
+            <span class="card-title">月度趋势</span>
           </template>
-          <div ref="trendChartRef" style="height: 350px"></div>
+          <div ref="trendChartRef" class="chart-box"></div>
         </el-card>
       </el-col>
     </el-row>
@@ -91,17 +88,17 @@
       <el-col :span="12">
         <el-card shadow="never">
           <template #header>
-            <span style="font-weight: 600">客户来源分布</span>
+            <span class="card-title">客户来源分布</span>
           </template>
-          <div ref="sourceChartRef" style="height: 350px"></div>
+          <div ref="sourceChartRef" class="chart-box"></div>
         </el-card>
       </el-col>
       <el-col :span="12">
         <el-card shadow="never">
           <template #header>
-            <span style="font-weight: 600">国家/地区分布</span>
+            <span class="card-title">国家/地区分布</span>
           </template>
-          <div ref="countryChartRef" style="height: 350px"></div>
+          <div ref="countryChartRef" class="chart-box"></div>
         </el-card>
       </el-col>
     </el-row>
@@ -111,38 +108,25 @@
       <el-col :span="16">
         <el-card shadow="never">
           <template #header>
-            <div style="display: flex; justify-content: space-between; align-items: center">
-              <span style="font-weight: 600">Daily Auto Report</span>
-            <div>
-                <el-button @click="runSearchNewLeads" :loading="scanAndSendLoading" size="large" style="margin-right: 8px">
-                  <el-icon><Search /></el-icon> 搜索新客户
-                </el-button>
-                <el-button @click="runDailyReport" :loading="dailyLoading" size="default">
-                  <el-icon><DataAnalysis /></el-icon> Quick Report
-                </el-button>
-                <el-button type="primary" @click="runFullScan" :loading="fullScanLoading" size="default">
-                  <el-icon><MagicStick /></el-icon> Full Scan + Report
-                </el-button>
-              </div>
-            </div>
+            <span class="card-title">Daily Auto Report</span>
           </template>
-          <div v-if="dailyLoading || fullScanLoading || scanAndSendLoading" style="padding: 20px; text-align: center; color: #909399">
+          <div v-if="dailyLoading || fullScanLoading || scanAndSendLoading" class="report-loading">
             <el-icon class="is-loading" :size="24"><Loading /></el-icon>
             <p style="margin-top: 8px">{{ scanAndSendLoading ? 'Searching web + generating AI emails + sending... This may take 2-3 minutes.' : fullScanLoading ? 'Scanning web + generating AI drafts... This may take 1-2 minutes.' : 'Analyzing your CRM data...' }}</p>
           </div>
-          <div v-else-if="dailyReport" style="white-space: pre-wrap; font-family: monospace; font-size: 13px; color: #303133; background: #f5f7fa; padding: 16px; border-radius: 6px; line-height: 1.8">{{ dailyReport }}</div>
+          <div v-else-if="dailyReport" class="report-body">{{ dailyReport }}</div>
           <el-empty v-else description="Click 'Quick Report' for CRM analysis or 'Full Scan' to search for new leads" />
         </el-card>
       </el-col>
       <el-col :span="8">
         <el-card shadow="never">
           <template #header>
-            <span style="font-weight: 600">Scheduled Jobs</span>
+            <span class="card-title">Scheduled Jobs</span>
           </template>
-          <div v-for="job in schedulerJobs" :key="job.id" style="border-bottom: 1px solid #eee; padding: 8px 0;">
-            <div style="font-weight: 600; font-size: 13px">{{ job.name }}</div>
-            <div style="font-size: 11px; color: #909399">{{ job.trigger }}</div>
-            <div style="font-size: 11px; color: #67c23a">Next: {{ job.next_run }}</div>
+          <div v-for="job in schedulerJobs" :key="job.id" class="job-row">
+            <div class="card-title" style="font-size: 13px">{{ job.name }}</div>
+            <div class="hint">{{ job.trigger }}</div>
+            <div class="hint" :style="{ color: positive }">Next: {{ job.next_run }}</div>
           </div>
           <el-empty v-if="!schedulerJobs.length" description="No scheduled jobs" />
         </el-card>
@@ -154,10 +138,10 @@
       <el-col :span="24">
         <el-card shadow="never">
           <template #header>
-            <div style="display: flex; justify-content: space-between; align-items: center">
+            <div class="card-header-row">
               <div>
-                <span style="font-weight: 600">New Leads Found</span>
-                <span style="font-size: 12px; color: #909399; margin-left: 8px">Review AI-generated emails and select which to send</span>
+                <span class="card-title">New Leads Found</span>
+                <span class="section-note" style="margin-left: 8px">Review AI-generated emails and select which to send</span>
               </div>
               <div>
                 <el-button @click="toggleSelectAllLeads" size="default">
@@ -186,8 +170,11 @@
               :title="`Not sent: ${failedDrafts.map(f => `${f.company || f.email}: ${f.error || 'unknown error'}`).join(' · ')}`" />
           </div>
 
+          <!-- Column budget 890 (was 1190): fixed 340 + elastic 550. The old
+               widths overflowed the 1138px available at 1440 and put a
+               horizontal scrollbar inside the card. -->
           <el-table :data="searchedLeads" stripe size="small" max-height="500">
-            <el-table-column label="Send" width="60" align="center">
+            <el-table-column label="Send" width="48" align="center">
               <template #default="{ row, $index }">
                 <el-checkbox
                   :model-value="selectedLeadIndices.has($index)"
@@ -196,44 +183,46 @@
                 />
               </template>
             </el-table-column>
-            <el-table-column prop="company_name" label="Company" min-width="200" show-overflow-tooltip />
-            <el-table-column prop="country" label="Country" width="120" />
-            <el-table-column label="Score" width="80" align="center">
+            <el-table-column prop="company_name" label="Company" min-width="170" show-overflow-tooltip />
+            <el-table-column prop="country" label="Country" width="88" show-overflow-tooltip />
+            <el-table-column label="Score" width="64" align="center">
               <template #default="{ row }">
-                <el-tag :type="row.relevance_score >= 70 ? 'success' : row.relevance_score >= 50 ? 'warning' : 'info'" size="small">
+                <el-tag :type="scoreTagType(row.relevance_score)" size="small">
                   {{ row.relevance_score }}
                 </el-tag>
               </template>
             </el-table-column>
-            <el-table-column label="Email" min-width="180">
+            <el-table-column label="Email" min-width="160">
               <template #default="{ row }">
-                <span v-if="row.email">{{ row.email }}</span>
-                <span v-else style="color: #c0c4cc">No email</span>
+                <el-tooltip v-if="row.email" :content="row.email" placement="top">
+                  <span class="cell-truncate">{{ row.email }}</span>
+                </el-tooltip>
+                <span v-else class="text-muted">No email</span>
               </template>
             </el-table-column>
-            <el-table-column label="Status" width="100" align="center">
+            <el-table-column label="Status" width="88" align="center">
               <template #default="{ row }">
                 <el-tag v-if="row.already_exists" type="warning" size="small">Exists</el-tag>
                 <el-tag v-else-if="!row.email" type="info" size="small">No email</el-tag>
                 <el-tag v-else type="success" size="small">Ready</el-tag>
               </template>
             </el-table-column>
-            <el-table-column label="AI Draft Email" min-width="350">
+            <el-table-column label="AI Draft Email" min-width="220">
               <template #default="{ row }">
                 <el-popover trigger="hover" width="450" placement="left">
                   <template #reference>
-                    <span style="cursor: pointer; color: #409eff; font-size: 12px">{{ (row.draft_body || '').substring(0, 80) }}...</span>
+                    <span class="cell-link">{{ (row.draft_body || '').substring(0, 80) }}...</span>
                   </template>
-                  <div style="white-space: pre-wrap; font-size: 13px; line-height: 1.6; max-height: 350px; overflow-y: auto">
+                  <div class="popover-body">
                     <div style="font-weight: 600; margin-bottom: 4px">Subject: {{ row.draft_subject }}</div>
                     {{ row.draft_body }}
                   </div>
                 </el-popover>
               </template>
             </el-table-column>
-            <el-table-column label="Website" width="100">
+            <el-table-column label="Website" width="52" align="center">
               <template #default="{ row }">
-                <a v-if="row.website" :href="row.website" target="_blank" style="color: #409eff; font-size: 12px; text-decoration: none">Visit</a>
+                <a v-if="row.website" :href="row.website" target="_blank" class="cell-link">Visit</a>
               </template>
             </el-table-column>
           </el-table>
@@ -246,16 +235,16 @@
       <el-col :span="24">
         <el-card shadow="never">
           <template #header>
-            <div style="display: flex; justify-content: space-between; align-items: center">
+            <div class="card-header-row">
               <div>
-                <span style="font-weight: 600">Import Daily Scan Leads</span>
-                <span style="font-size: 12px; color: #909399; margin-left: 8px">Import leads from daily_scan.py into CRM + draft emails</span>
+                <span class="card-title">Import Daily Scan Leads</span>
+                <span class="section-note" style="margin-left: 8px">Import leads from daily_scan.py into CRM + draft emails</span>
               </div>
               <div>
                 <el-button @click="previewLeads" :loading="previewLoading" size="default">
                   <el-icon><View /></el-icon> Preview
                 </el-button>
-                <el-button type="primary" @click="importLeads" :loading="importLoading" size="default">
+                <el-button @click="importLeads" :loading="importLoading" size="default">
                   <el-icon><Download /></el-icon> Import All
                 </el-button>
               </div>
@@ -267,47 +256,51 @@
           </div>
 
           <div v-if="previewData && previewData.leads && previewData.leads.length">
+            <!-- Column budget 814 (was 1240). Website folded into Company and
+                 Draft/Preview merged into one cell -- two columns that only
+                 ever showed a link and a truncation. -->
             <el-table :data="previewData.leads" stripe size="small" max-height="400">
-              <el-table-column prop="company_name" label="Company" min-width="200" show-overflow-tooltip />
-              <el-table-column prop="country" label="Country" width="120" />
-              <el-table-column prop="keyword" label="Keyword" width="160" show-overflow-tooltip />
-              <el-table-column label="Score" width="80" align="center">
+              <el-table-column label="Company" min-width="220">
                 <template #default="{ row }">
-                  <el-tag :type="row.relevance_score >= 70 ? 'success' : row.relevance_score >= 50 ? 'warning' : 'info'" size="small">
+                  <div class="cell-stack">
+                    <span class="cell-truncate" :title="row.company_name">{{ row.company_name }}</span>
+                    <a v-if="row.website" :href="row.website" target="_blank" class="cell-link">Website</a>
+                  </div>
+                </template>
+              </el-table-column>
+              <el-table-column prop="country" label="Country" width="88" show-overflow-tooltip />
+              <el-table-column prop="keyword" label="Keyword" width="120" show-overflow-tooltip />
+              <el-table-column label="Score" width="64" align="center">
+                <template #default="{ row }">
+                  <el-tag :type="scoreTagType(row.relevance_score)" size="small">
                     {{ row.relevance_score }}
                   </el-tag>
                 </template>
               </el-table-column>
-              <el-table-column label="Emails" min-width="180">
+              <el-table-column label="Emails" min-width="160">
                 <template #default="{ row }">
-                  <span v-if="row.emails && row.emails.length">{{ row.emails.join(', ') }}</span>
-                  <span v-else style="color: #c0c4cc">No email found</span>
+                  <span v-if="row.emails && row.emails.length" class="cell-truncate" :title="row.emails.join(', ')">
+                    {{ row.emails.join(', ') }}
+                  </span>
+                  <span v-else class="text-muted">No email found</span>
                 </template>
               </el-table-column>
-              <el-table-column label="Draft" width="80" align="center">
-                <template #default="{ row }">
-                  <el-tag v-if="row.draft_email" type="success" size="small">Ready</el-tag>
-                  <el-tag v-else type="info" size="small">None</el-tag>
-                </template>
-              </el-table-column>
-              <el-table-column label="Draft Preview" min-width="300">
+              <el-table-column label="Draft" min-width="162">
                 <template #default="{ row }">
                   <el-popover v-if="row.draft_email" trigger="hover" width="400" placement="left">
                     <template #reference>
-                      <span style="cursor: pointer; color: #409eff; font-size: 12px">{{ (row.draft_email || '').substring(0, 60) }}...</span>
+                      <span class="cell-draft">
+                        <el-tag type="success" size="small">Ready</el-tag>
+                        <span class="cell-link">{{ (row.draft_email || '').substring(0, 40) }}...</span>
+                      </span>
                     </template>
-                    <div style="white-space: pre-wrap; font-size: 13px; line-height: 1.6; max-height: 300px; overflow-y: auto">{{ row.draft_email }}</div>
+                    <div class="popover-body" style="max-height: 300px">{{ row.draft_email }}</div>
                   </el-popover>
-                  <span v-else style="color: #c0c4cc; font-size: 12px">-</span>
-                </template>
-              </el-table-column>
-              <el-table-column label="Website" width="120">
-                <template #default="{ row }">
-                  <a :href="row.website" target="_blank" style="color: #409eff; font-size: 12px; text-decoration: none">Visit</a>
+                  <el-tag v-else type="info" size="small">None</el-tag>
                 </template>
               </el-table-column>
             </el-table>
-            <div style="margin-top: 12px; color: #909399; font-size: 12px">
+            <div class="meta" style="margin-top: 12px">
               Scan date: {{ previewData.scan_date || 'N/A' }} | Keywords: {{ (previewData.keywords_used || []).join(', ') }}
             </div>
           </div>
@@ -324,6 +317,8 @@ import { ref, reactive, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
 import * as echarts from 'echarts'
 import { analyticsApi, schedulerApi, agentApi } from '../api'
+import { scoreTagType } from '../constants/status.js'
+import { accent, accentSeries, trendSeries, accentSoft, positive } from '../constants/theme.js'
 
 const stats = reactive({
   total_customers: 0,
@@ -354,7 +349,9 @@ const initCharts = async () => {
       const pipeline = await analyticsApi.pipeline()
       funnelChart.setOption({
         tooltip: { trigger: 'item', formatter: '{b}: {c} ({d}%)' },
-        color: ['#409eff', '#67c23a', '#e6a23c', '#f56c6c', '#909399', '#b37feb', '#36cfc9', '#ff85c0'],
+        // One hue, eight lightness steps: eight unrelated hues is the rainbow
+        // this page is losing, and a greyscale pie makes neighbours identical.
+        color: accentSeries,
         series: [{
           type: 'funnel',
           left: '10%',
@@ -389,10 +386,10 @@ const initCharts = async () => {
         xAxis: { type: 'category', data: trends.map(t => t.month) },
         yAxis: { type: 'value' },
         series: [
-          { name: '新增客户', type: 'line', smooth: true, data: trends.map(t => t.customers_added), areaStyle: { opacity: 0.1 } },
-          { name: '发送邮件', type: 'line', smooth: true, data: trends.map(t => t.emails_sent), areaStyle: { opacity: 0.1 } },
-          { name: '邮件打开', type: 'line', smooth: true, data: trends.map(t => t.emails_opened) },
-          { name: '邮件回复', type: 'line', smooth: true, data: trends.map(t => t.emails_replied) },
+          { name: '新增客户', type: 'line', smooth: true, data: trends.map(t => t.customers_added), areaStyle: { opacity: 0.1 }, itemStyle: { color: trendSeries[0] } },
+          { name: '发送邮件', type: 'line', smooth: true, data: trends.map(t => t.emails_sent), areaStyle: { opacity: 0.1 }, itemStyle: { color: trendSeries[1] } },
+          { name: '邮件打开', type: 'line', smooth: true, data: trends.map(t => t.emails_opened), itemStyle: { color: trendSeries[2] } },
+          { name: '邮件回复', type: 'line', smooth: true, data: trends.map(t => t.emails_replied), itemStyle: { color: trendSeries[3] } },
         ],
       })
     } catch (e) {
@@ -408,6 +405,7 @@ const initCharts = async () => {
       const sources = await analyticsApi.sources()
       sourceChart.setOption({
         tooltip: { trigger: 'item', formatter: '{b}: {c} ({d}%)' },
+        color: accentSeries,
         legend: { orient: 'vertical', left: 'left', top: 'center' },
         series: [{
           type: 'pie',
@@ -438,10 +436,13 @@ const initCharts = async () => {
         series: [{
           type: 'bar',
           data: countries.map(c => c.count).reverse(),
-          itemStyle: { color: new echarts.graphic.LinearGradient(0, 0, 1, 0, [
-            { offset: 0, color: '#409eff' },
-            { offset: 1, color: '#67c23a' },
-          ]), borderRadius: [0, 4, 4, 0] },
+          itemStyle: {
+            color: new echarts.graphic.LinearGradient(0, 0, 1, 0, [
+              { offset: 0, color: accentSoft },
+              { offset: 1, color: accent },
+            ]),
+            borderRadius: [0, 4, 4, 0],
+          },
         }],
       })
     } catch (e) {
