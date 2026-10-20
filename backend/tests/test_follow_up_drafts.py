@@ -21,17 +21,20 @@ from app.services.follow_up_policy import derive_thread_state
 from app.llm import LLMTransient
 
 
-async def _plan_for_a_due_follow_up(db, monkeypatch, complete):
+async def _plan_for_a_due_follow_up(db, monkeypatch, complete, *, has_email=True):
     customer = Customer(company_name="Draft Regression Co", country="DE",
                         stage="contacted")
     db.add(customer)
     await db.commit()
 
     now = datetime.utcnow()
-    sent = now - timedelta(days=4)  # past the 3-day first follow-up interval
-    thread = derive_thread_state([SimpleNamespace(
-        status="sent", created_at=sent, sent_at=sent, replied_at=None,
-    )], now=now)
+    if has_email:
+        sent = now - timedelta(days=4)  # past the 3-day first follow-up interval
+        thread = derive_thread_state([SimpleNamespace(
+            status="sent", created_at=sent, sent_at=sent, replied_at=None,
+        )], now=now)
+    else:
+        thread = derive_thread_state([], now=now)
     plan_input = CustomerPlanInput(
         customer_id=customer.id,
         company_name=customer.company_name,
@@ -39,7 +42,7 @@ async def _plan_for_a_due_follow_up(db, monkeypatch, complete):
         thread=thread,
         contact_email="buyer@example.test",
         contact_name="Buyer",
-        has_any_email=True,
+        has_any_email=has_email,
     )
 
     async def fake_inputs(_db, _customers, _now):
@@ -92,3 +95,30 @@ async def test_a_failed_draft_is_a_field_not_a_missing_field(db, monkeypatch):
     assert "LLMTransient" in action["draft_error"]
     # Exactly one of the two, never both and never neither.
     assert ("draft_email" in action) != ("draft_error" in action)
+
+
+async def test_a_first_contact_is_not_written_as_a_follow_up(db, monkeypatch):
+    """A real run produced "my earlier note may not have landed" for a customer
+    with zero emails. The prompt must say first contact, and the subject too."""
+    captured = {}
+
+    async def capture(prompt, **_kwargs):
+        captured["prompt"] = prompt
+        return "<p>Hello, we supply metallic yarn.</p>"
+
+    action = await _plan_for_a_due_follow_up(
+        db, monkeypatch, capture, has_email=False
+    )
+
+    assert action["attempt"] == 0
+    assert "first contact" in captured["prompt"]
+    assert "no earlier email" in captured["prompt"]
+    assert "Write a warm, professional follow-up" not in captured["prompt"]
+    # The customer is the recipient. A real run wrote "my name is ... from
+    # ABC Fashion Imports" -- the customer's own company -- when the prompt
+    # labelled both sides as "Company".
+    assert "Your company (the sender)" in captured["prompt"]
+    assert "Customer company (the recipient)" in captured["prompt"]
+    assert "Never write on behalf" in captured["prompt"]
+    assert "Do not invent" in captured["prompt"]
+    assert action["draft_subject"].startswith("Introduction")

@@ -5,6 +5,7 @@ import threading
 from collections import namedtuple
 from hashlib import sha256
 
+from app.config import settings
 from app.llm import (
     LLMBadResponse,
     LLMCircuitOpen,
@@ -733,15 +734,45 @@ async def _build_follow_up_plan(
                 if last is not None:
                     last_subject = last.subject
 
-                prompt = f"""Write a short follow-up email (under 100 words) for a foreign trade business.
-Company: {action['company_name']}
-Contact: {action['contact_name'] or 'Sir/Madam'}
-Last email subject: {last_subject}
+                if action["attempt"] > 0:
+                    framing = (
+                        f"Last email subject: {last_subject}\n"
+                        f"Attempt: {action['attempt']} previous email(s) went "
+                        "unanswered\n\n"
+                        "Write a warm, professional follow-up. Be specific to "
+                        "their situation."
+                    )
+                    subject_prefix = "Following up"
+                else:
+                    # A customer with no email on record has never heard from
+                    # us. A draft that says "my earlier note may not have
+                    # landed" invents a prior contact -- a real model run
+                    # produced exactly that sentence from the old prompt.
+                    framing = (
+                        "There is no earlier email on record. This is a first "
+                        "contact.\n\n"
+                        "Write a first-touch introduction. Do not say or imply "
+                        "that you have written before, that an earlier message "
+                        "may not have arrived, or that you are following up."
+                    )
+                    subject_prefix = "Introduction"
+
+                our_company = (settings.COMPANY_NAME or "our company").strip()
+
+                prompt = f"""Write a short business email (under 100 words) from {our_company} to a prospective customer.
+
+Your company (the sender): {our_company}
+Customer company (the recipient): {action['company_name']}
+Contact at the customer: {action['contact_name'] or 'Sir/Madam'}
 Current stage: {action['stage']}
 Reason: {action['reason']}
-Attempt: {action['attempt']} previous email(s) went unanswered
+{framing}
 
-Write a warm, professional follow-up. Be specific to their situation. Return ONLY the email body (HTML)."""
+Write as {our_company}, addressing the customer. Never write on behalf of the
+customer and never introduce yourself as the customer's company. Do not invent
+a personal name for the sender: sign off with the company name, or use
+"[Your Name]" if a personal signature is required.
+Return ONLY the email body (HTML)."""
 
                 action["draft_email"] = await complete_text(
                     prompt,
@@ -750,7 +781,7 @@ Write a warm, professional follow-up. Be specific to their situation. Return ONL
                     max_tokens=300,
                     scope="email_draft",
                 )
-                action["draft_subject"] = f"Following up - {action['company_name']}"
+                action["draft_subject"] = f"{subject_prefix} - {action['company_name']}"
             except Exception as exc:
                 # Do not let a failed draft look like "this action needed no
                 # draft": the action is in the plan precisely because it does.
