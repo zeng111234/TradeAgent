@@ -5,81 +5,80 @@
       <p>Manage your foreign trade customers and contacts</p>
     </div>
 
-    <!-- Toolbar -->
+    <!-- Toolbar: flex-wrap, so the filters stack instead of squeezing below
+         1024. The old el-col spans broke at a fixed ratio whatever the width. -->
     <el-card shadow="never" style="margin-bottom: 16px">
-      <el-row :gutter="16" align="middle">
-        <el-col :span="6">
-          <el-input v-model="filters.search" placeholder="Search company, industry..." clearable @keyup.enter="loadCustomers">
-            <template #prefix><el-icon><Search /></el-icon></template>
-          </el-input>
-        </el-col>
-        <el-col :span="4">
-          <el-select v-model="filters.stage" placeholder="Stage" clearable>
-            <el-option label="New" value="new" />
-            <el-option label="Contacted" value="contacted" />
-            <el-option label="Interested" value="interested" />
-            <el-option label="Quoting" value="quoting" />
-            <el-option label="Sample" value="sample" />
-            <el-option label="Ordering" value="ordering" />
-            <el-option label="Completed" value="completed" />
-            <el-option label="Lost" value="lost" />
-          </el-select>
-        </el-col>
-        <el-col :span="4">
-          <el-select v-model="filters.source" placeholder="Source" clearable>
-            <el-option label="Manual" value="manual" />
-            <el-option label="Import" value="import" />
-            <el-option label="Scraper" value="scraper" />
-            <el-option label="Alibaba" value="alibaba" />
-            <el-option label="Exhibition" value="exhibition" />
-            <el-option label="Referral" value="referral" />
-          </el-select>
-        </el-col>
-        <el-col :span="4">
-          <el-select v-model="filters.country" placeholder="Country" clearable filterable>
-            <el-option v-for="c in countries" :key="c" :label="c" :value="c" />
-          </el-select>
-        </el-col>
-        <el-col :span="6" style="text-align: right">
+      <div class="toolbar">
+        <el-input v-model="filters.search" placeholder="Search company, industry..." clearable style="width: 240px" @keyup.enter="loadCustomers">
+          <template #prefix><el-icon><Search /></el-icon></template>
+        </el-input>
+        <el-select v-model="filters.stage" placeholder="Stage" clearable style="width: 130px">
+          <el-option label="New" value="new" />
+          <el-option label="Contacted" value="contacted" />
+          <el-option label="Interested" value="interested" />
+          <el-option label="Quoting" value="quoting" />
+          <el-option label="Sample" value="sample" />
+          <el-option label="Ordering" value="ordering" />
+          <el-option label="Completed" value="completed" />
+          <el-option label="Lost" value="lost" />
+        </el-select>
+        <el-select v-model="filters.source" placeholder="Source" clearable style="width: 130px">
+          <el-option label="Manual" value="manual" />
+          <el-option label="Import" value="import" />
+          <el-option label="Scraper" value="scraper" />
+          <el-option label="Alibaba" value="alibaba" />
+          <el-option label="Exhibition" value="exhibition" />
+          <el-option label="Referral" value="referral" />
+        </el-select>
+        <el-select v-model="filters.country" placeholder="Country" clearable filterable style="width: 150px">
+          <el-option v-for="c in countries" :key="c" :label="c" :value="c" />
+        </el-select>
+        <div class="toolbar__end">
           <el-button @click="loadCustomers">
             <el-icon><Search /></el-icon> Search
           </el-button>
           <el-button type="primary" @click="showAddDialog">
             <el-icon><Plus /></el-icon> Add Customer
           </el-button>
-        </el-col>
-      </el-row>
+        </div>
+      </div>
     </el-card>
 
-    <!-- Customer Table -->
+    <!-- Customer Table. Column budget 834: Country folds into a second line
+         under Company, and the dead 140px Industry width was what wrapped
+         every row to two lines. -->
     <el-card shadow="never">
       <el-table :data="customers" stripe style="width: 100%" v-loading="loading" @row-click="goToDetail">
-        <el-table-column prop="company_name" label="Company" min-width="180" />
-        <el-table-column prop="country" label="Country" width="120" />
-        <el-table-column prop="industry" label="Industry" width="140" />
-        <el-table-column prop="stage" label="Stage" width="110">
+        <el-table-column prop="company_name" label="Company" min-width="220">
+          <template #default="{ row }">
+            <div class="cell-stack">
+              <span class="cell-truncate" :title="row.company_name">{{ row.company_name }}</span>
+              <span v-if="row.country" class="hint">{{ row.country }}</span>
+            </div>
+          </template>
+        </el-table-column>
+        <el-table-column prop="industry" label="Industry" min-width="150" show-overflow-tooltip />
+        <el-table-column prop="stage" label="Stage" width="100">
           <template #default="{ row }">
             <el-tag :type="stageTagType(row.stage)" size="small">{{ stageLabel(row.stage) }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="source" label="Source" width="100">
+        <el-table-column prop="source" label="Source" width="80">
           <template #default="{ row }">
-            <el-tag type="info" size="small">{{ row.source }}</el-tag>
+            <span class="text-muted">{{ row.source }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="score" label="Score" width="80" align="center">
+        <el-table-column prop="score" label="Score" width="70" align="center">
           <template #default="{ row }">
-            <span :style="{ color: row.score >= 70 ? '#67c23a' : row.score >= 40 ? '#e6a23c' : '#909399', fontWeight: 600 }">
-              {{ row.score }}
-            </span>
+            <span class="num" :style="{ color: scoreColor(row.score) }">{{ row.score }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="Contacts" width="90" align="center">
+        <el-table-column label="Contacts" width="84" align="center">
           <template #default="{ row }">
             {{ row.contacts ? row.contacts.length : 0 }}
           </template>
         </el-table-column>
-        <el-table-column label="Actions" width="160" fixed="right">
+        <el-table-column label="Actions" width="130" fixed="right">
           <template #default="{ row }">
             <el-button size="small" type="primary" link @click.stop="showEditDialog(row)">Edit</el-button>
             <el-button size="small" type="danger" link @click.stop="handleDelete(row)">Delete</el-button>
@@ -149,7 +148,7 @@ import { ref, reactive, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { customerApi } from '../api'
-import { stageLabel, stageTagType } from '../constants/status.js'
+import { scoreColor, stageLabel, stageTagType } from '../constants/status.js'
 
 const router = useRouter()
 const loading = ref(false)

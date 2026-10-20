@@ -240,6 +240,13 @@ code, pre, kbd, samp {
   gap: var(--space-3);
 }
 
+.toolbar__end {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
 /* ==================================================== 4. shared blocks === */
 
 .stat-grid {
