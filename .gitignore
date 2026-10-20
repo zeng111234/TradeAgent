@@ -38,6 +38,8 @@ artifacts/contract_canary/
 artifacts/quality-page.png
 # Page-by-page tour screenshots (reproduce by opening the app with the dev server)
 artifacts/tour-*.png
+# Layout measurements and per-width screenshots (reproduce with frontend/tests/browser/layout.mjs)
+artifacts/ui/
 # Screenshots the browser-flow runner writes on failure
 frontend/tests/browser/*.png
 

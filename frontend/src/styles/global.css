@@ -1,9 +1,14 @@
-:root {
-  --primary-color: #409eff;
-  --bg-color: #f5f7fa;
-  --sidebar-bg: #001529;
-  --sidebar-width: 220px;
-}
+/**
+ * Global styles: reset, app shell, page primitives, shared components,
+ * Element Plus corrections, a few spacing helpers.
+ *
+ * Values come from `tokens.css` (imported in main.js, after Element Plus, so
+ * the `--el-*` overrides win). Nothing here should contain a raw colour. The
+ * rule for new work: if a view needs a length or a colour that is not a token,
+ * the token set is wrong -- add it there rather than writing `16px` here.
+ */
+
+/* ============================================================== 1. base === */
 
 * {
   margin: 0;
@@ -11,15 +16,72 @@
   box-sizing: border-box;
 }
 
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-  background-color: var(--bg-color);
-  color: #333;
+  font-family: var(--font-sans);
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
+  background: var(--bg-app);
+  color: var(--gray-700);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 #app {
   min-height: 100vh;
 }
+
+h1, h2, h3, h4 {
+  color: var(--text-1);
+  font-weight: 600;
+  line-height: var(--lh-tight);
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+a:hover {
+  color: var(--accent-hover);
+}
+
+code, pre, kbd, samp {
+  font-family: var(--font-mono);
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* A 10px scrollbar with a transparent border reads as a thin line instead of a
+ * grey slab, which is the one place the OS default fights the rest of the UI. */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--gray-300);
+  border: 2px solid transparent;
+  background-clip: content-box;
+  border-radius: var(--radius-pill);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--gray-400);
+  background-clip: content-box;
+}
+
+/* ============================================================= 2. shell === */
 
 .layout {
   display: flex;
@@ -39,80 +101,290 @@ body {
 }
 
 .sidebar-header {
-  padding: 20px;
-  text-align: center;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  padding: var(--space-5);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 .sidebar-header h1 {
-  font-size: 18px;
+  font-size: var(--fs-title);
   font-weight: 600;
   color: #fff;
+  letter-spacing: -0.01em;
 }
 
 .sidebar-header p {
-  font-size: 12px;
-  color: rgba(255, 255, 255, 0.5);
-  margin-top: 4px;
+  font-size: var(--fs-caption);
+  color: rgba(255, 255, 255, 0.45);
+  margin-top: var(--space-1);
 }
 
 .sidebar .el-menu {
   border-right: none;
   background: transparent;
+  padding: var(--space-2);
+}
+
+.sidebar .el-menu-item {
+  height: 40px;
+  line-height: 40px;
+  margin: 2px 0;
+  padding-left: var(--space-3) !important;
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-sm);
+}
+
+.sidebar .el-menu-item.is-active {
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.sidebar .el-menu-item:hover {
+  background: rgba(255, 255, 255, 0.06);
 }
 
 .main-content {
   margin-left: var(--sidebar-width);
   flex: 1;
-  padding: 20px;
+  min-width: 0;
+  padding: var(--space-5);
   min-height: 100vh;
 }
 
+/* ================================================== 3. page primitives === */
+
+/* Block layout on purpose: every view writes `<div class="page-header"><h2>…
+ * <p>…</div>`, and a `display:flex` here would put the title and the subtitle
+ * side by side on all nine pages. Actions live in `.page-header__actions`. */
 .page-header {
-  margin-bottom: 20px;
+  margin-bottom: var(--space-5);
 }
 
 .page-header h2 {
-  font-size: 22px;
+  font-size: var(--fs-page);
   font-weight: 600;
-  color: #303133;
+  color: var(--text-1);
+  letter-spacing: -0.01em;
 }
 
 .page-header p {
-  color: #909399;
-  font-size: 14px;
-  margin-top: 4px;
+  font-size: var(--fs-sm);
+  color: var(--text-3);
+  margin-top: var(--space-1);
+  max-width: 72ch;
+}
+
+.page-header__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.section {
+  margin-bottom: var(--space-4);
+}
+
+.section-title {
+  font-size: var(--fs-title);
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.section-note {
+  font-size: var(--fs-caption);
+  color: var(--text-3);
+  line-height: var(--lh-body);
+}
+
+.card-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+/* ==================================================== 4. shared blocks === */
+
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-4);
 }
 
 .stat-card {
-  background: #fff;
-  border-radius: 8px;
-  padding: 20px;
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.05);
-  transition: transform 0.2s;
-}
-
-.stat-card:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+  /* The absolute icon below used to escape to the nearest positioned ancestor,
+   * which was the enclosing `.el-row` -- four dashboard icons stacked in the
+   * top-right corner of the row. */
+  position: relative;
+  min-width: 0;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-4) var(--space-5);
 }
 
 .stat-card .stat-value {
-  font-size: 28px;
-  font-weight: 700;
-  color: #303133;
+  font-size: var(--fs-metric);
+  font-weight: 600;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+  color: var(--text-1);
+  font-variant-numeric: tabular-nums;
 }
 
 .stat-card .stat-label {
-  font-size: 13px;
-  color: #909399;
-  margin-top: 4px;
+  font-size: var(--fs-caption);
+  color: var(--text-3);
+  margin-top: var(--space-1);
+}
+
+.stat-card .stat-hint {
+  font-size: var(--fs-caption);
+  color: var(--text-3);
+  margin-top: var(--space-2);
+  line-height: 1.5;
 }
 
 .stat-card .stat-icon {
-  font-size: 36px;
-  opacity: 0.15;
   position: absolute;
-  right: 20px;
-  top: 20px;
+  right: var(--space-4);
+  top: var(--space-4);
+  font-size: 20px;
+  color: var(--gray-400);
 }
+
+.kpi-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-3) 0;
+}
+
+.kpi-strip__item {
+  padding: 0 var(--space-5);
+  border-left: 1px solid var(--border-subtle);
+  min-width: 0;
+}
+
+.kpi-strip__item:first-child {
+  border-left: none;
+}
+
+.callout {
+  background: var(--bg-subtle);
+  border-left: 2px solid var(--border-strong);
+  border-radius: 0 var(--radius-xs) var(--radius-xs) 0;
+  padding: var(--space-3) var(--space-4);
+}
+
+.meta {
+  font-size: var(--fs-caption);
+  color: var(--text-3);
+  line-height: var(--lh-body);
+}
+
+.hint {
+  font-size: var(--fs-caption);
+  color: var(--text-3);
+  margin-top: var(--space-1);
+  line-height: var(--lh-body);
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-size: var(--fs-caption);
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+}
+
+.is-negative {
+  color: var(--negative);
+}
+
+/* ============================================== 5. Element Plus patches === */
+
+.el-card {
+  border-radius: var(--radius-sm);
+  border-color: var(--border);
+  box-shadow: none;
+}
+
+.el-card__header {
+  padding: var(--space-3) var(--space-5);
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: var(--fs-body);
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.el-card__body {
+  padding: var(--space-5);
+}
+
+.el-table th.el-table__cell {
+  background: var(--gray-50);
+  font-size: var(--fs-caption);
+  font-weight: 500;
+  color: var(--text-2);
+}
+
+.el-table td.el-table__cell {
+  font-size: var(--fs-sm);
+}
+
+.el-table .cell {
+  line-height: 1.5;
+}
+
+.el-tag {
+  border-radius: var(--radius-xs);
+  font-weight: 500;
+}
+
+.el-button {
+  font-weight: 500;
+}
+
+.el-pagination {
+  margin-top: var(--space-4);
+  justify-content: flex-end;
+}
+
+.el-descriptions__label {
+  color: var(--text-3);
+  font-weight: 500 !important;
+}
+
+.el-alert {
+  border-radius: var(--radius-sm);
+}
+
+.el-empty__description p {
+  font-size: var(--fs-sm);
+  color: var(--text-3);
+}
+
+/* ================================================ 6. spacing helpers ===== */
+/* Deliberately few: they replace a one-off `style="margin-top:16px"` on a
+ * single element, not a utility-class framework. */
+
+.mt-2 { margin-top: var(--space-2); }
+.mt-3 { margin-top: var(--space-3); }
+.mt-4 { margin-top: var(--space-4); }
+.mt-6 { margin-top: var(--space-6); }
+.mb-2 { margin-bottom: var(--space-2); }
+.mb-3 { margin-bottom: var(--space-3); }
+.mb-4 { margin-bottom: var(--space-4); }
+.mb-6 { margin-bottom: var(--space-6); }
