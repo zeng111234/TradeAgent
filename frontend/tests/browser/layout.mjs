@@ -139,6 +139,65 @@ async function visitAllViews(browser, base, customerId) {
   return report
 }
 
+/**
+ * Shell checks that the four-page sweep cannot express.
+ *
+ * The footer overlap only appears on a short window (the sidebar scrolled, the
+ * footer was absolutely positioned), and the content cap only shows on a wide
+ * one. Both are one-off measurements, not per-page ones.
+ */
+async function checkShell(browser, base) {
+  // 520px tall on purpose: at 700 the eight menu items still fit, so the
+  // "does the menu scroll instead of the footer" question has no answer.
+  const short = await browser.newPage({ viewport: { width: 1440, height: 520 } })
+  let footer = null
+  try {
+    await short.goto(`${base}/dashboard`, { waitUntil: 'domcontentloaded', timeout: 60_000 })
+    await short.waitForTimeout(900)
+    footer = await short.evaluate(() => {
+      const el = document.querySelector('.sidebar-footer')
+      const items = [...document.querySelectorAll('.sidebar .el-menu-item')]
+      const last = items[items.length - 1]
+      const menu = document.querySelector('.sidebar .el-menu')
+      return {
+        gap: el && last
+          ? Math.round(el.getBoundingClientRect().top - last.getBoundingClientRect().bottom)
+          : null,
+        menuScrolls: menu ? menu.scrollHeight > menu.clientHeight + 1 : null,
+        footerVisible: el ? el.getBoundingClientRect().bottom <= window.innerHeight + 1 : null,
+      }
+    })
+  } finally {
+    await short.close()
+  }
+
+  const wide = await browser.newPage({ viewport: { width: 1920, height: 900 } })
+  let content = null
+  try {
+    await wide.goto(`${base}/customers`, { waitUntil: 'domcontentloaded', timeout: 60_000 })
+    await wide.waitForTimeout(900)
+    content = await wide.evaluate(() => {
+      const main = document.querySelector('.main-content')
+      const first = main ? main.firstElementChild : null
+      const sidebar = document.querySelector('.sidebar')
+      const sidebarWidth = sidebar ? sidebar.getBoundingClientRect().width : 0
+      const rect = first ? first.getBoundingClientRect() : null
+      return {
+        mainWidth: main ? Math.round(main.getBoundingClientRect().width) : null,
+        contentWidth: rect ? Math.round(rect.width) : null,
+        // Gutters measured against the space right of the sidebar, not the
+        // viewport: the sidebar is part of the layout, not page margin.
+        leftGutter: rect ? Math.round(rect.left - sidebarWidth) : null,
+        rightGutter: rect ? Math.round(document.body.clientWidth - rect.right) : null,
+      }
+    })
+  } finally {
+    await wide.close()
+  }
+
+  return { footer, content }
+}
+
 async function measure(page) {  return page.evaluate(() => {
     const root = document.scrollingElement
     const main = document.querySelector('.main-content')
@@ -247,6 +306,7 @@ async function main() {
   const results = []
   let theme = null
   let views = []
+  let shell = null
   let customerId = 1
 
   try {
@@ -284,6 +344,7 @@ async function main() {
     }
 
     views = await visitAllViews(browser, APP_URL, customerId)
+    shell = await checkShell(browser, APP_URL)
   } finally {
     await browser.close()
     stopVite(vite)
@@ -321,9 +382,24 @@ async function main() {
   }
   console.log(`views: ${views.length - brokenViews.length}/${views.length} render without errors`)
 
+  const footerGap = shell?.footer?.gap
+  const content = shell?.content
+  console.log(
+    `shell: footer gap ${footerGap === null ? 'n/a' : `${footerGap}px`}` +
+      ` (1440x520), menu scrolls ${shell?.footer?.menuScrolls},` +
+      ` content ${content?.contentWidth}px with gutters ${content?.leftGutter}/${content?.rightGutter}` 
+  )
+
+  const shellOk =
+    (footerGap === null || footerGap >= 0) &&
+    (content?.contentWidth === null || content.contentWidth <= 1440) &&
+    // The menu must absorb the shortfall, and the footer must stay on screen.
+    (shell?.footer?.menuScrolls !== false || footerGap === null) &&
+    (shell?.footer?.footerVisible !== false)
+
   console.log(`written: artifacts/ui/layout-${LABEL}.json, screenshots in artifacts/ui/${LABEL}/`)
 
-  if (!themeOk || brokenViews.length) return 2
+  if (!themeOk || brokenViews.length || !shellOk) return 2
   return 0
 }
 

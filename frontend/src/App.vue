@@ -74,19 +74,11 @@ const currentRoute = computed(() => {
 </script>
 
 <style scoped>
+/* The footer's geometry lives in global.css now: it used to be absolutely
+ * positioned inside a scrolling sidebar, which put it on top of the menu when
+ * the window was short. Only the part that is genuinely local to this shell
+ * stays here. */
 .sidebar-footer {
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  padding: 16px 20px;
-  border-top: 1px solid rgba(255, 255, 255, 0.1);
-  text-align: center;
-}
-
-.sidebar-footer p {
-  font-size: 11px;
-  color: rgba(255, 255, 255, 0.3);
-  line-height: 1.6;
+  letter-spacing: 0.01em;
 }
 </style>

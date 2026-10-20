@@ -88,19 +88,27 @@ code, pre, kbd, samp {
   min-height: 100vh;
 }
 
+/* The sidebar used to be `position: fixed` with a `position: absolute` footer.
+ * Absolute is relative to the nearest positioned ancestor, and the sidebar is
+ * one -- but it also scrolls (`overflow-y: auto`), so the footer stopped
+ * tracking the viewport and started floating over the menu on a short window.
+ * A flex column removes the question: the menu scrolls, the footer does not. */
 .sidebar {
   width: var(--sidebar-width);
+  flex: 0 0 var(--sidebar-width);
+  height: 100vh;
+  position: sticky;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   background: var(--sidebar-bg);
   color: #fff;
-  position: fixed;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  overflow-y: auto;
   z-index: 100;
 }
 
 .sidebar-header {
+  flex: none;
   padding: var(--space-5);
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
@@ -119,9 +127,25 @@ code, pre, kbd, samp {
 }
 
 .sidebar .el-menu {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
   border-right: none;
   background: transparent;
   padding: var(--space-2);
+}
+
+.sidebar-footer {
+  flex: none;
+  padding: var(--space-4) var(--space-5);
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  text-align: center;
+}
+
+.sidebar-footer p {
+  font-size: var(--fs-caption);
+  color: rgba(255, 255, 255, 0.38);
+  line-height: 1.6;
 }
 
 .sidebar .el-menu-item {
@@ -143,11 +167,16 @@ code, pre, kbd, samp {
   background: rgba(255, 255, 255, 0.06);
 }
 
+/* The sidebar is a flex item now, so the old `margin-left` reservation is gone.
+ * `margin: 0 auto` with a max-width centres the content on a 2560px monitor
+ * instead of letting a three-column table stretch to the edges; the extra
+ * space becomes page gutter, not table width. */
 .main-content {
-  margin-left: var(--sidebar-width);
-  flex: 1;
+  flex: 1 1 auto;
   min-width: 0;
-  padding: var(--space-5);
+  max-width: calc(var(--content-max) + 2 * var(--space-8));
+  margin: 0 auto;
+  padding: var(--space-6) var(--space-8) var(--space-8);
   min-height: 100vh;
 }
 
