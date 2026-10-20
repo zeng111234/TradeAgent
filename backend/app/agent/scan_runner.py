@@ -85,6 +85,34 @@ class ScanOutcome:
         return self.sink.count
 
     @property
+    def search_errors(self) -> list[str]:
+        """Search failures the run recorded -- derived from its trace."""
+        from .scan_tools import search_errors_of
+
+        return search_errors_of(self.run)
+
+    @property
+    def search_failed_entirely(self) -> bool:
+        """True when the zero means "no input", not "no candidates worth it"."""
+        from .scan_tools import search_failed_entirely
+
+        return search_failed_entirely(self.run)
+
+    @property
+    def inspect_errors(self) -> list[str]:
+        """Page fetches that failed, derived from the trace."""
+        from .scan_tools import inspect_errors_of
+
+        return inspect_errors_of(self.run)
+
+    @property
+    def inspection_failed_entirely(self) -> bool:
+        """True when every page the run tried to open failed."""
+        from .scan_tools import inspection_failed_entirely
+
+        return inspection_failed_entirely(self.run)
+
+    @property
     def kept(self) -> list[dict]:
         return self.sink.prospects
 
@@ -269,6 +297,23 @@ async def find_leads_agentic(
         for p in sink.prospects
     ]
 
+    # An interactive lookup that returns zero leads because the search engine
+    # was down must say so -- the caller sees "0 leads" and will conclude the
+    # market is empty unless the failure travels with the count.
+    from .scan_tools import (
+        inspect_errors_of,
+        inspection_failed_entirely,
+        search_errors_of,
+        search_failed_entirely,
+    )
+
+    external_errors = {
+        "search": search_errors_of(run),
+        "inspect": inspect_errors_of(run),
+        "search_failed_entirely": search_failed_entirely(run),
+        "inspection_failed_entirely": inspection_failed_entirely(run),
+    }
+
     return {
         "total_found": len(leads),
         "leads": leads,
@@ -278,6 +323,7 @@ async def find_leads_agentic(
         # Kept for shape compatibility. Real query strings are visible in the
         # run trace instead, because the agent chooses them.
         "search_queries_used": [],
+        "external_errors": external_errors,
         "agent_run": {
             "run_id": run.run_id,
             "status": run.status,

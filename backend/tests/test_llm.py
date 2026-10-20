@@ -145,6 +145,21 @@ def test_none_content_is_a_bad_response_not_an_attribute_error():
         llm.text_of(_response(None))
 
 
+def test_content_that_is_not_text_names_the_shape_change():
+    """A provider that switches to content parts must not look like our bug.
+
+    ``.strip()`` on a list raises AttributeError, and an AttributeError here
+    reads as "this application is broken" -- the opposite of what it is. The
+    error has to say which shape arrived, because that is the only thing a
+    reader can act on when a provider changes its contract.
+    """
+    with pytest.raises(llm.LLMBadResponse) as caught:
+        llm.text_of(_response([{"type": "text", "text": "hello"}]))
+
+    assert "list" in str(caught.value)
+    assert "shape may have changed" in str(caught.value)
+
+
 # --------------------------------------------------------------------------
 # JSON parsing / fence stripping
 # --------------------------------------------------------------------------

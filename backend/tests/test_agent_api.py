@@ -130,9 +130,13 @@ async def test_runs_list_and_detail_round_trip(client, db):
     entry = next(r for r in listing["runs"] if r["run_id"] == run.run_id)
     assert entry["status"] == "succeeded"
     assert entry["tool_calls"] == 1
+    # Which instructions produced it, on both the list and the detail. A row
+    # without this cannot be compared with a run from another day.
+    assert entry["prompt_version"] == run.prompt_version
 
     detail = client.get(f"/api/v1/agent/runs/{run.run_id}").json()
     assert detail["goal"] == "look at the pipeline"
+    assert detail["prompt_version"] == run.prompt_version
     assert detail["steps"][0]["tool_calls"][0]["name"] == "list_customers"
     assert detail["mermaid_sequence"].startswith("---\ntitle:")
 

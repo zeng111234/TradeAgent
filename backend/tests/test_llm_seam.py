@@ -327,6 +327,40 @@ def test_the_agent_runtime_speaks_the_same_vocabulary(monkeypatch):
         asyncio.run(client.chat([], []))
 
 
+def test_the_runtime_seam_names_a_content_shape_change(monkeypatch):
+    """The loop's own adapter must not turn drift into AttributeError either."""
+    import asyncio
+    from types import SimpleNamespace
+
+    from app.agent.protocol import OpenAICompatibleClient
+    from app.llm import LLMBadResponse
+
+    client = OpenAICompatibleClient(
+        api_key="test-key", base_url="https://example.test/v1", model="test-model",
+    )
+
+    class PartsReply:
+        class chat:
+            class completions:
+                @staticmethod
+                async def create(**_kwargs):
+                    return SimpleNamespace(choices=[SimpleNamespace(
+                        finish_reason="stop",
+                        message=SimpleNamespace(
+                            content=[{"type": "text", "text": "hello"}],
+                            tool_calls=None,
+                        ),
+                    )])
+
+    monkeypatch.setattr(client, "_ensure_client", lambda: PartsReply)
+
+    with pytest.raises(LLMBadResponse) as caught:
+        asyncio.run(client.chat([], []))
+
+    assert "list" in str(caught.value)
+    assert "shape may have changed" in str(caught.value)
+
+
 def test_a_run_records_a_translated_reason():
     """And the loop turns it into a run error in that same vocabulary."""
     import asyncio

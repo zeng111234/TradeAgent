@@ -193,6 +193,74 @@ def test_too_many_at_once_is_refused_rather_than_queued(client, monkeypatch):
         wait_for_run(client, body["run_id"])
 
 
+def test_a_synchronous_run_counts_against_the_same_limit(client, monkeypatch):
+    """The shedding boundary used to have a hole in it.
+
+    ``wait=true`` never touched ``_in_flight``, so the cap only governed
+    background runs: three of those plus any number of synchronous ones all held
+    model connections and wrote to the same database at once -- exactly what the
+    limit exists to prevent. Both shapes share one gate, and a finished run must
+    give its slot back rather than leak it.
+    """
+    import app.routers.agent_runs as routes
+
+    release = asyncio.Event()
+
+    async def slow_execute(goal, *, run_id=None, **kwargs):
+        if goal == "one more":
+            # The probe must be refused by the gate, before any work starts.
+            # Letting it through is the defect; blocking here would hang the
+            # test instead of failing it, and a hanging guard is a silent one.
+            raise AssertionError(
+                "a synchronous run reached execute while the limit was full: "
+                "the capacity gate did not refuse it"
+            )
+        await release.wait()
+        # The run_id must come back the same one the route minted: the route
+        # writes its row first and then saves the result by id, so a fake that
+        # silently generates a new one leaves the polled row "running" forever.
+        run = AgentRun(
+            goal=goal, run_id=run_id,
+            status="succeeded", stop_reason="final answer",
+        )
+        run.final_output = "done"
+        return type("Result", (), {
+            "run": run, "mermaid_sequence": "", "mermaid_flowchart": "", "html": "",
+            "delegations": None,
+        })()
+
+    monkeypatch.setattr(routes, "is_configured", lambda: True)
+    monkeypatch.setattr(routes, "execute", slow_execute)
+
+    started = [
+        client.post("/api/v1/agent/run", json={"goal": f"analysis {i}"}).json()
+        for i in range(routes.MAX_CONCURRENT_RUNS)
+    ]
+
+    refused = client.post(
+        "/api/v1/agent/run", json={"goal": "one more", "wait": True}
+    )
+    assert refused.status_code == 429
+    assert str(routes.MAX_CONCURRENT_RUNS) in refused.json()["detail"]
+
+    release.set()
+    for body in started:
+        wait_for_run(client, body["run_id"])
+
+    # Slots are returned when runs end. Wait for the set to drain rather than
+    # assuming the discards have already run: the poller can see a finished row
+    # one tick before the runner's ``finally`` executes.
+    deadline = time.monotonic() + 5.0
+    while routes._in_flight and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert not routes._in_flight, "a finished run must not keep its slot"
+
+    accepted = client.post(
+        "/api/v1/agent/run", json={"goal": "now there is room", "wait": True}
+    )
+    assert accepted.status_code == 200, accepted.text
+
+
 def test_waiting_still_returns_the_trace(client, monkeypatch):
     """The synchronous shape is still there for the CLI and for short runs."""
     import app.routers.agent_runs as routes

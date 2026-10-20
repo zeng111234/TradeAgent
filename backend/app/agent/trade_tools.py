@@ -629,10 +629,15 @@ async def search_prospects(keyword: str, country: str = "", max_results: int = 8
         except Exception as exc:  # noqa: BLE001 - a failed query is data, not a crash
             errors.append(f"{query}: {type(exc).__name__}: {exc}")
             continue
+        usable = 0
         for item in results:
-            href = item.get("href", "")
+            # ``isinstance`` before ``.get``: a provider that stops returning
+            # dicts must be reported as a shape change, not raise AttributeError
+            # from inside the loop.
+            href = item.get("href", "") if isinstance(item, dict) else ""
             if not href.startswith("http"):
                 continue
+            usable += 1
             parts = href.split("/")
             domain = parts[2] if len(parts) > 2 else href
             if domain in seen:
@@ -650,6 +655,17 @@ async def search_prospects(keyword: str, country: str = "", max_results: int = 8
             )
             if len(candidates) >= max_results:
                 break
+
+        if results and usable == 0:
+            # Results arrived, and not one had a usable 'href'. An empty market
+            # and a renamed field produce the same zero candidates; only the
+            # raw count tells them apart. Without this the scan would report a
+            # quiet day while the provider's schema had changed underneath it.
+            errors.append(
+                f"{query}: {len(results)} result(s) came back but none had a "
+                "usable 'href' field -- the search provider's response shape "
+                "may have changed"
+            )
 
     return {
         "count": len(candidates),

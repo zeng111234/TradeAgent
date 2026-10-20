@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 from .protocol import LLMClient, Message, ToolCall, parse_arguments
+from .prompts import fingerprint as prompt_fingerprint
 from .tools import ToolRegistry
 
 logger = logging.getLogger(__name__)
@@ -189,6 +190,12 @@ class AgentRun:
 
     goal: str
     run_id: str = field(default_factory=lambda: uuid.uuid4().hex)
+    #: Fingerprint of the system prompt this run used (``prompts.fingerprint``).
+    #: Recorded on the row because the row outlives the commit: without it there
+    #: is no way to tell whether a change in output quality came from a prompt
+    #: edit, a model change, or the data -- and no way to reproduce a run whose
+    #: instructions are no longer in the working tree.
+    prompt_version: str = ""
     #: The customer this run is about, when the caller named one. Carried on the
     #: run so it reaches the row, where it can be indexed -- the debug view used
     #: to find runs by searching their trace text instead.
@@ -239,6 +246,7 @@ class AgentRun:
         return {
             "run_id": self.run_id,
             "goal": self.goal,
+            "prompt_version": self.prompt_version,
             "status": self.status,
             "stop_reason": self.stop_reason,
             "final_output": self.final_output,
@@ -282,6 +290,10 @@ class AgentLoop:
         self.llm = llm
         self.budget = budget or AgentBudget()
         self.system_prompt = system_prompt
+        # Computed once, from the text that will actually be sent. A version
+        # constant would be a second source of truth that can be forgotten; this
+        # cannot disagree with the prompt it names.
+        self.prompt_version = prompt_fingerprint(system_prompt)
         self.on_step = on_step
 
         # The spill store holds the full text of observations trimmed by
@@ -311,7 +323,11 @@ class AgentLoop:
         self, goal: str, *, context: str = "", run_id: Optional[str] = None,
         customer_id: Optional[int] = None,
     ) -> AgentRun:
-        run = AgentRun(goal=goal, customer_id=customer_id)
+        run = AgentRun(
+            goal=goal,
+            customer_id=customer_id,
+            prompt_version=self.prompt_version,
+        )
         if run_id is not None:
             run.run_id = run_id
         started = time.monotonic()
@@ -514,14 +530,21 @@ class AgentLoop:
                 temperature=0.2,
                 max_tokens=1500,
             )
-            if timeout is None or timeout <= 0:
+            if timeout is None:
                 reply = await call
             else:
                 # `wait_for` cancels the in-flight request when the budget runs
                 # out, including the SDK's own retry loop -- so a throttled
                 # provider cannot spend three attempts' worth of time on a run
                 # that has 4 seconds left.
-                reply = await asyncio.wait_for(call, timeout=timeout)
+                #
+                # A non-positive budget means "no time left", not "no limit".
+                # Treating it as unbounded (the first version did) would let a
+                # call that starts a microsecond after the deadline run for the
+                # client's full timeout -- a hole in exactly the budget this
+                # parameter exists to enforce. `wait_for` with a timeout of zero
+                # cancels immediately, which is what the budget says.
+                reply = await asyncio.wait_for(call, timeout=max(0.0, timeout))
 
             # Recorded here, not at the end of the run: a round that ends the run
             # -- a final answer, a budget stop, a stall -- is still a round the
@@ -687,5 +710,6 @@ async def run_agent(
         return await loop.run(goal, context=context, run_id=run_id, customer_id=customer_id)
     except AgentError as exc:
         run = AgentRun(goal=goal, run_id=run_id or uuid.uuid4().hex,
-                       status="error", stop_reason=str(exc), error=str(exc))
+                       status="error", stop_reason=str(exc), error=str(exc),
+                       prompt_version=loop.prompt_version)
         return run

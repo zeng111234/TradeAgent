@@ -51,6 +51,10 @@ async def save_run(
     row.stop_reason = run.stop_reason or None
     row.error = run.error
     row.final_output = run.final_output or None
+    # Set, never cleared, for the same reason as ``customer_id``: progress writes
+    # re-save the run and an empty value in a later save must not erase it.
+    if getattr(run, "prompt_version", ""):
+        row.prompt_version = run.prompt_version
     row.rounds = payload["rounds"]
     row.tool_calls = payload["tool_calls"]
     row.prompt_tokens = payload["prompt_tokens"]
@@ -83,6 +87,7 @@ async def start_run(db: AsyncSession, run: AgentRunResult, *, commit: bool = Tru
     row = AgentRun(
         run_id=run.run_id, goal=run.goal, status="running",
         customer_id=getattr(run, "customer_id", None),
+        prompt_version=getattr(run, "prompt_version", "") or None,
     )
     row.trace = json.dumps([], ensure_ascii=False)
     row.rounds = 0

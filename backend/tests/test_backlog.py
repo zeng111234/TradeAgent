@@ -317,3 +317,156 @@ def test_the_cap_and_the_backlog_come_from_the_same_number():
     source = inspect.getsource(customer_debug._backlog)
     assert "DEFAULT_FOLLOW_UP_PLAN_POLICY.max_actions_per_day" in source
     assert DEFAULT_FOLLOW_UP_PLAN_POLICY.max_actions_per_day == 20
+
+
+def test_a_partial_failure_names_the_recipient_and_the_reason(client, db, cleanup, monkeypatch):
+    """The batch response is what a failure list is built from.
+
+    Two drafts, both sends fail. The counts (``sent`` / ``failed``) say how many;
+    ``details`` is the only place that says *which* and *why* -- and the operator
+    UI now renders exactly those fields. If this shape drifts, the UI silently
+    goes back to showing a bare number, which is what it did before.
+    """
+    import asyncio
+    import uuid
+
+    suffix = uuid.uuid4().hex[:8]
+    subject_a = f"Partial A {suffix}"
+    subject_b = f"Partial B {suffix}"
+
+    async def seed():
+        customer_id = await make_customer(db, tag="partial")
+        cleanup(customer_id)
+        await add_email(db, customer_id, status=EmailStatus.PENDING, subject=subject_a)
+        await add_email(db, customer_id, status=EmailStatus.PENDING, subject=subject_b)
+
+    asyncio.run(seed())
+    stub_send(monkeypatch, ok=False)
+
+    body = client.post(SEND_URL, params={"limit": 50}).json()
+
+    ours = {
+        detail["subject"]: detail
+        for detail in body["details"]
+        if detail["subject"] in (subject_a, subject_b)
+    }
+    assert set(ours) == {subject_a, subject_b}, (
+        "a failed draft must appear in details, not only in the count"
+    )
+    for detail in ours.values():
+        assert detail["success"] is False
+        assert detail["to_email"] == "buyer@example.test"
+        assert "simulated failure" in (detail["error"] or "")
+    assert body["failed"] >= 2
+
+
+# --------------------------------------------------------------------------
+# "Sent" must not swallow "never left the process"
+# --------------------------------------------------------------------------
+
+def test_a_simulated_send_is_recorded_as_simulated_not_merely_sent(client, db, cleanup, monkeypatch):
+    """The first question of a "the mail never arrived" investigation.
+
+    Without SMTP credentials ``send_email`` reports success for a message it
+    handed to nobody, and the row landed ``sent`` -- indistinguishable from a
+    real one. Then "sent but not delivered" and "never sent at all" are the
+    same row, and the investigation cannot even start. The status stays
+    ``sent`` (the flows after a send treat it like any other), but the row
+    must carry the difference.
+    """
+    import asyncio
+
+    import app.routers.emails as emails
+
+    async def fake_send(**kwargs):
+        return {"success": True, "simulated": True}
+
+    monkeypatch.setattr(emails, "send_email", fake_send)
+
+    async def seed():
+        customer_id = await make_customer(db, tag="sim")
+        cleanup(customer_id)
+        row = await add_email(db, customer_id, status=EmailStatus.PENDING,
+                              subject="Simulated draft")
+        return row.id
+
+    email_id = asyncio.run(seed())
+    body = client.post(SEND_URL, params={"limit": 10}).json()
+    assert body["sent"] >= 1
+
+    async def load():
+        return (
+            await db.execute(select(EmailLog).where(EmailLog.id == email_id))
+        ).scalar_one()
+
+    row = asyncio.run(load())
+    assert row.status == EmailStatus.SENT, "the follow-up flows still see a send"
+    assert row.simulated is True, "but the row must say it never left the process"
+
+    # ... and the API carries it, so the UI can show it.
+    logs = client.get("/api/v1/emails/logs").json()
+    mine = [entry for entry in logs if entry["id"] == email_id]
+    assert mine, "the sent row must appear in the log list"
+    assert mine[0]["simulated"] is True
+
+
+def test_a_real_send_is_not_marked_simulated(client, db, cleanup, monkeypatch):
+    """The flag must not be sticky in the other direction either."""
+    import asyncio
+
+    import app.routers.emails as emails
+
+    async def fake_send(**kwargs):
+        return {"success": True, "simulated": False}
+
+    monkeypatch.setattr(emails, "send_email", fake_send)
+
+    async def seed():
+        customer_id = await make_customer(db, tag="real")
+        cleanup(customer_id)
+        row = await add_email(db, customer_id, status=EmailStatus.PENDING,
+                              subject="Real draft")
+        return row.id
+
+    email_id = asyncio.run(seed())
+    client.post(SEND_URL, params={"limit": 10})
+
+    async def load():
+        return (
+            await db.execute(select(EmailLog).where(EmailLog.id == email_id))
+        ).scalar_one()
+
+    row = asyncio.run(load())
+    assert row.status == EmailStatus.SENT
+    assert bool(row.simulated) is False
+
+
+# --------------------------------------------------------------------------
+# The tracking pixel is the only passive "was it even seen" signal
+# --------------------------------------------------------------------------
+
+def test_the_tracking_pixel_must_be_absolute_to_ever_fire(monkeypatch):
+    """A relative ``src`` resolves against nothing inside a mail client.
+
+    The pixel was emitted as ``/api/v1/...``: a dead link in every real
+    recipient's client, so opens could never record and the only passive
+    signal between "sent" and "replied" was silent. With a public base URL it
+    points at this service; without one it is still emitted (the HTML stays
+    valid) but cannot work, and the sender says so once.
+    """
+    from app.config import settings
+    from app.utils.email_sender import create_tracking_pixel
+
+    monkeypatch.setattr(settings, "PUBLIC_BASE_URL", "https://mail.example.com")
+    pixel = create_tracking_pixel("abc123")
+    assert 'src="https://mail.example.com/api/v1/emails/track/abc123/pixel"' in pixel
+
+    monkeypatch.setattr(settings, "PUBLIC_BASE_URL", "https://mail.example.com/")
+    pixel = create_tracking_pixel("abc123")
+    assert 'src="https://mail.example.com/api/v1/emails/track/abc123/pixel"' in pixel, (
+        "a trailing slash in the base must not double the path"
+    )
+
+    monkeypatch.setattr(settings, "PUBLIC_BASE_URL", "")
+    pixel = create_tracking_pixel("abc123")
+    assert 'src="/api/v1/emails/track/abc123/pixel"' in pixel

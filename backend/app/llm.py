@@ -44,12 +44,14 @@ into one string -- which is exactly what the fallback labelling exists to avoid.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import Any, Optional
 
 from app.config import settings
 from app.llm_usage import parse_usage, record as record_usage
+from app.timeouts import LLM_TOTAL_SECONDS
 
 logger = logging.getLogger(__name__)
 
@@ -264,7 +266,19 @@ def text_of(response: Any) -> str:
         )
 
     content = getattr(getattr(choice, "message", None), "content", None)
-    if content is None or not content.strip():
+    if content is None:
+        raise LLMBadResponse("provider returned an empty message")
+    if not isinstance(content, str):
+        # Some providers answer with a list of content parts. That is a real
+        # shape (multimodal replies use it) and, for this application, a
+        # contract change: every call site expects text. Name the type, so the
+        # drift is readable -- otherwise it surfaces as an AttributeError from
+        # our own ``.strip()`` and looks like a bug here.
+        raise LLMBadResponse(
+            f"provider returned content as {type(content).__name__}, not text; "
+            "the response shape may have changed"
+        )
+    if not content.strip():
         raise LLMBadResponse("provider returned an empty message")
 
     return content
@@ -293,12 +307,29 @@ async def complete_text(
     messages.append({"role": "user", "content": prompt})
 
     try:
-        response = await client.chat.completions.create(
-            model=settings.OPENAI_MODEL,
-            messages=messages,
-            temperature=temperature,
-            max_tokens=max_tokens,
+        # ``wait_for`` is not belt-and-braces around the client timeout: the SDK
+        # retries *inside* this coroutine, so two 60-second attempts plus backoff
+        # are 120+ seconds, while the browser gives up at 120 and this service
+        # advertises an 80-second logical call. Without a cap the policy in
+        # ``app/timeouts.py`` is a comment, not a budget -- and the extra minute
+        # is spent after the user has already seen a timeout.
+        response = await asyncio.wait_for(
+            client.chat.completions.create(
+                model=settings.OPENAI_MODEL,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            ),
+            timeout=LLM_TOTAL_SECONDS,
         )
+    except (asyncio.TimeoutError, TimeoutError) as exc:
+        # Cancelled by our own budget, not by the provider. It belongs to the
+        # transient family: the same call may work later, and the caller's
+        # fallback reason must say "ran out of time", not "unexpected error".
+        raise LLMTransient(
+            f"the model call exceeded its {LLM_TOTAL_SECONDS:.0f}s budget "
+            "(attempts and retries included)"
+        ) from exc
     except LLMError:
         raise
     except Exception as exc:  # noqa: BLE001 - classified, not swallowed

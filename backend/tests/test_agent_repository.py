@@ -179,3 +179,57 @@ async def test_stored_trace_is_valid_json_text(db, schema, registry):
     run = await _make_run([tool_reply("list_customers", {"stage": "new"}), final("done")], registry)
     row = await save_run(db, run)
     json.loads(row.trace)      # must not raise
+
+
+async def test_a_run_records_which_prompt_produced_it(db, schema, registry):
+    """The row outlives the commit; its prompt fingerprint must not.
+
+    Without this, "did quality drop because we changed the prompt, the model, or
+    the customers?" has no answer in the data.
+    """
+    from app.agent import DEFAULT_SYSTEM_PROMPT
+    from app.agent.prompts import fingerprint
+
+    run = await _make_run([final("done")], registry)
+    assert run.prompt_version == fingerprint(DEFAULT_SYSTEM_PROMPT)
+
+    row = await save_run(db, run)
+    assert row.prompt_version == run.prompt_version
+
+    fetched = await get_run(db, run.run_id)
+    assert fetched is not None
+    assert fetched.prompt_version == run.prompt_version
+
+
+async def test_a_different_prompt_gets_a_different_identity(db, schema, registry):
+    """It fingerprints the prompt that was used, not a constant in the module."""
+    from app.agent import DEFAULT_SYSTEM_PROMPT, run_agent
+
+    plain = await run_agent("x", FakeLLM([final("a")]), registry)
+    terse = await run_agent(
+        "x", FakeLLM([final("b")]), registry,
+        system_prompt=DEFAULT_SYSTEM_PROMPT + "\n\nBe brief.",
+    )
+
+    assert plain.prompt_version != terse.prompt_version
+
+
+async def test_progress_writes_do_not_erase_the_prompt_identity(db, schema, registry):
+    """``save_run`` is called repeatedly while a run is in progress.
+
+    The prompt does not change between those writes. A later save that omitted
+    the field must not null it out.
+    """
+    from dataclasses import replace
+
+    run = await _make_run([final("done")], registry)
+    await save_run(db, run)
+    identity = run.prompt_version
+
+    # A later save of the same run, as the progress callback would do.
+    later = replace(run)
+    later.prompt_version = ""
+    later.status = "running"
+    row = await save_run(db, later)
+
+    assert row.prompt_version == identity

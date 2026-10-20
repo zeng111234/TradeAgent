@@ -39,6 +39,93 @@ SCAN_EXPIRE_DAYS = 7
 MAX_PROSPECTS = 12
 
 
+def _search_payloads(run: Any) -> list[dict]:
+    """The search results the run's trace recorded, in order.
+
+    Derived from the trace rather than stored on the sink: the run already
+    holds every observation, and a second copy could disagree with it.
+    """
+    payloads: list[dict] = []
+    for step in getattr(run, "steps", []) or []:
+        for call in getattr(step, "tool_calls", []) or []:
+            if call.name != "search_prospects" or not call.ok:
+                continue
+            try:
+                payload = json.loads(call.observation)
+            except (TypeError, ValueError):
+                continue
+            if isinstance(payload, dict):
+                payloads.append(payload)
+    return payloads
+
+
+def search_errors_of(run: Any) -> list[str]:
+    """Search failures the run saw, one string per failed query.
+
+    The search tool treats a failed query as data -- it keeps going and reports
+    the error -- so a total outage arrives here as a list of strings, not as a
+    failed run. That is deliberate (one bad query must not abort a scan), but
+    it means the report has to say what happened, or a dead search engine is
+    indistinguishable from a quiet market.
+    """
+    errors: list[str] = []
+    for payload in _search_payloads(run):
+        for error in payload.get("errors") or []:
+            errors.append(str(error))
+    return errors
+
+
+def inspect_errors_of(run: Any) -> list[str]:
+    """Page fetches that failed, as the tool reported them.
+
+    A failed fetch arrives as ``ok=False`` with an ``error`` in the
+    observation -- the agent is told, and is expected to reject the candidate
+    rather than guess. That is right for one dead site; when every site is
+    dead, the run's zero is about the network, not about the companies.
+    """
+    errors: list[str] = []
+    for step in getattr(run, "steps", []) or []:
+        for call in getattr(step, "tool_calls", []) or []:
+            if call.name != "inspect_website":
+                continue
+            try:
+                payload = json.loads(call.observation)
+            except (TypeError, ValueError):
+                continue
+            if isinstance(payload, dict) and payload.get("error"):
+                errors.append(str(payload["error"]))
+    return errors
+
+
+def inspection_failed_entirely(run: Any) -> bool:
+    """True when at least one page was attempted and every attempt failed."""
+    calls = [
+        call
+        for step in getattr(run, "steps", []) or []
+        for call in getattr(step, "tool_calls", []) or []
+        if call.name == "inspect_website"
+    ]
+    if not calls:
+        return False
+    return all(not call.ok for call in calls)
+
+
+def search_failed_entirely(run: Any) -> bool:
+    """True when every search call failed and none returned a candidate.
+
+    Then the run's zero is not a judgement about the market -- it is the
+    absence of any input to judge. Callers that report or exit on zero need to
+    tell the two apart.
+    """
+    payloads = _search_payloads(run)
+    if not payloads:
+        return False
+    return all(
+        (payload.get("count") or 0) == 0 and (payload.get("errors") or [])
+        for payload in payloads
+    )
+
+
 class ProspectSink:
     """Collects evaluated prospects and writes the artefacts the pipeline reads.
 
@@ -210,6 +297,13 @@ class ProspectSink:
     def build_report(self, *, keywords: list[str], countries: list[str],
                      skipped: int, run: Any = None) -> str:
         date = datetime.now().strftime("%Y-%m-%d")
+        search_errors = search_errors_of(run) if run is not None else []
+        inspect_errors = inspect_errors_of(run) if run is not None else []
+        total_search_failure = run is not None and search_failed_entirely(run)
+        total_fetch_failure = (
+            run is not None and inspection_failed_entirely(run)
+            and not total_search_failure
+        )
         lines = [
             f"TradeAgent daily report — {date}",
             f"Keywords : {', '.join(keywords)}",
@@ -220,13 +314,36 @@ class ProspectSink:
         ]
 
         if not self.prospects:
-            lines += [
-                "[no prospects]",
-                "",
-                "Nothing cleared the agent's bar today. The run's reasoning is below —",
-                "if it judged candidates but rejected them all, that is a real answer.",
-                "",
-            ]
+            if total_search_failure:
+                # The zero is an outage, not a verdict. Saying "nothing cleared
+                # the bar" here would be a report about a market nobody looked at.
+                lines += [
+                    "[NO PROSPECTS — THE SEARCH FAILED]",
+                    "",
+                    "Every search query returned an error, so no candidate was ever",
+                    "evaluated. This is not a quiet market; it is a broken one. The",
+                    "errors are listed below, and the run's own account follows.",
+                    "",
+                ]
+            elif total_fetch_failure:
+                # Same distinction one layer down: the search worked, but no
+                # page could be opened, so no company was actually looked at.
+                lines += [
+                    "[NO PROSPECTS — EVERY PAGE FETCH FAILED]",
+                    "",
+                    "Search returned candidates, but every attempt to open one",
+                    "failed, so none could be evaluated. This is a network problem,",
+                    "not a judgement about the market. The errors are listed below.",
+                    "",
+                ]
+            else:
+                lines += [
+                    "[no prospects]",
+                    "",
+                    "Nothing cleared the agent's bar today. The run's reasoning is below —",
+                    "if it judged candidates but rejected them all, that is a real answer.",
+                    "",
+                ]
         else:
             lines.append(f"[{len(self.prospects)} prospect(s)] evaluated and kept by the agent:")
             lines.append("")
@@ -257,6 +374,22 @@ class ProspectSink:
         if self.search_tips:
             lines += ["", "Search notes for next time", "-" * 62]
             lines += [f"  {chunk}" for chunk in _wrap(self.search_tips, 92)]
+
+        if search_errors or inspect_errors:
+            lines += ["", "External failures", "-" * 62]
+            for error in (search_errors + inspect_errors)[:10]:
+                lines.append(f"  {error}")
+            skipped = len(search_errors) + len(inspect_errors) - 10
+            if skipped > 0:
+                lines.append(f"  ... and {skipped} more")
+            if search_errors and not total_search_failure:
+                lines.append(
+                    "  (the run continued on whatever the remaining queries returned)"
+                )
+            if inspect_errors and not total_fetch_failure:
+                lines.append(
+                    "  (a site that could not be opened was rejected, not guessed at)"
+                )
 
         if run is not None:
             lines += ["", "Agent run", "-" * 62]

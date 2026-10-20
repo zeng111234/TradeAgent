@@ -6,10 +6,11 @@ suite runs offline and deterministically.
 from __future__ import annotations
 
 import asyncio
+import time
 
 import pytest
 
-from app.agent import AgentBudget, AgentLoop, ToolRegistry, run_agent, tool
+from app.agent import AgentBudget, AgentLoop, AgentRun, ToolRegistry, run_agent, tool
 from app.agent.loop import AgentError
 from tests.fakes import FakeLLM, final, multi_tool_reply, tool_reply
 
@@ -328,6 +329,60 @@ async def test_time_budget_truncates(registry):
     assert run.status == "truncated"
     assert run.stop_reason == "time budget exceeded"
     assert run.steps == []
+
+
+async def test_a_spent_model_budget_cancels_instead_of_awaiting_unbounded(registry):
+    """A non-positive budget means "no time left", not "no limit".
+
+    The round loop checks the clock before asking, so in practice this window is
+    microseconds wide -- but the enforcement point is ``_ask``, and it used to
+    read ``timeout <= 0`` as "no timeout", which would let a call starting just
+    after the deadline run for the client's whole timeout. That is a hole in the
+    budget this parameter exists to enforce, so the test drives ``_ask`` with a
+    zero and a negative budget directly.
+    """
+
+    class HangingLLM:
+        """Sleeps far longer than any budget in this test."""
+
+        def __init__(self):
+            self.started = False
+            self.cancelled = False
+
+        async def chat(self, *_args, **_kwargs):
+            self.started = True
+            try:
+                await asyncio.sleep(5.0)
+            except asyncio.CancelledError:
+                self.cancelled = True
+                raise
+            return None
+
+    # A spent budget fails fast. With a timeout of zero the coroutine may be
+    # cancelled before its body ever runs, so the assertion is on elapsed time,
+    # not on an in-body flag -- the property is "did not wait", not "got a
+    # CancelledError inside".
+    for budget in (0.0, -3.0):
+        loop = AgentLoop(HangingLLM(), registry)
+        started = time.monotonic()
+
+        with pytest.raises(AgentError, match="exceeded what was left"):
+            await loop._ask(AgentRun(goal="go"), [], 1, timeout=budget)
+
+        elapsed = time.monotonic() - started
+        assert elapsed < 0.5, f"a spent budget took {elapsed:.2f}s to fail"
+
+    # And a call that already started is cancelled when the budget runs out --
+    # this is the ordinary shape, kept here because it is the same code path.
+    llm = HangingLLM()
+    loop = AgentLoop(llm, registry)
+    started = time.monotonic()
+    with pytest.raises(AgentError, match="exceeded what was left"):
+        await loop._ask(AgentRun(goal="go"), [], 1, timeout=0.05)
+
+    assert time.monotonic() - started < 0.5
+    assert llm.started is True
+    assert llm.cancelled is True, "the in-flight call must be cancelled, not abandoned"
 
 
 async def test_time_budget_stops_a_slow_run_mid_way(registry):

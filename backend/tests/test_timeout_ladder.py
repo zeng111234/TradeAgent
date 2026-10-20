@@ -26,7 +26,7 @@ import asyncio
 
 import pytest
 
-from app import timeouts
+from app import llm, timeouts
 
 
 # --------------------------------------------------------------------------
@@ -55,6 +55,35 @@ def test_a_model_call_fits_inside_a_run():
 
 def test_one_tool_call_fits_inside_a_run():
     assert timeouts.TOOL_CALL_SECONDS < timeouts.RUN_MAX_SECONDS
+
+
+@pytest.mark.asyncio
+async def test_the_logical_call_budget_is_enforced_not_only_declared(monkeypatch):
+    """A 60s attempt times the SDK's two retries outlives the 80s policy.
+
+    The number was in ``timeouts.py`` and in this file's own docstring while the
+    call itself had no total: the client would happily spend 120+ seconds, the
+    browser gives up at 120, and the service kept working after the user had
+    already seen a timeout. This pins the cancellation, not the constant.
+    """
+
+    class Slow:
+        class chat:
+            class completions:
+                @staticmethod
+                async def create(**kwargs):
+                    await asyncio.sleep(5)
+
+    monkeypatch.setattr(llm, "get_client", lambda: Slow())
+    monkeypatch.setattr(llm, "LLM_TOTAL_SECONDS", 0.05)
+
+    started = asyncio.get_running_loop().time()
+    with pytest.raises(llm.LLMTransient, match="budget"):
+        await llm.complete_text("hello")
+    elapsed = asyncio.get_running_loop().time() - started
+
+    # A policy number that the call ignores is the failure this test exists for.
+    assert elapsed < 1.0
 
 
 def test_a_subagent_fits_inside_its_parent():

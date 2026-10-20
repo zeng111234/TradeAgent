@@ -224,3 +224,75 @@ def test_the_generate_endpoint_surfaces_a_real_answer(client, monkeypatch):
     assert body["ai_powered"] is True
     assert body["fallback_reason"] is None
     assert body["subject"] == "Thread for you"
+
+
+# --------------------------------------------------------------------------
+# The analysis fallbacks must say WHY they are fallbacks
+# --------------------------------------------------------------------------
+# generate_cold_email already did this. The two analysis paths did not: their
+# fallback payload claimed "No model is configured" no matter what actually
+# happened -- so a rate limit, a truncation, or a plain bug all arrived at the
+# operator as "configure OPENAI_API_KEY", which is the one sentence guaranteed
+# to be wrong when the key is set. The observations in the fallback are fine;
+# the reason attached to them has to be true.
+
+
+async def test_a_website_fallback_says_the_provider_was_rate_limiting(configured):
+    from app.services.agent_service import _ai_analyze_website
+
+    configured(llm.LLMRateLimited("429"))
+    result = await _ai_analyze_website("page text", "Acme - Home", "https://acme.test", "yarn")
+
+    assert result["ai_powered"] is False
+    assert "rate limiting" in result["fallback_reason"]
+    assert "No model is configured" not in result["not_analyzed"], (
+        "the key is configured; telling the operator to configure it hides "
+        "what actually broke"
+    )
+    assert "lead_score" not in result, "a fallback must not fabricate a score"
+
+
+async def test_a_website_fallback_distinguishes_a_bug_from_a_model_failure(configured):
+    from app.services.agent_service import _ai_analyze_website
+
+    configured(TypeError("boom"))
+    result = await _ai_analyze_website("page text", "Acme - Home", "https://acme.test", "yarn")
+
+    assert result["ai_powered"] is False
+    assert "unexpected error" in result["fallback_reason"]
+    assert "TypeError" in result["fallback_reason"]
+    assert "model call failed" not in result["fallback_reason"], (
+        "a bug here must not be reported as a model failure"
+    )
+
+
+async def test_a_website_fallback_names_the_token_cap(configured):
+    from app.services.agent_service import _ai_analyze_website
+
+    configured(_response("{", finish_reason="length"))
+    result = await _ai_analyze_website("page text", "Acme - Home", "https://acme.test", "yarn")
+
+    assert result["ai_powered"] is False
+    assert "token cap" in result["fallback_reason"]
+
+
+def test_the_no_key_website_fallback_says_no_key():
+    from app.services.agent_service import _basic_analyze_website
+
+    result = _basic_analyze_website("import wholesale textile", "Acme", "https://acme.test")
+
+    assert result["fallback_reason"] == "no_api_key"
+    assert "No model is configured" in result["not_analyzed"], (
+        "when the key really is absent, the old sentence is the true one"
+    )
+
+
+async def test_a_reply_fallback_carries_the_reason_too(configured):
+    from app.services.agent_service import analyze_email_reply
+
+    configured(llm.LLMTransient("connection reset"))
+    result = await analyze_email_reply("thanks, please send samples")
+
+    assert result["ai_powered"] is False
+    assert result["judgement_source"] == "keyword_rules"
+    assert "did not recover" in result["fallback_reason"]

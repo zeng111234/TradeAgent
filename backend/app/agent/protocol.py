@@ -184,8 +184,19 @@ class OpenAICompatibleClient:
 
         choice = response.choices[0]
         message = choice.message
+        raw_content = message.content
+        if raw_content is not None and not isinstance(raw_content, str):
+            # Same contract change as in ``app.llm.text_of``: a list of content
+            # parts is a valid provider shape and not one this runtime can
+            # read. Fail with the shape named, not with AttributeError.
+            from app.llm import LLMBadResponse
+
+            raise LLMBadResponse(
+                f"provider returned content as {type(raw_content).__name__}, not "
+                "text; the response shape may have changed"
+            )
         reply = LLMReply(
-            content=(message.content or "").strip(),
+            content=(raw_content or "").strip(),
             finish_reason=getattr(choice, "finish_reason", None),
         )
 

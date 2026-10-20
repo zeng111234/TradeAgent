@@ -323,3 +323,73 @@ async def _purge_emails(db, customer_id: int) -> None:
 
     await db.execute(delete(EmailLog).where(EmailLog.customer_id == customer_id))
     await db.commit()
+
+
+# --------------------------------------------------------------------------
+# When the search provider changes its response shape
+# --------------------------------------------------------------------------
+# The tool reads three keys from each result: href, title, body. A provider
+# that renames them returns a non-empty list that produces zero candidates and
+# zero errors -- an empty market and a renamed field look identical from the
+# outside. Only the raw count tells them apart, so the tool has to report it.
+
+async def test_a_renamed_href_field_is_reported_as_a_shape_change(monkeypatch):
+    import ddgs
+
+    from app.agent.trade_tools import search_prospects
+
+    class RenamedField:
+        def text(self, query, max_results=8):
+            # Results arrived; the field this tool reads is gone.
+            return [
+                {"url": "https://example-textil.example", "title": "Example", "snippet": "x"},
+                {"url": "https://other.example", "title": "Other", "snippet": "y"},
+            ]
+
+    monkeypatch.setattr(ddgs, "DDGS", RenamedField)
+
+    result = await search_prospects(keyword="embroidery thread", country="Germany")
+
+    assert result["count"] == 0
+    shape_errors = [e for e in result["errors"] if "shape may have changed" in e]
+    assert shape_errors, (
+        "a non-empty response with no usable href is a contract change, not an "
+        f"empty market; errors were {result['errors']!r}"
+    )
+    assert "2 result(s)" in shape_errors[0], "the raw count is the evidence"
+
+
+async def test_results_that_are_not_dicts_do_not_crash_the_tool(monkeypatch):
+    """A provider that returns strings must be reported, not AttributeError."""
+    import ddgs
+
+    from app.agent.trade_tools import search_prospects
+
+    class Strings:
+        def text(self, query, max_results=8):
+            return ["https://example-textil.example"]
+
+    monkeypatch.setattr(ddgs, "DDGS", Strings)
+
+    result = await search_prospects(keyword="embroidery thread")
+
+    assert result["count"] == 0
+    assert any("shape may have changed" in e for e in result["errors"])
+
+
+async def test_a_genuinely_empty_search_is_not_reported_as_a_shape_change(monkeypatch):
+    """An empty result list is an empty market -- do not cry drift at it."""
+    import ddgs
+
+    from app.agent.trade_tools import search_prospects
+
+    class Empty:
+        def text(self, query, max_results=8):
+            return []
+
+    monkeypatch.setattr(ddgs, "DDGS", Empty)
+
+    result = await search_prospects(keyword="embroidery thread")
+
+    assert result["count"] == 0
+    assert result["errors"] == []

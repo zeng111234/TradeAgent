@@ -406,3 +406,129 @@ async def test_auto_lead_scanner_propagates_the_unavailable_signal(monkeypatch):
 
     with pytest.raises(AgentUnavailable):
         await svc.auto_lead_scanner(product_keywords="embroidery thread")
+
+
+# --- when the outside world is down ---------------------------------------
+# The search tool treats a failed query as data: it keeps going and reports
+# the error, so a total outage arrives as a successful run with zero
+# prospects. That is the right behaviour for one flaky query and the wrong
+# report for a dead engine -- "nothing cleared the bar" is a claim about the
+# market, and nobody looked. These pin the distinction.
+
+FAILED_SEARCH = {
+    "count": 0,
+    "queries_run": ["embroidery thread importer Germany"],
+    "candidates": [],
+    "errors": ["embroidery thread importer Germany: ConnectError: all nameservers failed"],
+    "note": "Unranked and unscored by design.",
+}
+
+
+async def test_a_dead_search_engine_is_not_reported_as_a_quiet_market(tmp_path):
+    outcome = await _run_with(
+        tmp_path,
+        [
+            call("search_prospects", {"keyword": "embroidery thread", "country": "Germany"}),
+            final("I could not search; no candidates were evaluated."),
+        ],
+        search=FAILED_SEARCH,
+    )
+
+    assert outcome.search_errors, "the trace holds the tool's own error list"
+    assert outcome.search_failed_entirely is True
+    assert "THE SEARCH FAILED" in outcome.report
+    assert "Nothing cleared the agent's bar" not in outcome.report, (
+        "that sentence is a verdict about a market nobody could look at"
+    )
+    assert "all nameservers failed" in outcome.report, (
+        "the cause must reach the human, not just the fact"
+    )
+
+
+async def test_a_partial_search_failure_is_listed_without_crying_outage(tmp_path):
+    from tests.scripted_llm import CANNED_SEARCH
+
+    partial = dict(CANNED_SEARCH)
+    partial["errors"] = ["embroidery thread buyer Germany: timeout"]
+
+    outcome = await _run_with(
+        tmp_path,
+        [
+            call("search_prospects", {"keyword": "embroidery thread", "country": "Germany"}),
+            call("inspect_website", {"url": "https://example-textil.example"}),
+            _save(PROSPECT_A),
+            final("Kept 1; one query timed out."),
+        ],
+        search=partial,
+    )
+
+    assert outcome.prospect_count == 1
+    assert outcome.search_errors == ["embroidery thread buyer Germany: timeout"]
+    assert outcome.search_failed_entirely is False, (
+        "one failed query among successful ones is a footnote, not an outage"
+    )
+    assert "External failures" in outcome.report
+    assert "THE SEARCH FAILED" not in outcome.report
+    assert "the run continued" in outcome.report
+
+
+async def test_a_page_fetch_outage_is_not_a_verdict_on_the_companies(tmp_path):
+    """Search worked, every site was unreachable: the zero is about the network.
+
+    ``inspect_website`` reports a failed fetch as an error the agent must
+    reject rather than guess at -- correct for one dead site. When all of them
+    are dead, "nothing cleared the bar" would be a judgement about companies
+    nobody could open.
+    """
+    outcome = await _run_with(
+        tmp_path,
+        [
+            call("search_prospects", {"keyword": "embroidery thread", "country": "Germany"}),
+            call("inspect_website", {"url": "https://example-textil.example"}),
+            final("Every site was unreachable; nothing was evaluated."),
+        ],
+        inspect={"error": "could not fetch https://example-textil.example: ConnectionError: refused"},
+    )
+
+    assert outcome.inspect_errors, "the trace holds the fetch errors"
+    assert outcome.search_errors == []
+    assert outcome.inspection_failed_entirely is True
+    assert "EVERY PAGE FETCH FAILED" in outcome.report
+    assert "Nothing cleared the agent's bar" not in outcome.report, (
+        "that sentence claims a judgement about companies nobody opened"
+    )
+    assert "ConnectionError" in outcome.report
+
+
+async def test_the_interactive_lookup_says_when_the_engine_was_down(tmp_path):
+    """``POST /agent/scan-leads`` must not return a bare zero on an outage.
+
+    The endpoint's shape is kept for the frontend, but a caller that only reads
+    ``total_found`` would conclude "no buyers in Germany" when the truth is
+    "the search never ran".
+    """
+    import app.agent.scan_runner as runner
+    import app.agent.scan_tools as scan_tools
+
+    real_build = scan_tools.build_scan_registry
+    runner.build_scan_registry = lambda sink, allow_save=True: registry_with_stubs(
+        real_build(sink, allow_save=allow_save), scan_stubs(search=FAILED_SEARCH)
+    )
+    try:
+        result = await find_leads_agentic(
+            product_keywords="embroidery thread",
+            target_country="Germany",
+            max_results=5,
+            llm=ScriptedLLM([
+                call("search_prospects", {"keyword": "embroidery thread"}),
+                final("Search failed; nothing evaluated."),
+            ]),
+        )
+    finally:
+        runner.build_scan_registry = real_build
+
+    assert result["total_found"] == 0
+    errors = result["external_errors"]
+    assert errors["search"], "the failure must travel with the zero"
+    assert errors["search_failed_entirely"] is True
+    assert "all nameservers failed" in errors["search"][0]
