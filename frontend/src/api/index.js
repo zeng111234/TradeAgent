@@ -8,12 +8,47 @@ const api = axios.create({
   },
 })
 
+//: A 422 carries `detail` as a list of `{loc, msg}`; every other error carries
+//: a string. Views read `e.response?.data?.detail || e.message`, so a list was
+//: concatenated into "[object Object]" -- the one case where the message is the
+//: most specific was the one case that showed nothing. The list is kept under
+//: `errors` for callers that want the fields, and `detail` is reduced to one
+//: line for the ones that just display it.
+function describeValidation(detail) {
+  return detail
+    .map((item) => {
+      const loc = Array.isArray(item?.loc) ? item.loc : []
+      const field = loc.length ? loc[loc.length - 1] : ''
+      const msg = item?.msg ?? String(item)
+      return field ? `${field}: ${msg}` : msg
+    })
+    .join('; ')
+}
+
 // Response interceptor
 api.interceptors.response.use(
   (response) => response.data,
   (error) => {
-    const message = error.response?.data?.detail || error.message || 'Request failed'
-    console.error('API Error:', message)
+    const data = error.response?.data
+
+    if (data && Array.isArray(data.detail)) {
+      data.errors = data.detail
+      data.detail = describeValidation(data.detail)
+    }
+
+    const message = data?.detail || error.message || 'Request failed'
+    // `apiCode`, not `code`: axios already uses `code` for transport errors
+    // ("ERR_NETWORK", "ECONNABORTED"), and overwriting it would make a dropped
+    // connection indistinguishable from a server-sent error code.
+    error.apiCode = data?.code
+    error.requestId = data?.request_id
+    error.userMessage = message
+    console.error(
+      'API Error:',
+      data?.code || 'transport',
+      message,
+      data?.request_id ? `(request ${data.request_id})` : ''
+    )
     return Promise.reject(error)
   }
 )
@@ -156,10 +191,23 @@ export const runApi = {
   // What the agent may and may not do. The boundary is published rather than
   // left to be inferred.
   capabilities: () => api.get('/agent/capabilities'),
-  // Synchronous: holds until the run finishes or hits its wall-clock budget.
-  run: (data) => api.post('/agent/run', data),
+  // Background: answers 202 with a run id in milliseconds. The page then polls
+  // `get(runId)` for progress.
+  //
+  // It used to be described here as synchronous, and it was not: the server's
+  // `wait` defaults to false, so the 202 body (run_id, poll, trace_url) was
+  // being rendered as if it were a finished run -- `status: "running"`,
+  // no `steps`, no `tool_sequence`. `wait: true` is not an option for this
+  // page either: the server refuses a wall-clock budget above 100 s on that
+  // path, and the form allows 180.
+  run: (data) => api.post('/agent/run', { ...data, wait: false }),
   list: (params) => api.get('/agent/runs', { params }),
   get: (runId) => api.get(`/agent/runs/${runId}`),
+  // Server-sent events for one run, from a round cursor. Used with `fetch`
+  // rather than axios: axios buffers the body, and a stream is the one response
+  // that must not be buffered.
+  eventsUrl: (runId, after = 0) =>
+    `/api/v1/agent/runs/${encodeURIComponent(runId)}/events?after=${after}`,
   // Standalone HTML page, openable in a new tab without this frontend.
   traceUrl: (runId) => `/api/v1/agent/runs/${runId}/trace.html`,
 }

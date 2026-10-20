@@ -110,11 +110,52 @@
             </el-button>
             <el-button :disabled="running" @click="loadRuns">刷新历史</el-button>
             <span v-if="running" class="hint" style="margin-left: 12px">
-              同步执行，最多等待 {{ maxSeconds }} 秒
+              后台运行，进度每秒刷新（上限 {{ maxSeconds }} 秒）
             </span>
           </el-col>
         </el-row>
       </el-form>
+    </el-card>
+
+    <!-- Live progress. The run is on the server; this card is what the last
+         poll saw. Steps appear as rounds complete, because that is when the
+         loop writes them -- not a character stream. -->
+    <el-card v-if="active" shadow="never" style="margin-bottom: 16px">
+      <template #header>
+        <div style="display: flex; justify-content: space-between; align-items: center">
+          <span style="font-weight: 600">正在运行</span>
+          <div>
+            <el-tag type="warning" size="small" effect="plain">{{ active.status }}</el-tag>
+            <span class="hint" style="margin-left: 8px">
+              第 {{ active.rounds }} 轮 · {{ active.toolCalls }} 次工具调用 · {{ elapsedSeconds }}s
+            </span>
+          </div>
+        </div>
+      </template>
+
+      <el-alert
+        v-if="active.warning"
+        type="warning"
+        :closable="false"
+        show-icon
+        :title="active.warning"
+        style="margin-bottom: 12px"
+      />
+
+      <p class="hint" style="margin: 0 0 8px">
+        下面每一轮都是服务端已经落库的步骤，按完成顺序出现；不是前端推测，也不是逐字流。
+      </p>
+
+      <TraceTimeline v-if="active.steps.length" :steps="active.steps" />
+      <p v-else class="hint" style="margin: 0">
+        等待第一轮完成……（模型正在读目标、决定第一步）
+      </p>
+
+      <p v-if="active.runId" style="margin-top: 12px">
+        <a :href="traceUrl(active.runId)" target="_blank" rel="noopener">
+          在独立轨迹页查看这次运行（轮询卡住时的备用入口）
+        </a>
+      </p>
     </el-card>
 
     <!-- Result of the run just performed -->
@@ -130,7 +171,7 @@
       </template>
       <el-descriptions :column="4" border size="small" style="margin-bottom: 12px">
         <el-descriptions-item label="工具路径">
-          <code>{{ result.tool_sequence.join(' → ') || '(未调用工具)' }}</code>
+          <code>{{ result.tool_sequence?.join(' → ') || '(未调用工具)' }}</code>
         </el-descriptions-item>
         <el-descriptions-item label="轮次 / 调用">
           {{ result.rounds }} / {{ result.tool_calls }}
@@ -241,11 +282,13 @@
 </template>
 
 <script setup>
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 
 import { runApi } from '../api'
 import { renderMarkdown } from '../utils/markdown'
+import { isTerminal, mergeSteps, normaliseRun } from '../utils/runProgress'
+import { readEventStream, reconnectDelay } from '../utils/sse'
 import TraceDiagram from '../components/TraceDiagram.vue'
 import TraceTimeline from '../components/TraceTimeline.vue'
 
@@ -258,6 +301,36 @@ const maxSeconds = ref(180)
 
 const running = ref(false)
 const result = ref(null)
+
+// The run that is still going, and the shape the progress card renders. Kept
+// apart from `result` on purpose: a half-finished trace is not a result, and
+// the result panel assumes fields (tool_sequence, final_output) that only
+// exist once the run is over.
+const active = ref(null)
+const clockTick = ref(0)
+
+//: One second. A run is bounded at 180 s by default and each poll is a single
+//: indexed row read, so this is cheap; faster would not show anything new,
+//: because progress is written once per round, not continuously.
+const POLL_INTERVAL_MS = 1000
+//: Three consecutive failures before the UI stops trying. A dropped Wi-Fi
+//: packet is not "the run failed", and saying so would be a lie about work
+//: that is still happening on the server.
+const MAX_POLL_FAILURES = 5
+//: A run that outlives its own budget by a minute is not going to finish. The
+//: server also sweeps abandoned runs at startup; this only stops the tab.
+const POLL_GRACE_MS = 60_000
+
+const elapsedSeconds = computed(() => {
+  // Read the tick so this recomputes once a second even when nothing else on
+  // the page changes. Local stopwatch, not the server's `elapsed`: the server
+  // updates that only when a round completes, so between rounds it would sit
+  // still and look frozen. Both numbers are honest; they measure different
+  // things.
+  void clockTick.value
+  if (!active.value) return 0
+  return Math.max(0, Math.round((Date.now() - active.value.startedAt) / 1000))
+})
 
 const runs = ref([])
 const statusFilter = ref('')
@@ -296,29 +369,281 @@ async function loadRuns() {
   }
 }
 
+let pollTimer = null
+let clockTimer = null
+let pollFailures = 0
+let streamAbort = null
+
+/** How many failed connection attempts before the page falls back to polling. */
+const MAX_STREAM_ATTEMPTS = 3
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+
+function abortStream() {
+  if (streamAbort) {
+    streamAbort.abort()
+    streamAbort = null
+  }
+}
+
+function startClock() {
+  stopClock()
+  clockTick.value = 0
+  clockTimer = setInterval(() => {
+    clockTick.value += 1
+  }, 1000)
+}
+
+function stopClock() {
+  if (clockTimer) {
+    clearInterval(clockTimer)
+    clockTimer = null
+  }
+}
+
+function stopPolling() {
+  if (pollTimer) {
+    clearTimeout(pollTimer)
+    pollTimer = null
+  }
+}
+
+/**
+ * One poll at a time, scheduled by the previous one finishing.
+ *
+ * ``setInterval`` would keep firing while a slow request is still open, and on
+ * a hotel Wi-Fi that piles up requests the server has to answer after the user
+ * has already left. A recursive ``setTimeout`` is the serial version.
+ */
+function schedulePoll(runId, delay = POLL_INTERVAL_MS) {
+  stopPolling()
+  pollTimer = setTimeout(() => {
+    pollOnce(runId)
+  }, delay)
+}
+
+async function pollOnce(runId) {
+  // The user may have started another run, or left the page between ticks.
+  if (!active.value || active.value.runId !== runId) return
+  // A background tab is not watching. Browsers throttle timers there anyway;
+  // this makes the intent explicit instead of relying on the throttle.
+  if (typeof document !== 'undefined' && document.hidden) {
+    schedulePoll(runId, POLL_INTERVAL_MS * 2)
+    return
+  }
+
+  try {
+    const snapshot = await runApi.get(runId)
+    if (!active.value || active.value.runId !== runId) return
+    pollFailures = 0
+    applySnapshot(snapshot)
+
+    if (isTerminal(snapshot.status)) {
+      finish(snapshot)
+      return
+    }
+
+    // The server bounds a run by `max_seconds`; a minute past that it is not
+    // slow, it is gone. The tab stops asking rather than polling forever.
+    if (Date.now() - active.value.startedAt > active.value.maxSeconds * 1000 + POLL_GRACE_MS) {
+      stopWithWarning(
+        '超过预算一分钟仍未结束，已停止刷新。服务端可能仍在运行，打开独立轨迹页可以看到最新状态。'
+      )
+      return
+    }
+    schedulePoll(runId)
+  } catch (err) {
+    if (err?.response?.status === 404) {
+      stopWithWarning('这次运行已经不在服务端（可能被清理），列表里也没有它的最终结果。')
+      return
+    }
+    pollFailures += 1
+    if (pollFailures >= MAX_POLL_FAILURES) {
+      stopWithWarning(
+        `连续 ${MAX_POLL_FAILURES} 次读不到进度。服务端可能仍在运行，打开独立轨迹页确认。`
+      )
+      return
+    }
+    schedulePoll(runId, POLL_INTERVAL_MS * 3)
+  }
+}
+
+function applySnapshot(snapshot) {
+  const a = active.value
+  if (!a) return
+  a.status = snapshot.status || a.status
+  a.rounds = snapshot.rounds ?? a.rounds
+  a.toolCalls = snapshot.tool_calls ?? a.toolCalls
+  a.stopReason = snapshot.stop_reason || a.stopReason
+  a.steps = mergeSteps(a.steps, snapshot.steps || [])
+}
+
+function finish(snapshot) {
+  stopPolling()
+  stopClock()
+  running.value = false
+  const final = normaliseRun(snapshot)
+  result.value = final
+  active.value = null
+  // "truncated" is a budget stop, not a failure; saying "运行结束" without the
+  // distinction is how a partial answer gets read as a complete one.
+  const label = final.status === 'truncated' ? '到达预算上限（不是失败）' : final.status
+  ElMessage.success(`运行结束：${label}（${final.tool_calls} 次工具调用）`)
+  loadRuns()
+}
+
+/**
+ * Follow a run over SSE, falling back to polling if the stream cannot be held.
+ *
+ * The stream is preferred: one connection instead of one request per second,
+ * and the server pushes when a round completes instead of the client asking
+ * whether one did. The fallback exists because a stream depends on the whole
+ * path -- browser, proxy, load balancer -- agreeing to keep one connection open.
+ * A page that shows nothing when they do not is worse than one that asks again
+ * every second.
+ *
+ * `lastId` is the resume cursor. It is the round number, not a sequence: the
+ * terminal `done` carries the same id as the final `snapshot`, which is why a
+ * reconnect at `after=<last round>` still receives the answer instead of waiting
+ * for a round that will never come.
+ */
+async function watchRun(runId) {
+  let attempt = 0
+  let lastId = 0
+
+  while (active.value && active.value.runId === runId) {
+    const controller = new AbortController()
+    streamAbort = controller
+
+    try {
+      const response = await fetch(runApi.eventsUrl(runId, lastId), {
+        signal: controller.signal,
+        headers: { Accept: 'text/event-stream' },
+      })
+
+      if (response.status === 404) {
+        stopWithWarning('这次运行已经不在服务端（可能被清理）。')
+        return
+      }
+      if (!response.ok) throw new Error(`stream answered ${response.status}`)
+
+      attempt = 0
+      const { droppedPartial } = await readEventStream(response, (frame) => {
+        if (Number.isFinite(frame.id)) lastId = Math.max(lastId, frame.id)
+
+        let payload
+        try {
+          payload = JSON.parse(frame.data)
+        } catch {
+          // A frame whose JSON does not parse is a protocol error, not a run
+          // error. Drop it and let the reconnect re-request from `lastId`:
+          // acting on half a payload is worse than acting on none.
+          return
+        }
+
+        if (frame.event === 'error') {
+          stopWithWarning(payload.message || '这次运行读不到。')
+          return
+        }
+        if (frame.event === 'timeout') {
+          stopWithWarning(payload.message || '连接打开太久，已断开；重新打开即可继续。')
+          return
+        }
+
+        applySnapshot(payload)
+        if (frame.event === 'done') finish(payload)
+      })
+
+      // The server closed without `done`: a restart, a proxy idle timeout, a
+      // cut connection. Resume from where we are; do not restart the run.
+      if (active.value && active.value.runId === runId) {
+        if (droppedPartial) {
+          console.warn('stream ended mid-frame; resuming from round', lastId)
+        }
+        await sleep(reconnectDelay(++attempt))
+      }
+    } catch (err) {
+      if (err?.name === 'AbortError') return
+      attempt += 1
+      if (attempt >= MAX_STREAM_ATTEMPTS) {
+        fallbackToPolling(runId)
+        return
+      }
+      await sleep(reconnectDelay(attempt))
+    } finally {
+      if (streamAbort === controller) streamAbort = null
+    }
+  }
+}
+
+function fallbackToPolling(runId) {
+  if (!active.value || active.value.runId !== runId) return
+  active.value.warning = '实时连接不可用，已改为每秒刷新。'
+  schedulePoll(runId)
+}
+
+function stopWithWarning(message) {
+  abortStream()
+  stopPolling()
+  stopClock()
+  running.value = false
+  if (active.value) active.value.warning = message
+  ElMessage.warning(message)
+}
+
+function showRunError(err) {
+  const detail = err?.response?.data?.detail
+  if (err?.response?.status === 503) {
+    ElMessage.warning(detail || '未配置模型')
+  } else if (err?.response?.status === 429) {
+    ElMessage.warning(detail || '已有运行在跑，等它结束再试')
+  } else {
+    ElMessage.error(detail || err.message || '运行失败')
+  }
+}
+
 async function startRun() {
   if (!goal.value.trim()) return
-  running.value = true
   result.value = null
+  running.value = true
+  active.value = {
+    runId: null,
+    goal: goal.value,
+    startedAt: Date.now(),
+    maxSeconds: maxSeconds.value,
+    status: 'starting',
+    rounds: 0,
+    toolCalls: 0,
+    stopReason: '',
+    steps: [],
+    warning: '',
+  }
+  startClock()
+
   try {
-    result.value = await runApi.run({
+    const started = await runApi.run({
       goal: goal.value,
       context: context.value,
       max_rounds: maxRounds.value,
       max_tool_calls: maxToolCalls.value,
       max_seconds: maxSeconds.value,
     })
-    ElMessage.success(`运行完成：${result.value.status}（${result.value.tool_calls} 次工具调用）`)
-    await loadRuns()
-  } catch (err) {
-    const detail = err?.response?.data?.detail
-    if (err?.response?.status === 503) {
-      ElMessage.warning(detail || '未配置模型')
-    } else {
-      ElMessage.error(detail || err.message || '运行失败')
+    // Defensive: if the endpoint ever answers synchronously, there is nothing
+    // to poll. Today it answers 202 with the id and no steps.
+    if (started.steps) {
+      finish(started)
+      return
     }
-  } finally {
+    if (!active.value) return
+    active.value.runId = started.run_id
+    active.value.status = started.status || 'running'
+    if (started.max_seconds) active.value.maxSeconds = started.max_seconds
+    watchRun(started.run_id)
+  } catch (err) {
+    active.value = null
     running.value = false
+    stopClock()
+    showRunError(err)
   }
 }
 
@@ -339,6 +664,18 @@ function openTracePage(row) {
 onMounted(() => {
   loadCapabilities()
   loadRuns()
+})
+
+// Leaving the page must stop the polling. A `setTimeout` chain holds a closure
+// over the component and keeps calling the API for a tab nobody is looking at,
+// and writing a ref after unmount is the ordinary way a Vue app leaks.
+onUnmounted(() => {
+  abortStream()
+  stopPolling()
+  stopClock()
+  // Dropping the reference ends the `watchRun` loop even if it is currently
+  // waiting out a backoff, where there is no timer this component owns.
+  active.value = null
 })
 </script>
 

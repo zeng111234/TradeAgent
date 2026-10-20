@@ -252,7 +252,12 @@ const handleSave = async () => {
   saving.value = true
   try {
     if (editingCustomer.value) {
-      await customerApi.update(editingCustomer.value.id, form)
+      // Send back the updated_at we loaded: if someone else saved this customer
+      // in the meantime the API refuses with 409 instead of overwriting them.
+      await customerApi.update(editingCustomer.value.id, {
+        ...form,
+        expected_updated_at: editingCustomer.value.updated_at,
+      })
       ElMessage.success('Customer updated')
     } else {
       await customerApi.create(form)
@@ -261,7 +266,7 @@ const handleSave = async () => {
     dialogVisible.value = false
     loadCustomers()
   } catch (e) {
-    ElMessage.error('Failed to save customer')
+    ElMessage.error(e?.response?.data?.detail || 'Failed to save customer')
   } finally {
     saving.value = false
   }
@@ -274,7 +279,11 @@ const handleDelete = async (row) => {
     ElMessage.success('Customer deleted')
     loadCustomers()
   } catch (e) {
-    // User cancelled
+    // User cancelled (a bare reject) or the API refused -- a customer with
+    // sent mail is kept, and the API says why. Show that instead of silence.
+    if (e !== 'cancel' && e !== 'close' && e?.response) {
+      ElMessage.error(e?.response?.data?.detail || 'Failed to delete customer')
+    }
   }
 }
 

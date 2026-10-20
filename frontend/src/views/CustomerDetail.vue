@@ -268,10 +268,17 @@ const loadCustomer = async () => {
 
 const updateStage = async (stage) => {
   try {
-    await customerApi.update(route.params.id, { stage })
+    // Same concurrency guard as the edit dialog: refuse rather than overwrite
+    // a change someone else saved while this page was open.
+    await customerApi.update(route.params.id, {
+      stage,
+      expected_updated_at: customer.value?.updated_at,
+    })
     ElMessage.success('Stage updated')
+    loadCustomer()
   } catch (e) {
-    ElMessage.error('Failed to update stage')
+    ElMessage.error(e?.response?.data?.detail || 'Failed to update stage')
+    loadCustomer()
   }
 }
 

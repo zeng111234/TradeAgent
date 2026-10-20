@@ -25,8 +25,9 @@
           </el-select>
         </el-col>
         <el-col :span="12" style="text-align: right">
-          <el-button type="warning" @click="loadOverdue">
-            <el-icon><Warning /></el-icon> Overdue ({{ overdueCount }})
+          <el-button type="warning" @click="toggleOverdue">
+            <el-icon><Warning /></el-icon>
+            {{ overdueOnly ? 'Show all tasks' : 'Overdue (' + overdueCount + ')' }}
           </el-button>
           <el-button type="success" @click="showDialog()">
             <el-icon><Plus /></el-icon> New Task
@@ -37,7 +38,7 @@
 
     <!-- Task List -->
     <el-card shadow="never">
-      <el-table :data="tasks" stripe v-loading="loading">
+      <el-table :data="visibleTasks" stripe v-loading="loading">
         <el-table-column prop="title" label="Task" min-width="250">
           <template #default="{ row }">
             <span :style="{ textDecoration: row.status === 'completed' ? 'line-through' : 'none', color: row.status === 'completed' ? '#c0c4cc' : '#303133' }">
@@ -75,7 +76,7 @@
           </template>
         </el-table-column>
       </el-table>
-      <el-empty v-if="!tasks.length && !loading" description="No tasks" />
+      <el-empty v-if="!visibleTasks.length && !loading" description="No tasks" />
     </el-card>
 
     <!-- Add/Edit Dialog -->
@@ -126,9 +127,10 @@
 </template>
 
 <script setup>
-import { ref, reactive, watch, onMounted } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { taskApi } from '../api'
+import { failureDetail, patchRow, reconcile, removeRow } from '../utils/optimistic'
 
 const tasks = ref([])
 const loading = ref(false)
@@ -138,6 +140,16 @@ const editing = ref(null)
 const overdueCount = ref(0)
 const filterStatus = ref('')
 const filterPriority = ref('')
+
+// The overdue list used to be written into `tasks`, which replaced the list the
+// user was working in and left no way back to it. It is a *view*, so it gets its
+// own storage and a toggle, and `tasks` is never overwritten by it.
+const overdueOnly = ref(false)
+const overdueTasks = ref([])
+
+const visibleTasks = computed(() =>
+  overdueOnly.value ? overdueTasks.value : tasks.value
+)
 
 const form = reactive({
   title: '',
@@ -168,13 +180,21 @@ const loadTasks = async () => {
   }
 }
 
-const loadOverdue = async () => {
+const toggleOverdue = async () => {
+  if (overdueOnly.value) {
+    overdueOnly.value = false
+    return
+  }
+  loading.value = true
   try {
-    const overdue = await taskApi.getOverdue()
-    tasks.value = overdue
-    ElMessage.info(`${overdue.length} overdue task(s)`)
+    overdueTasks.value = await taskApi.getOverdue()
+    overdueCount.value = overdueTasks.value.length
+    overdueOnly.value = true
+    ElMessage.info(`${overdueTasks.value.length} overdue task(s)`)
   } catch (e) {
-    ElMessage.error('Failed to load overdue tasks')
+    ElMessage.error(failureDetail(e, 'Failed to load overdue tasks'))
+  } finally {
+    loading.value = false
   }
 }
 
@@ -208,29 +228,77 @@ const handleSave = async () => {
     dialogVisible.value = false
     loadTasks()
   } catch (e) {
-    ElMessage.error('Failed to save task')
+    ElMessage.error(failureDetail(e, 'Failed to save task'))
   } finally {
     saving.value = false
   }
 }
 
+/**
+ * Completing is optimistic because it is a one-click action on a row the user is
+ * looking at: waiting 5 ms locally / a few hundred on a phone to see a line
+ * through a task reads as "the click did not register".
+ *
+ * The value written is only `status`. `completed_at` is left to the server --
+ * guessing a timestamp here would be a value the client invented, and rolling it
+ * back later would be undoing something it never knew.
+ */
 const completeTask = async (task) => {
+  // Read before the patch: `isOverdue` looks at `status`, and the optimistic
+  // value has already changed it by the time the request returns.
+  const wasOverdue = isOverdue(task)
+  const list = overdueOnly.value ? overdueTasks.value : tasks.value
+  const { undo } = patchRow(list, task.id, { status: 'completed' })
+
   try {
-    await taskApi.update(task.id, { status: 'completed' })
+    const saved = await taskApi.update(task.id, { status: 'completed' })
+    reconcile(list, saved)
+    // Only after the server agrees does the row stop matching the current view.
+    // Removing it optimistically would need a second undo, and a failure would
+    // have to put the row back *and* restore its status.
+    if (overdueOnly.value || filterStatus.value === 'pending') {
+      removeRow(list, task.id)
+    }
+    if (wasOverdue) overdueCount.value = Math.max(0, overdueCount.value - 1)
     ElMessage.success('Task completed!')
-    loadTasks()
   } catch (e) {
-    ElMessage.error('Failed to complete task')
+    if (e?.response?.status === 404) {
+      // The row is gone on the server. Rolling its status back would leave a
+      // task in the list that does not exist, so the honest move is to drop it.
+      removeRow(list, task.id)
+      ElMessage.info('That task no longer exists')
+      return
+    }
+    if (!undo()) {
+      // A newer write owns this row now; the local value cannot be trusted.
+      await loadTasks()
+    }
+    ElMessage.error(failureDetail(e, 'Failed to complete task'))
   }
 }
 
 const handleDelete = async (task) => {
   try {
     await ElMessageBox.confirm(`Delete task "${task.title}"?`, 'Confirm', { type: 'warning' })
+  } catch (e) {
+    return                              // the human cancelled; nothing was asked of the API
+  }
+
+  const list = overdueOnly.value ? overdueTasks.value : tasks.value
+  const { undo } = removeRow(list, task.id)
+  try {
     await taskApi.delete(task.id)
     ElMessage.success('Task deleted')
-    loadTasks()
-  } catch (e) { /* cancelled */ }
+  } catch (e) {
+    // 404 means the row is gone, which is the outcome the user asked for.
+    // Putting it back would show a task the server does not have.
+    if (e?.response?.status === 404) {
+      ElMessage.info('That task was already deleted')
+      return
+    }
+    undo()
+    ElMessage.error(failureDetail(e, 'Failed to delete task'))
+  }
 }
 
 onMounted(async () => {

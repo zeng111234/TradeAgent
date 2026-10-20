@@ -208,9 +208,31 @@
           <el-table :data="emailLogs" stripe>
             <el-table-column prop="to_email" label="To" min-width="150" />
             <el-table-column prop="subject" label="Subject" min-width="200" show-overflow-tooltip />
-            <el-table-column prop="status" label="Status" width="100">
+            <el-table-column prop="status" label="Status" width="120">
               <template #default="{ row }">
-                <el-tag :type="statusType(row.status)" size="small">{{ row.status }}</el-tag>
+                <!-- A simulated send is status "sent" in the data (the flows
+                     that follow a send treat it like any other), but showing it
+                     as "sent" is how "never left the process" comes to look
+                     like "sent and not arrived". The tag is the difference. -->
+                <el-tooltip
+                  v-if="row.simulated"
+                  content="No SMTP credentials: this message was never handed to a mail server."
+                  placement="top"
+                >
+                  <el-tag type="warning" size="small" effect="plain">simulated</el-tag>
+                </el-tooltip>
+                <el-tag v-else :type="statusType(row.status)" size="small">{{ row.status }}</el-tag>
+              </template>
+            </el-table-column>
+            <!-- The reason, not just the verdict. A row tagged "failed" with no
+                 error reads as "it broke"; the API has carried error_message
+                 all along and this table simply never showed it. -->
+            <el-table-column label="Error" min-width="160">
+              <template #default="{ row }">
+                <el-tooltip v-if="row.error_message" :content="row.error_message" placement="top">
+                  <span style="color: #f56c6c; font-size: 12px">{{ row.error_message }}</span>
+                </el-tooltip>
+                <span v-else style="color: #c0c4cc">-</span>
               </template>
             </el-table-column>
             <el-table-column prop="open_count" label="Opens" width="70" align="center" />
@@ -240,8 +262,9 @@
 
 <script setup>
 import { ref, reactive, onMounted } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage, ElMessageBox, ElNotification } from 'element-plus'
 import { emailApi } from '../api'
+import { failureDetail, removeRow } from '../utils/optimistic'
 
 const sending = ref(false)
 const generating = ref(false)
@@ -485,6 +508,10 @@ const sendAllPending = async () => {
   let sent = 0
   let failed = 0
   let remaining = pendingEmails.value.length
+  // Who failed, and why. The server has always returned this in `details`;
+  // the first version of this handler counted failures and threw the reasons
+  // away, so "3 failed" was the whole story the operator got.
+  const failures = []
 
   sendingAll.value = true
   try {
@@ -493,6 +520,11 @@ const sendAllPending = async () => {
       sent += result.sent || 0
       failed += result.failed || 0
       remaining = result.remaining || 0
+      for (const detail of result.details || []) {
+        if (!detail.success) {
+          failures.push(`${detail.to_email || '(no address)'}: ${detail.error || 'unknown error'}`)
+        }
+      }
       batchProgress.value = `Sent ${sent}${failed ? `, ${failed} failed` : ''} - ${remaining} left`
       if (!result.total || remaining === 0) break
     }
@@ -501,6 +533,18 @@ const sendAllPending = async () => {
       ElMessage.success(`Sent ${sent} emails.${failed > 0 ? ` ${failed} failed.` : ''}`)
     } else {
       ElMessage.info(`No emails sent.${failed > 0 ? ` ${failed} failed.` : ''}`)
+    }
+    if (failures.length) {
+      // Name them, and keep the notice up until it is dismissed: the rows stay
+      // in the table, but an operator who did not watch the progress line needs
+      // to know which recipients were skipped and why.
+      ElNotification({
+        title: `${failed || failures.length} send(s) did not go out`,
+        message: failures.slice(0, 5).join(' · ')
+          + (failures.length > 5 ? ` · …and ${failures.length - 5} more` : ''),
+        type: 'warning',
+        duration: 0,
+      })
     }
     if (remaining > 0) {
       ElMessage.warning(`${remaining} still pending - send again to continue.`)
@@ -519,12 +563,21 @@ const sendAllPending = async () => {
 }
 
 const handleDeletePending = async (email) => {
+  // A draft row is cheap to put back and deleting one is a single click on a
+  // list the user is reading, so it is removed before the round trip.
+  const { undo } = removeRow(pendingEmails.value, email.id)
   try {
     await emailApi.deleteLog(email.id)
-    pendingEmails.value = pendingEmails.value.filter(e => e.id !== email.id)
     ElMessage.success('Draft deleted.')
   } catch (e) {
-    ElMessage.error('Failed to delete draft')
+    // 404 is the requested end state, not a failure: the draft is gone, and
+    // restoring the row would show something the server does not have.
+    if (e?.response?.status === 404) {
+      ElMessage.info('That draft was already deleted')
+      return
+    }
+    undo()
+    ElMessage.error(failureDetail(e, 'Failed to delete draft'))
   }
 }
 

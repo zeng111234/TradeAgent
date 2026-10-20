@@ -171,7 +171,19 @@
           </template>
 
           <div v-if="sendDraftsResult" style="margin-bottom: 12px">
-            <el-alert :title="`Sent ${sendDraftsResult.emails_sent} emails, saved ${sendDraftsResult.crm_saved} to CRM`" type="success" show-icon :closable="true" />
+            <!-- The count alone read as success even when half the batch failed.
+                 The API has always returned emails_failed and send_results; the
+                 banner now says so, and names the ones that did not go out. -->
+            <el-alert
+              :title="`Sent ${sendDraftsResult.emails_sent} emails, saved ${sendDraftsResult.crm_saved} to CRM`
+                + (sendDraftsResult.emails_failed ? `, ${sendDraftsResult.emails_failed} failed` : '')"
+              :type="sendDraftsResult.emails_failed ? 'warning' : 'success'"
+              show-icon :closable="true" />
+            <el-alert
+              v-if="failedDrafts.length"
+              style="margin-top: 8px"
+              type="error" :closable="false" show-icon
+              :title="`Not sent: ${failedDrafts.map(f => `${f.company || f.email}: ${f.error || 'unknown error'}`).join(' · ')}`" />
           </div>
 
           <el-table :data="searchedLeads" stripe size="small" max-height="500">
@@ -612,6 +624,15 @@ const searchedLeads = ref([])
 const selectedLeadIndices = ref(new Set())
 const sendDraftsLoading = ref(false)
 const sendDraftsResult = ref(null)
+
+// Up to five failed sends, named. The response carries one entry per selected
+// lead with its status and error; showing only the total made a half-failed
+// batch look like a clean success.
+const failedDrafts = computed(() =>
+  (sendDraftsResult.value?.send_results || [])
+    .filter(r => r.status === 'failed')
+    .slice(0, 5)
+)
 
 const runSearchNewLeads = async () => {
   scanAndSendLoading.value = true
