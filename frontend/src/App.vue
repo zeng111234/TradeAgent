@@ -41,6 +41,10 @@
           <el-icon><Guide /></el-icon>
           <span>运行轨迹</span>
         </el-menu-item>
+        <el-menu-item index="/quality">
+          <el-icon><TrendCharts /></el-icon>
+          <span>运行质量</span>
+        </el-menu-item>
       </el-menu>
       <div class="sidebar-footer">
         <p>TradeAgent v1.0</p>

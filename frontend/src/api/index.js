@@ -156,6 +156,9 @@ export const analyticsApi = {
   sources: () => api.get('/analytics/sources'),
   countries: () => api.get('/analytics/countries'),
   trends: (months = 6) => api.get('/analytics/trends', { params: { months } }),
+  //: Operational metrics, not business metrics: success rates, job runs and the
+  //: suggestion->reply table. `days` is capped by the endpoint at 90.
+  quality: (days = 14) => api.get('/analytics/quality', { params: { days } }),
 }
 
 // --- AI Agent ---

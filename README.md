@@ -150,13 +150,13 @@ python scripts/demo_agent_run.py             # 两个不同目标 → 两条不�
 
 ```bash
 cd backend
-python -m pytest          # 996 个，约 57 秒，不需要网络
+python -m pytest          # 1007 个，约 51 秒，不需要网络
 ```
 
 ### 运维视图
 
 ```bash
-# 最近 14 天的运行/任务/审批趋势：成功率、P50/P95、stop_reason、跳过的任务
+# 最近 14 天的运行/任务/审批趋势：成功率、P50/P95、stop_code、跳过的任务
 curl 'localhost:8000/api/v1/analytics/quality?days=14'
 
 # 真上游的形状体检：文本 / usage / tool_call 三件事，漂移退出 2，连不上退出 3
@@ -166,6 +166,12 @@ python scripts/contract_canary.py
 `/analytics/quality` 读的是已有的 `agent_runs` / `job_runs` / `email_logs`，**不读 trace**；
 某天没有运行会显示为 0，而不是从序列里消失。它度量的是"系统有没有变差"，不是"答案好不好"——
 后者这个仓库没有 rubric，也没有假装有。
+
+`closed_loop` 那一段回答的是另一个问题：**系统建议发的那封邮件，有没有被回复**。
+`email_logs.suggestion_kind` / `suggestion_attempt` 在发送时写入（迁移 0010），报表按
+建议类型和"第几次跟进"分组；没有来源的邮件（人工撰写、agent 草稿、早于该字段的旧邮件）
+单独记作 `unattributed` 并给出 `coverage`，模拟发送与退信计入 `excluded` 而不是分母。
+前端入口是 `/quality`。
 
 ## 环境变量
 

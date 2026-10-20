@@ -53,6 +53,12 @@ const routes = [
     component: () => import('../views/Runs.vue'),
     meta: { title: '运行轨迹', icon: 'Guide' },
   },
+  {
+    path: '/quality',
+    name: 'Quality',
+    component: () => import('../views/Quality.vue'),
+    meta: { title: '运行质量', icon: 'TrendCharts' },
+  },
 ]
 
 const router = createRouter({

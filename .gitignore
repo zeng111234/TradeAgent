@@ -34,6 +34,8 @@ artifacts/interview-*.md
 artifacts/interview-*.json
 # Contract-canary history (reproduce with scripts/contract_canary.py; CI uploads it)
 artifacts/contract_canary/
+# Quality-page screenshot (reproduce by opening /quality with the dev server)
+artifacts/quality-page.png
 
 # Agent work logs. These are this machine's session notes, not project state:
 # useful locally, noise in a clone, and they name paths outside the repo.
