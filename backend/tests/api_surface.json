@@ -664,7 +664,7 @@
       "422": "validation_error"
     }
   },
-  "GET /api/v1/customers/": {
+  "GET /api/v1/customers": {
     "parameters": [
       {
         "in": "query",
@@ -1973,7 +1973,7 @@
       "200": "untyped"
     }
   },
-  "GET /api/v1/tasks/": {
+  "GET /api/v1/tasks": {
     "parameters": [
       {
         "in": "query",
@@ -2730,7 +2730,7 @@
       "422": "validation_error"
     }
   },
-  "POST /api/v1/customers/": {
+  "POST /api/v1/customers": {
     "parameters": [
       {
         "in": "header",
@@ -4201,7 +4201,7 @@
       "422": "validation_error"
     }
   },
-  "POST /api/v1/tasks/": {
+  "POST /api/v1/tasks": {
     "parameters": [
       {
         "in": "header",

@@ -15,7 +15,9 @@ from app.services.idempotency import clean_key, create_once
 router = APIRouter(prefix="/tasks", tags=["Tasks"])
 
 
-@router.post("/", response_model=TaskResponse, status_code=201)
+#: No trailing slash: see the note in ``customers.py``. The client calls
+#: ``/tasks``, and a redirect there escapes the dev proxy and fails CORS.
+@router.post("", response_model=TaskResponse, status_code=201)
 async def create_task(
     data: TaskCreate,
     response: Response,
@@ -43,7 +45,7 @@ async def create_task(
     return task
 
 
-@router.get("/", response_model=list[TaskResponse])
+@router.get("", response_model=list[TaskResponse])
 async def list_tasks(
     status: str | None = None,
     customer_id: int | None = None,

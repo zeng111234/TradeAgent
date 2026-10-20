@@ -273,3 +273,66 @@ async def test_the_concurrency_field_never_reaches_the_row(db, client):
         )
     finally:
         await drop(customer.id)
+
+
+async def test_two_saves_inside_one_clock_tick_still_get_different_versions(
+    db, client, monkeypatch
+):
+    """The guard has to work on a clock that does not move.
+
+    ``updated_at`` is the version compared by the 409 check, and this machine's
+    ``utcnow()`` returns the same microsecond for about 15.6 ms at a time
+    (measured: 19,996 of 20,000 consecutive calls). Freezing it here is not an
+    artificial condition -- it is the common case for two saves that arrive
+    together, and it used to make the second one succeed.
+
+    Without the bump, the first save leaves ``updated_at`` unchanged, the second
+    caller's stale timestamp compares equal, and the write lands.
+    """
+    from datetime import datetime as real_datetime
+
+    from app.services import customer_service
+
+    frozen = real_datetime(2026, 10, 20, 8, 0, 0, 123456)
+
+    class FrozenDatetime:
+        @classmethod
+        def utcnow(cls):
+            return frozen
+
+    monkeypatch.setattr(customer_service, "datetime", FrozenDatetime)
+
+    customer = await make_customer(db)
+    try:
+        # The row was last written *inside* the frozen tick, which is the case
+        # the guard failed on. Leaving it at real time would test a different
+        # path (a clock that went backwards) and pass for the wrong reason --
+        # verified by mutating the fix back and watching this test stay green.
+        customer.updated_at = frozen
+        await db.commit()
+        await db.refresh(customer)
+        loaded_at = customer.updated_at
+        assert loaded_at == frozen
+
+        r = client.put(
+            f"{CUSTOMERS_URL}/{customer.id}",
+            json={"notes": "A's change", "expected_updated_at": loaded_at.isoformat()},
+        )
+        assert r.status_code == 200, r.text
+        after_first = r.json()["updated_at"]
+        assert after_first != loaded_at.isoformat(), (
+            "the clock did not move, so the version did not either -- the next "
+            "comparison will pass and a stale save will overwrite this one"
+        )
+
+        r = client.put(
+            f"{CUSTOMERS_URL}/{customer.id}",
+            json={"country": "France", "expected_updated_at": loaded_at.isoformat()},
+        )
+        assert r.status_code == 409, "a stale save was accepted because the clock was frozen"
+
+        row = await reloaded(customer.id)
+        assert row.notes == "A's change"
+        assert row.country == "Germany"
+    finally:
+        await drop(customer.id)

@@ -18,7 +18,17 @@ from app.services.idempotency import clean_key, create_once
 router = APIRouter(prefix="/customers", tags=["Customers"])
 
 
-@router.post("/", response_model=CustomerResponse, status_code=201)
+#: No trailing slash, on purpose. The frontend's axios instance has
+#: ``baseURL='/api/v1'`` and calls ``/customers``, so a router registered at
+#: ``/customers/`` makes every list request a 307 first. Behind the dev proxy
+#: that redirect is worse than a round trip: ``changeOrigin`` rewrites the Host,
+#: FastAPI answers with an absolute ``http://localhost:8000/...``, and the
+#: browser then leaves the proxy's origin -- the request becomes a cross-origin
+#: call to a host that sends no CORS headers. Measured: the customers and tasks
+#: pages failed to load entirely while every other page worked. Registering the
+#: URL the client actually uses removes the redirect instead of asking every
+#: caller to remember a slash; ``/customers/`` still works via a 307.
+@router.post("", response_model=CustomerResponse, status_code=201)
 async def create_customer(
     data: CustomerCreate,
     response: Response,
@@ -44,7 +54,7 @@ async def create_customer(
     return customer
 
 
-@router.get("/", response_model=CustomerListResponse)
+@router.get("", response_model=CustomerListResponse)
 async def list_customers(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),

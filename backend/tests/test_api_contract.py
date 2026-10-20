@@ -53,7 +53,7 @@ EXPECTED_ROUTES: dict[str, set[str]] = {
     "/api/v1/analytics/sources": {"get"},
     "/api/v1/analytics/trends": {"get"},
     # --- customers router (5) ---
-    "/api/v1/customers/": {"get", "post"},
+    "/api/v1/customers": {"get", "post"},
     "/api/v1/customers/import": {"post"},
     "/api/v1/customers/{customer_id}": {"get", "put", "delete"},
     "/api/v1/customers/{customer_id}/contacts": {"get", "post"},
@@ -84,7 +84,7 @@ EXPECTED_ROUTES: dict[str, set[str]] = {
     "/api/v1/scheduler/history": {"get"},
     "/api/v1/scheduler/run-daily": {"post"},
     # --- tasks router (3) ---
-    "/api/v1/tasks/": {"get", "post"},
+    "/api/v1/tasks": {"get", "post"},
     "/api/v1/tasks/overdue/list": {"get"},
     "/api/v1/tasks/{task_id}": {"get", "put", "delete"},
     # --- usage (1) ---
@@ -123,6 +123,49 @@ def test_no_route_removed_and_no_method_lost():
         assert path in live, f"route removed: {path}"
         missing = methods - live[path]
         assert not missing, f"{path} lost methods: {sorted(missing)}"
+
+
+def test_the_collection_urls_the_client_uses_answer_directly():
+    """Not 307. A redirect here is not a wasted round trip; it is a broken page.
+
+    Measured in a real browser: ``GET /api/v1/customers`` (what the axios
+    instance builds from ``baseURL='/api/v1'`` plus ``/customers``) was a 307 to
+    ``/api/v1/customers/``. Behind the Vite proxy the redirect target is written
+    as an absolute ``http://localhost:8000/...`` because ``changeOrigin``
+    rewrites Host; the browser follows it off the proxy's origin, gets no CORS
+    headers from the API, and the customers and tasks pages render empty while
+    every other page works. The cause is an URL shape, the symptom is an auth
+    error, and no unit test could see it because every view is mocked.
+    """
+    from fastapi.testclient import TestClient
+    from app.main import app
+
+    with TestClient(app) as c:
+        for url in ("/api/v1/customers", "/api/v1/tasks"):
+            r = c.get(url, follow_redirects=False)
+            assert r.status_code == 200, (
+                f"{url} answered {r.status_code} "
+                f"(location: {r.headers.get('location')!r}) instead of 200 -- "
+                "the client's own URL must be the canonical one, not a redirect"
+            )
+
+
+def test_no_route_is_registered_with_a_trailing_slash():
+    """The shape rule behind the test above, applied to routes added later.
+
+    A collection root registered at ``"/"`` reads like a detail -- REST style
+    even suggests it -- and quietly turns every call into a redirect. The rule
+    is one line, so a future route does not have to re-discover the browser
+    behaviour that made this fail.
+    """
+    live = _live_routes()
+    offenders = sorted(p for p in live if p != "/" and p.endswith("/"))
+    assert not offenders, (
+        f"routes registered with a trailing slash: {offenders}\n"
+        "register the collection root as \"\" so the URL a client builds from "
+        "`baseURL + '/customers'` answers directly; `/customers/` still works "
+        "through a redirect, but that redirect escapes the dev proxy"
+    )
 
 
 def test_root_and_health_contract():

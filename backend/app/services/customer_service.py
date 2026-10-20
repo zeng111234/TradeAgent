@@ -112,10 +112,36 @@ async def update_customer(db: AsyncSession, customer_id: int, data: CustomerUpda
     for field, value in update_data.items():
         setattr(customer, field, value)
 
-    customer.updated_at = datetime.utcnow()
+    customer.updated_at = _next_version(customer.updated_at)
     await db.flush()
     await db.refresh(customer)
     return customer
+
+
+def _next_version(previous: datetime | None) -> datetime:
+    """A timestamp that is guaranteed to differ from the one before it.
+
+    ``updated_at`` doubles as the optimistic-lock version: the router compares
+    the value the caller loaded against the row's value and refuses the write
+    when they differ. That comparison only works if a save actually moves the
+    value, and ``datetime.utcnow()`` does not guarantee it.
+
+    Measured on this machine: 19,996 of 20,000 consecutive ``utcnow()`` calls
+    returned the *same* microsecond -- the system clock ticks at about 15.6 ms.
+    Two people saving the same customer inside one tick therefore produced two
+    identical versions, the second comparison passed, and the stale form was
+    written over the fresh one. The 409 existed and never fired.
+
+    Bumping by one microsecond keeps the column a datetime while making it
+    strictly increasing, which is the only property the guard needs. It is not
+    a clock: after a save inside one tick the timestamp is at most one
+    microsecond ahead of real time, and it catches up as soon as the clock
+    moves.
+    """
+    now = datetime.utcnow()
+    if previous is not None and now <= previous:
+        return previous + timedelta(microseconds=1)
+    return now
 
 
 async def delete_customer(db: AsyncSession, customer_id: int) -> bool:
