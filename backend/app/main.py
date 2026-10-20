@@ -19,7 +19,16 @@ from app.errors import (
     validation_error_response,
 )
 from app.errors import error_response as build_error_response
-from app.routers import customers, emails, tasks, analytics, agent, agent_runs, usage
+from app.routers import (
+    agent,
+    agent_runs,
+    analytics,
+    customers,
+    diagnostics,
+    emails,
+    tasks,
+    usage,
+)
 from app.scheduler import start_scheduler, stop_scheduler, get_job_status, trigger_daily_routine
 from app.timeouts import READY_TIMEOUT_SECONDS
 
@@ -206,6 +215,8 @@ app.include_router(agent.router, prefix="/api/v1")
 app.include_router(agent_runs.router, prefix="/api/v1")
 # What the models have cost, by scope. Read-only view of the in-process ledger.
 app.include_router(usage.router, prefix="/api/v1")
+# Circuit states, run slots and pool occupancy. Read-only, changes nothing.
+app.include_router(diagnostics.router, prefix="/api/v1")
 
 
 @app.get("/")

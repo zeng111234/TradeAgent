@@ -14,7 +14,7 @@ from __future__ import annotations
 # 55 paths / 67 operations, and ``test_route_count_unchanged`` is what keeps
 # that number honest: the declared table and the live app must agree exactly.
 # The operational quality report (GET /analytics/quality) brings it to
-# 56 paths / 68 operations.
+# 57 paths / 69 operations.
 EXPECTED_ROUTES: dict[str, set[str]] = {
     "/": {"get"},
     "/health": {"get"},
@@ -92,6 +92,10 @@ EXPECTED_ROUTES: dict[str, set[str]] = {
     # by scope, which no endpoint reported before -- the eight service-layer call
     # sites store no run, so the ledger is the only place their cost exists.
     "/api/v1/usage": {"get"},
+    # --- diagnostics (1) ---
+    # Read-only: circuit state and counters, run slots, pool occupancy. No
+    # request body, no side effect, and nothing it returns had an endpoint.
+    "/api/v1/diagnostics": {"get"},
 }
 
 

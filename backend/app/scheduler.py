@@ -2,7 +2,7 @@
 
 Uses APScheduler to run workflows automatically:
 - Every day at 22:00 UTC (06:00 Asia/Shanghai): daily morning routine
-- Every 6 hours: check for at-risk customers
+- Four times a day at 01:07/07:07/13:07/19:07 UTC: check for at-risk customers
 - On-demand: manual trigger via API
 
 The scheduler starts with the FastAPI app and runs in the background.
@@ -47,6 +47,28 @@ CHURN_CHECK_JOB = "churn_check"
 #: record says when it started.
 MISFIRE_GRACE_SECONDS = 3600
 
+#: When the churn check runs, in UTC. Four fixed hours rather than an interval.
+#:
+#: An ``interval`` trigger's phase is the moment the process started: deploy at
+#: 14:32 and every future run moves to 20:32, 02:32, 08:32. Worse, some start
+#: times put a fire exactly on 22:00 UTC -- the same minute as the morning
+#: report -- and others put one at 10:00, which is the edge of the peak window
+#: priced in R57: one minute later and the same work costs twice as much.
+#: Neither should depend on when somebody happened to restart the service.
+#:
+#: 01/07/13/19 UTC is 09:00/15:00/21:00/03:00 in Asia/Shanghai: the same four
+#: checks per day, at hours that are never 22 and never on the boundary.
+CHURN_CHECK_HOURS = "1,7,13,19"
+
+#: Off the hour, so this job does not queue behind everything else that fires at
+#: :00, and so a log line's timestamp is enough to tell which job it was.
+CHURN_CHECK_MINUTE = 7
+
+#: Up to five minutes of spread. Two instances (a rolling deploy, a second
+#: worker) would otherwise hit the same tables in the same second; the claim in
+#: ``job_guard`` makes that harmless but not free.
+CHURN_CHECK_JITTER_SECONDS = 300
+
 
 def get_scheduler():
     """Get or create the scheduler instance."""
@@ -56,6 +78,14 @@ def get_scheduler():
         from apscheduler.jobstores.memory import MemoryJobStore
 
         _scheduler = AsyncIOScheduler(
+            # Pinned, not inherited. Without this APScheduler uses the host's
+            # local zone, so ``hour=22`` meant 22:00 **Asia/Shanghai** on a
+            # developer's machine and 22:00 **UTC** on a server -- a six-hour
+            # difference in when the daily report runs, decided by the box.
+            # Measured on this repository's dev machine: the scheduler reported
+            # ``Asia/Shanghai``, so the "morning" report fired at 22:00 Beijing
+            # (14:00 UTC), not at 06:00 Beijing as every comment claimed.
+            timezone="UTC",
             jobstores={"default": MemoryJobStore()},
             job_defaults={
                 "coalesce": True,
@@ -66,32 +96,48 @@ def get_scheduler():
     return _scheduler
 
 
+def register_jobs(scheduler) -> None:
+    """Add every job to the scheduler, without starting it.
+
+    Split out from :func:`start_scheduler` so the schedule itself can be
+    asserted: a ``CronTrigger``'s fields and next fire time are readable on a
+    scheduler that has never run, while starting one inside a unit test would
+    bring the real jobs into the test session.
+    """
+    if scheduler.get_jobs():
+        return
+
+    # Daily morning routine at 6:00 AM (Asia/Shanghai = UTC+8, so 22:00 UTC
+    # previous day). The scheduler's timezone is pinned to UTC above; without
+    # that pin this comment was true only on a UTC host.
+    scheduler.add_job(
+        _run_daily_routine,
+        "cron",
+        hour=22,
+        minute=0,
+        id=DAILY_ROUTINE_JOB,
+        name="Daily Morning Report",
+        replace_existing=True,
+    )
+
+    # Churn check four times a day, on a fixed wall clock (see
+    # CHURN_CHECK_HOURS for why it is not an interval).
+    scheduler.add_job(
+        _run_churn_check,
+        "cron",
+        hour=CHURN_CHECK_HOURS,
+        minute=CHURN_CHECK_MINUTE,
+        jitter=CHURN_CHECK_JITTER_SECONDS,
+        id=CHURN_CHECK_JOB,
+        name="Customer Churn Check",
+        replace_existing=True,
+    )
+
+
 def start_scheduler():
     """Start the scheduler with all registered jobs."""
     scheduler = get_scheduler()
-
-    # Only add jobs if not already added
-    if not scheduler.get_jobs():
-        # Daily morning routine at 6:00 AM (Asia/Shanghai = UTC+8, so 22:00 UTC previous day)
-        scheduler.add_job(
-            _run_daily_routine,
-            "cron",
-            hour=22,
-            minute=0,
-            id=DAILY_ROUTINE_JOB,
-            name="Daily Morning Report",
-            replace_existing=True,
-        )
-
-        # Churn check every 6 hours
-        scheduler.add_job(
-            _run_churn_check,
-            "interval",
-            hours=6,
-            id=CHURN_CHECK_JOB,
-            name="Customer Churn Check",
-            replace_existing=True,
-        )
+    register_jobs(scheduler)
 
     scheduler.start()
     logger.info(f"Scheduler started with {len(scheduler.get_jobs())} jobs")

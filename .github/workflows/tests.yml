@@ -1,9 +1,11 @@
 # The suite is the largest asset in this repository and nothing was running it.
 #
-# Two jobs, because the two halves fail for different reasons and a red build
+# Three jobs, because the three halves fail for different reasons and a red build
 # should say which half. The backend job also re-runs the two snapshot scripts:
 # a snapshot that has drifted is a contract change nobody decided on, and the
-# test that compares it only helps if something runs the test.
+# test that compares it only helps if something runs the test. The browser job
+# drives the three flows that were reported as bugs -- both times the function
+# was right and the wiring was wrong, which no unit test can see.
 name: Tests
 
 on:
@@ -87,3 +89,34 @@ jobs:
 
       - name: Build
         run: npm run build
+
+  browser:
+    name: browser flows
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Install the driver and a browser
+        # Not a dependency of the app: this is the only suite that needs a
+        # Chromium, and `--no-save` keeps package.json and the lock honest.
+        run: |
+          npm install --no-save playwright-core@1.63.0
+          node node_modules/playwright-core/cli.js install --with-deps chromium
+
+      - name: Flows
+        # The runner starts vite itself, intercepts every /api/v1 call, and
+        # needs no backend and no credentials.
+        run: npm run test:browser

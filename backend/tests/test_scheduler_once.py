@@ -317,3 +317,119 @@ def test_the_status_endpoint_reports_what_happened(client, db, scheduled_job, mo
     assert scheduler.DAILY_ROUTINE_JOB in body
     assert body[scheduler.DAILY_ROUTINE_JOB], "no history recorded"
     assert body[scheduler.DAILY_ROUTINE_JOB][0]["status"] == SUCCEEDED
+
+
+# --------------------------------------------------------------------------
+# When the jobs run
+# --------------------------------------------------------------------------
+
+def _registered():
+    """The scheduler with its jobs added, but never started.
+
+    A started ``AsyncIOScheduler`` needs a running event loop, and starting one
+    here would let the real cron jobs fire into the test session. Triggers are
+    readable without any of that.
+    """
+    import app.scheduler as scheduler
+
+    built = scheduler.get_scheduler()
+    scheduler.register_jobs(built)
+    return built, {job.id: job for job in built.get_jobs()}
+
+
+def _next_fires(trigger, start, count):
+    fires, previous, now = [], None, start
+    for _ in range(count):
+        nxt = trigger.get_next_fire_time(previous, now)
+        fires.append(nxt)
+        previous, now = nxt, nxt
+    return fires
+
+
+def test_the_scheduler_runs_on_utc_not_on_the_hosts_clock():
+    """Measured before this was pinned: the scheduler reported ``Asia/Shanghai``.
+
+    ``hour=22`` therefore meant 22:00 Beijing on this machine and 22:00 UTC on a
+    server -- the "morning" report landing at 10pm local for anyone developing
+    outside UTC. The intent was always 06:00 Asia/Shanghai, which is 22:00 UTC;
+    pinning the timezone is what makes the comment true everywhere.
+    """
+    from datetime import datetime, timezone
+
+    import app.scheduler as scheduler
+
+    built, jobs = _registered()
+    try:
+        assert str(built.timezone) == "UTC", (
+            f"the scheduler follows the host clock ({built.timezone}); every cron "
+            "hour in this file would mean something different on each machine"
+        )
+
+        daily = jobs[scheduler.DAILY_ROUTINE_JOB]
+        # From 12:00 UTC the next morning report is 22:00 UTC the same day.
+        nxt = daily.trigger.get_next_fire_time(
+            None, datetime(2026, 10, 20, 12, 0, tzinfo=timezone.utc)
+        )
+        assert (nxt.hour, nxt.minute, nxt.utcoffset().total_seconds()) == (22, 0, 0), (
+            f"the morning routine fires at {nxt} -- 22:00 UTC is 06:00 in Shanghai"
+        )
+    finally:
+        scheduler._scheduler = None
+
+
+def test_the_churn_check_runs_on_four_fixed_hours_not_an_interval():
+    """An interval's phase is the moment the process started.
+
+    Deploy at 14:32 and every future run moves with it; some start times put a
+    fire on 22:00 UTC -- the same minute as the morning report -- and others on
+    the edge of the peak window priced in R57. Fixed hours are the same work
+    with a phase that does not depend on when somebody restarted the service.
+    """
+    from datetime import datetime, timezone
+
+    from apscheduler.triggers.cron import CronTrigger
+    from apscheduler.triggers.interval import IntervalTrigger
+
+    import app.scheduler as scheduler
+
+    built, jobs = _registered()
+    try:
+        churn = jobs[scheduler.CHURN_CHECK_JOB]
+
+        assert isinstance(churn.trigger, CronTrigger), f"still {type(churn.trigger).__name__}"
+        assert not isinstance(churn.trigger, IntervalTrigger)
+
+        fields = {field.name: str(field) for field in churn.trigger.fields}
+        assert fields["hour"] == "1,7,13,19"
+        assert fields["minute"] == "7"
+
+        fires = _next_fires(
+            churn.trigger, datetime(2026, 10, 20, 0, 0, tzinfo=timezone.utc), 8
+        )
+        hours = [fire.hour for fire in fires]
+        assert set(hours) <= {1, 7, 13, 19}, hours
+        assert 22 not in hours, "a churn check is scheduled on top of the morning report"
+        # Jitter may move the minute, never the hour.
+        assert all(fire.minute in range(7, 13) for fire in fires), fires
+    finally:
+        scheduler._scheduler = None
+
+
+def test_the_two_jobs_never_share_a_slot():
+    """The property that mattered: no churn check at the same time as the report."""
+    import app.scheduler as scheduler
+
+    built, jobs = _registered()
+    try:
+        def hours(job):
+            field = next(f for f in job.trigger.fields if f.name == "hour")
+            return set(str(field).split(","))
+
+        daily = hours(jobs[scheduler.DAILY_ROUTINE_JOB])
+        churn = hours(jobs[scheduler.CHURN_CHECK_JOB])
+
+        assert daily == {"22"}, daily
+        assert churn == {"1", "7", "13", "19"}, churn
+        assert not (daily & churn)
+    finally:
+        scheduler._scheduler = None

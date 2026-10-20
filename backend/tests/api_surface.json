@@ -1553,6 +1553,11 @@
       "422": "validation_error"
     }
   },
+  "GET /api/v1/diagnostics": {
+    "responses": {
+      "200": "untyped"
+    }
+  },
   "GET /api/v1/emails/logs": {
     "parameters": [
       {

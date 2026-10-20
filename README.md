@@ -148,9 +148,28 @@ python scripts/demo_agent_run.py             # 两个不同目标 → 两条不�
 
 ### 测试
 
+三层，各自需要的东西不同，所以分开跑：
+
 ```bash
 cd backend
-python -m pytest          # 1007 个，约 51 秒，不需要网络
+python -m pytest                    # 1015 个，约 60 秒，不需要网络
+
+cd frontend
+npm test                            # 41 个纯函数用例（node --test，零依赖）
+npm run build
+
+npm run test:browser                # 4 条真实浏览器流程（需要 playwright-core + 一个 Chromium）
+```
+
+`test:browser` 自己起 vite、拦截所有 `/api/v1` 请求，**不需要后端，不需要凭据**。
+它覆盖的是三件曾经真实发生、单元测试看不见的事：完成任务失败后状态回滚、
+SSE 连不上时降级为轮询、断流后用 `after=<最后一轮>` 续传（外加质量页不把"没有样本"画成 `0%`）。
+没装依赖时：
+
+```bash
+cd frontend
+npm install --no-save playwright-core@1.63.0
+node node_modules/playwright-core/cli.js install chromium
 ```
 
 ### 运维视图
@@ -159,8 +178,14 @@ python -m pytest          # 1007 个，约 51 秒，不需要网络
 # 最近 14 天的运行/任务/审批趋势：成功率、P50/P95、stop_code、跳过的任务
 curl 'localhost:8000/api/v1/analytics/quality?days=14'
 
+# 熔断器的当前状态与计数：开过几次、拒过几次、放行过几个试探
+curl 'localhost:8000/api/v1/diagnostics'
+
 # 真上游的形状体检：文本 / usage / tool_call 三件事，漂移退出 2，连不上退出 3
 python scripts/contract_canary.py
+
+# 熔断状态机的故障注入：假时钟 + 假 provider，不烧 token
+python scripts/circuit_probe.py
 ```
 
 `/analytics/quality` 读的是已有的 `agent_runs` / `job_runs` / `email_logs`，**不读 trace**；

@@ -89,6 +89,18 @@ class _State:
     last_error: str = ""
     last_failure_at: Optional[float] = None
 
+    # --- counters, because a threshold nobody measures is a guess -----------
+    # ``FAILURE_THRESHOLD`` and ``OPEN_SECONDS`` were design values: five
+    # failures and thirty seconds, chosen from the call volume rather than from
+    # an observed outage. These four make the design falsifiable -- an outage
+    # that opens the circuit eleven times in a minute says the cooldown is too
+    # short, and one that never opens while hundreds of calls fail says the
+    # threshold is counting the wrong thing.
+    opened_total: int = 0
+    half_open_total: int = 0
+    rejected_total: int = 0
+    failures_total: int = 0
+
 
 def provider_key(base_url: Optional[str], model: Optional[str]) -> ProviderKey:
     """The identity of a provider for breaker purposes.
@@ -151,14 +163,17 @@ def before_call(key: ProviderKey, *, now: Optional[float] = None) -> None:
 
         if state.status == OPEN:
             if current < state.opened_at + state.cooldown:
+                state.rejected_total += 1
                 raise _circuit_open_error(state, current)
             state.status = HALF_OPEN
             state.trial_in_flight = False
 
         if state.trial_in_flight:
+            state.rejected_total += 1
             raise _circuit_open_error(state, current, probing=True)
 
         state.trial_in_flight = True
+        state.half_open_total += 1
 
 
 def record_success(key: ProviderKey, *, now: Optional[float] = None) -> None:
@@ -217,6 +232,7 @@ def record_failure(key: ProviderKey, exc: BaseException, *,
         state = _state_for(key)
         state.last_error = str(exc)[:200]
         state.last_failure_at = current
+        state.failures_total += 1
 
         if state.status == OPEN:
             # A call that began before the circuit opened, finishing late. Do not
@@ -227,6 +243,7 @@ def record_failure(key: ProviderKey, exc: BaseException, *,
 
         if state.status == HALF_OPEN:
             state.status = OPEN
+            state.opened_total += 1
             state.cooldown = min(max(state.cooldown, OPEN_SECONDS) * 2,
                                  MAX_OPEN_SECONDS)
             state.opened_at = current
@@ -236,6 +253,7 @@ def record_failure(key: ProviderKey, exc: BaseException, *,
         state.consecutive_failures += 1
         if state.consecutive_failures >= FAILURE_THRESHOLD:
             state.status = OPEN
+            state.opened_total += 1
             state.opened_at = current
             state.cooldown = _opening_cooldown(exc)
             state.trial_in_flight = False
@@ -275,6 +293,10 @@ def state_of(key: ProviderKey, *, now: Optional[float] = None) -> dict:
             "cooldown": state.cooldown,
             "retry_in": round(retry_in, 3),
             "last_error": state.last_error,
+            "opened_total": state.opened_total,
+            "half_open_total": state.half_open_total,
+            "rejected_total": state.rejected_total,
+            "failures_total": state.failures_total,
         }
 
 
@@ -293,6 +315,27 @@ def snapshot() -> dict:
                 "consecutive_failures": state.consecutive_failures,
                 "cooldown": state.cooldown,
                 "last_error": state.last_error,
+                # Transitions, not gauges: ``status`` says what is true now,
+                # these say how often it changed.
+                "opened_total": state.opened_total,
+                "half_open_total": state.half_open_total,
+                "rejected_total": state.rejected_total,
+                "failures_total": state.failures_total,
             }
             for (base_url, model), state in _STATES.items()
+        }
+
+
+def totals() -> dict:
+    """The counters summed across providers, for a one-line health readout.
+
+    Summed rather than averaged: "how many calls were refused" is a count of
+    events, and averaging it over providers would produce a number that is true
+    of nobody.
+    """
+    with _LOCK:
+        keys = ("opened_total", "half_open_total", "rejected_total", "failures_total")
+        return {
+            key: sum(getattr(state, key) for state in _STATES.values())
+            for key in keys
         }
