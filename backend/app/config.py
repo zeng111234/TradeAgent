@@ -34,6 +34,13 @@ class Settings(BaseSettings):
     #: point pixels at somebody else's host.
     PUBLIC_BASE_URL: str = ""
 
+    #: Verify TLS certificates when reading a prospect's website. On by default:
+    #: an unverified page is an unauthenticated page, and the content is handed
+    #: to a model as evidence about a company. The switch exists for an operator
+    #: who has decided to accept that for one known-broken site -- it is not a
+    #: convenience for making a fetch succeed.
+    WEBSITE_TLS_VERIFY: bool = True
+
     # LLM (OpenAI-compatible API: MiMo, DeepSeek, OpenAI, etc.)
     OPENAI_API_KEY: str = ""
     OPENAI_BASE_URL: str = "https://api.xiaomimimo.com/v1"

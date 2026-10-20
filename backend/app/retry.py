@@ -89,11 +89,19 @@ def classify(exc: BaseException) -> Decision:
     """
     from app.llm import (
         LLMBadResponse,
+        LLMCircuitOpen,
         LLMRateLimited,
         LLMTransient,
         LLMTruncated,
         LLMUnavailable,
     )
+
+    if isinstance(exc, LLMCircuitOpen):
+        # Explicit, not left to the default branch. The default is permanent
+        # today, but "retry a call the breaker refused" is exactly the sort of
+        # semantic that would survive a future change to that default, silently.
+        return Decision(PERMANENT, 0.0,
+                        "the provider circuit is open; the call was not attempted")
 
     if isinstance(exc, LLMRateLimited):
         given = getattr(exc, "retry_after", None)

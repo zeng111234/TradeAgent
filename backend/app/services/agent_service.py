@@ -7,6 +7,7 @@ from hashlib import sha256
 
 from app.llm import (
     LLMBadResponse,
+    LLMCircuitOpen,
     LLMRateLimited,
     LLMTransient,
     LLMTruncated,
@@ -142,10 +143,11 @@ async def analyze_customer_website(url: str, your_products: str = "") -> dict:
     reached from a request handler, and ``requests.get`` blocking inside it
     freezes every other request in the process for up to its 15-second timeout.
     """
-    import requests
+    from app.config import settings
+    from app.url_guard import fetch_public
 
     def _fetch() -> tuple[str, str]:
-        resp = requests.get(url, timeout=15, verify=False, headers={
+        resp = fetch_public(url, timeout=15, verify=settings.WEBSITE_TLS_VERIFY, headers={
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
         })
         # A 404 has a body too, and BeautifulSoup will happily turn "this domain
@@ -211,6 +213,10 @@ Return ONLY valid JSON, no other text."""
         )
     except LLMUnavailable:
         reason = "no_api_key"
+    except LLMCircuitOpen as exc:
+        # The call was not attempted. Saying "the model call failed" would put
+        # the cost in the wrong place; the message says when probing resumes.
+        reason = str(exc)
     except LLMTruncated:
         # Half an analysis is not an analysis. The observations below are
         # still worth having, but the reason has to travel with them.
@@ -392,6 +398,10 @@ Return ONLY valid JSON."""
         )
     except LLMUnavailable:
         reason = "no_api_key"
+    except LLMCircuitOpen as exc:
+        # The call was not attempted. Saying "the model call failed" would put
+        # the cost in the wrong place; the message says when probing resumes.
+        reason = str(exc)
     except LLMTruncated:
         reason = "model response was cut off at the token cap"
     except LLMBadResponse as exc:

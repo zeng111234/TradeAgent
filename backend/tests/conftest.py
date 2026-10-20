@@ -85,6 +85,21 @@ def _create_schema():
     yield
 
 
+@pytest.fixture(autouse=True)
+def _reset_circuit_breaker():
+    """Every test starts with a closed breaker.
+
+    The breaker is process-global state, and five transient failures in one test
+    would otherwise refuse calls in the next one. Tests that exercise the breaker
+    drive it explicitly; everything else deserves a clean process.
+    """
+    from app import circuit
+
+    circuit.reset()
+    yield
+    circuit.reset()
+
+
 @pytest.fixture
 async def db():
     """A fresh async session bound to the test database."""

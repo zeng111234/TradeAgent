@@ -165,6 +165,14 @@ class OpenAICompatibleClient:
             kwargs["tools"] = tools
             kwargs["tool_choice"] = "auto"
 
+        # Same breaker as ``app.llm``: same key, same state. An outage seen by
+        # one seam is knowledge the other seam needs, or the runtime would keep
+        # burning 80-second budgets while the legacy path fails fast.
+        from app import circuit
+
+        key = circuit.provider_key(self._base_url, self.model)
+        circuit.before_call(key)
+
         try:
             response = await client.chat.completions.create(**kwargs)
         except Exception as exc:  # noqa: BLE001 - translated, not swallowed
@@ -175,9 +183,25 @@ class OpenAICompatibleClient:
             # `LLMRateLimited` in a run's error means the same thing as in a
             # fallback reason, and "retry this run later" can be decided from it
             # instead of from an exception's class name.
-            from app.llm import translate_provider_error
+            from app.llm import LLMError, translate_provider_error
 
-            raise translate_provider_error(exc) from exc
+            if isinstance(exc, LLMError):
+                # Already in our vocabulary (a scripted client, or an adapter
+                # layered above this one). It is provider evidence, not our bug.
+                circuit.record_failure(key, exc)
+                raise
+
+            try:
+                translated = translate_provider_error(exc)
+            except BaseException:
+                # Not the provider's exception: our own bug. Return the trial
+                # without judging availability.
+                circuit.release_trial(key)
+                raise
+            circuit.record_failure(key, translated)
+            raise translated from exc
+
+        circuit.record_success(key)
 
         if not response.choices:
             return LLMReply(content="", finish_reason="empty_choices")

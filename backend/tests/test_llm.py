@@ -36,7 +36,15 @@ SEAM_FILES = {
 #: injectable adapter (and raises AgentUnavailable when there is no key). It is
 #: part of the runtime's own seam, so it is exempt from the settings check but
 #: not from the client-construction check above.
-SETTINGS_ALLOWED_FILES = SEAM_FILES | {"backend/app/agent/service.py"}
+#:
+#: ``scripts/contract_canary.py`` is the scheduled probe of the same seam: it
+#: builds one real client and asks three shape questions. Reading the key there
+#: is the point of the script, not a bypass of ``is_configured`` -- it calls that
+#: first and exits without a credential.
+SETTINGS_ALLOWED_FILES = SEAM_FILES | {
+    "backend/app/agent/service.py",
+    "scripts/contract_canary.py",
+}
 
 
 def _python_files() -> list[Path]:

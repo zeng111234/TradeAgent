@@ -25,6 +25,14 @@ from app.services.agent_service import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _allow_the_fake_host(monkeypatch):
+    """``acme.test`` exists only here; the guard's policy has its own tests."""
+    from app import url_guard
+
+    monkeypatch.setattr(url_guard, "ensure_public_http_url", lambda url: url)
+
+
 class _Response:
     """The slice of ``requests.Response`` this code actually touches."""
 

@@ -1,0 +1,60 @@
+# Ask the real provider every morning whether the shape still holds.
+#
+# The offline suite cannot answer this: every fake in it is a shape we wrote.
+# This job is the only place a real response is checked against assertions, and
+# its exit codes separate "the contract moved" (2) from "the provider was not
+# reachable" (3) -- two situations with different responses.
+name: Contract Canary
+
+on:
+  schedule:
+    # 03:17 UTC daily. Deliberately not on the hour: every scheduler in the world
+    # fires at :00, and a canary queued behind them measures the queue.
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+
+jobs:
+  canary:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install the seam's dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install openai==1.6.1 pydantic-settings==2.1.0 python-dotenv==1.0.0
+
+      - name: Ask the provider three questions
+        id: canary
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL || 'https://api.xiaomimimo.com/v1' }}
+          OPENAI_MODEL: ${{ secrets.OPENAI_MODEL || 'mimo-v2.5' }}
+        run: |
+          set +e
+          python scripts/contract_canary.py
+          code=$?
+          set -e
+          if [ "$code" -eq 1 ]; then
+            # No credential: a skip, not a green light. A warning is visible in
+            # the run summary and does not train anyone to ignore a red X.
+            echo "::warning::Contract canary skipped: OPENAI_API_KEY is not configured."
+            exit 0
+          fi
+          exit "$code"
+
+      - name: Keep the record
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: contract-canary-${{ github.run_id }}
+          path: artifacts/contract_canary/
+          if-no-files-found: ignore

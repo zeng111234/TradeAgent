@@ -18,6 +18,18 @@
       "lines": 15,
       "opens": "You are a research assistant working on one specific questio"
     },
+    "app.canary:TEXT_PROMPT": {
+      "chars": 31,
+      "fingerprint": "1aa8218ac974",
+      "lines": 1,
+      "opens": "Reply with exactly one word: ok"
+    },
+    "app.canary:TOOL_PROMPT": {
+      "chars": 61,
+      "fingerprint": "c1add1c2997f",
+      "lines": 1,
+      "opens": "Call report_city with the city Berlin. Do not answer in text"
+    },
     "app.services.agent_service:_ai_analyze_website:system": {
       "chars": 78,
       "fingerprint": "dc53e4593885",

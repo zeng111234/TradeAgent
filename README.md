@@ -150,8 +150,22 @@ python scripts/demo_agent_run.py             # 两个不同目标 → 两条不�
 
 ```bash
 cd backend
-python -m pytest          # 309 个，约 4 秒，不需要网络
+python -m pytest          # 978 个，约 70 秒，不需要网络
 ```
+
+### 运维视图
+
+```bash
+# 最近 14 天的运行/任务/审批趋势：成功率、P50/P95、stop_reason、跳过的任务
+curl 'localhost:8000/api/v1/analytics/quality?days=14'
+
+# 真上游的形状体检：文本 / usage / tool_call 三件事，漂移退出 2，连不上退出 3
+python scripts/contract_canary.py
+```
+
+`/analytics/quality` 读的是已有的 `agent_runs` / `job_runs` / `email_logs`，**不读 trace**；
+某天没有运行会显示为 0，而不是从序列里消失。它度量的是"系统有没有变差"，不是"答案好不好"——
+后者这个仓库没有 rubric，也没有假装有。
 
 ## 环境变量
 
@@ -164,6 +178,7 @@ python -m pytest          # 309 个，约 4 秒，不需要网络
 | `SCAN_KEYWORDS` / `SCAN_COUNTRIES` | 可选 | 每日扫描的关键词与市场 |
 | `SCAN_DRY_RUN` | 可选 | `1` = 不写文件、不发邮件 |
 | `AGENT_SPILL_DIR` | 可选 | 压缩时溢出的完整观察文本存放位置（默认系统临时目录） |
+| `WEBSITE_TLS_VERIFY` | 可选 | 抓取客户网站时校验 TLS，默认 `true`；只在明确接受风险时设为 `false` |
 
 ## 技术栈
 

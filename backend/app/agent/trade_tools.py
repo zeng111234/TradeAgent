@@ -35,6 +35,7 @@ from typing import Any, Optional
 
 from sqlalchemy import func, or_, select
 
+from app.config import settings
 from app.models.customer import Customer, CustomerContact, CustomerNote
 from app.models.email_log import EmailLog
 from app.models.task import Task
@@ -696,8 +697,9 @@ async def inspect_website(url: str, max_chars: int = MAX_PAGE_CHARS) -> dict:
     whole duration. Measured, three of these delayed unrelated work by 2950 ms;
     on a thread, by 12 ms, with no increase in wall-clock time.
     """
-    import requests
     from bs4 import BeautifulSoup
+
+    from app.url_guard import BlockedURL, fetch_public
 
     max_chars = max(500, min(int(max_chars or MAX_PAGE_CHARS), 8000))
     if not url.startswith(("http://", "https://")):
@@ -721,10 +723,10 @@ async def inspect_website(url: str, max_chars: int = MAX_PAGE_CHARS) -> dict:
 
         for attempt in (1, 2):
             try:
-                response = requests.get(
+                response = fetch_public(
                     url,
                     timeout=PAGE_FETCH_SECONDS,
-                    verify=False,  # noqa: S501 - many small trade sites have broken chains
+                    verify=settings.WEBSITE_TLS_VERIFY,
                     headers={
                         "User-Agent": (
                             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -732,6 +734,10 @@ async def inspect_website(url: str, max_chars: int = MAX_PAGE_CHARS) -> dict:
                         )
                     },
                 )
+            except BlockedURL:
+                # Not a transport accident: retrying an address the guard
+                # refused would only ask the same question twice.
+                raise
             except Exception:  # noqa: BLE001 - transport failures are the case here
                 # requests raises rather than returning a status for connection
                 # resets, DNS hiccups and timeouts. Those are exactly the ones

@@ -23,7 +23,9 @@ output. ``LLMUnavailable`` (no key, or a rejected one: the operator can fix it),
 ``LLMRateLimited`` (come back later), ``LLMTransient`` (the provider failed in a
 way that may not repeat), ``LLMTruncated`` (the cap was hit: the answer is
 incomplete) and ``LLMBadResponse`` (the provider returned nothing usable) are
-different things and are reported as different things.
+different things and are reported as different things. ``LLMCircuitOpen`` is the
+sixth: the provider has been failing repeatedly and this call was not attempted,
+so its cost is a lock read rather than an 80-second budget.
 
 Why the OpenAI SDK and not a thin httpx wrapper
 -----------------------------------------------
@@ -47,8 +49,10 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from datetime import datetime
 from typing import Any, Optional
 
+from app import circuit
 from app.config import settings
 from app.llm_usage import parse_usage, record as record_usage
 from app.timeouts import LLM_TOTAL_SECONDS
@@ -114,6 +118,24 @@ class LLMTruncated(LLMError):
 
 class LLMBadResponse(LLMError):
     """The provider returned no choices, no content, or unparseable JSON."""
+
+
+class LLMCircuitOpen(LLMError):
+    """The call was not attempted: the provider has been failing repeatedly.
+
+    Not a provider response and deliberately not a subclass of
+    ``LLMTransient``. ``retry.classify`` maps it to **permanent** explicitly:
+    retrying a call that was refused before it left the process multiplies
+    nothing, and the useful action is to wait for the cooling window. A new
+    member of the family rather than a string, so callers that enumerate the
+    failure modes (fallback labels, run errors) have to make room for it.
+    """
+
+    def __init__(self, message: str, *, retry_at: Optional[datetime] = None,
+                 retry_in: Optional[float] = None):
+        super().__init__(message)
+        self.retry_at = retry_at
+        self.retry_in = retry_in
 
 
 def translate_provider_error(exc: BaseException) -> LLMError:
@@ -306,38 +328,59 @@ async def complete_text(
         messages.append({"role": "system", "content": system})
     messages.append({"role": "user", "content": prompt})
 
+    key = circuit.provider_key(
+        getattr(settings, "OPENAI_BASE_URL", None), settings.OPENAI_MODEL
+    )
+    # Checked before the request is built, not after: while the circuit is open
+    # this raises in microseconds, and the caller labels its fallback with a
+    # reason that says "paused", not "timed out".
+    circuit.before_call(key)
+
     try:
-        # ``wait_for`` is not belt-and-braces around the client timeout: the SDK
-        # retries *inside* this coroutine, so two 60-second attempts plus backoff
-        # are 120+ seconds, while the browser gives up at 120 and this service
-        # advertises an 80-second logical call. Without a cap the policy in
-        # ``app/timeouts.py`` is a comment, not a budget -- and the extra minute
-        # is spent after the user has already seen a timeout.
-        response = await asyncio.wait_for(
-            client.chat.completions.create(
-                model=settings.OPENAI_MODEL,
-                messages=messages,
-                temperature=temperature,
-                max_tokens=max_tokens,
-            ),
-            timeout=LLM_TOTAL_SECONDS,
-        )
-    except (asyncio.TimeoutError, TimeoutError) as exc:
-        # Cancelled by our own budget, not by the provider. It belongs to the
-        # transient family: the same call may work later, and the caller's
-        # fallback reason must say "ran out of time", not "unexpected error".
-        raise LLMTransient(
-            f"the model call exceeded its {LLM_TOTAL_SECONDS:.0f}s budget "
-            "(attempts and retries included)"
-        ) from exc
-    except LLMError:
+        try:
+            # ``wait_for`` is not belt-and-braces around the client timeout: the SDK
+            # retries *inside* this coroutine, so two 60-second attempts plus backoff
+            # are 120+ seconds, while the browser gives up at 120 and this service
+            # advertises an 80-second logical call. Without a cap the policy in
+            # ``app/timeouts.py`` is a comment, not a budget -- and the extra minute
+            # is spent after the user has already seen a timeout.
+            response = await asyncio.wait_for(
+                client.chat.completions.create(
+                    model=settings.OPENAI_MODEL,
+                    messages=messages,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                ),
+                timeout=LLM_TOTAL_SECONDS,
+            )
+        except (asyncio.TimeoutError, TimeoutError) as exc:
+            # Cancelled by our own budget, not by the provider. It belongs to the
+            # transient family: the same call may work later, and the caller's
+            # fallback reason must say "ran out of time", not "unexpected error".
+            raise LLMTransient(
+                f"the model call exceeded its {LLM_TOTAL_SECONDS:.0f}s budget "
+                "(attempts and retries included)"
+            ) from exc
+        except LLMError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - classified, not swallowed
+            # The seam's job: a caller here must never have to write
+            # `except Exception` to find out that the provider timed out. See
+            # translate_provider_error -- anything that is not the provider's own
+            # exception is re-raised untouched.
+            raise translate_provider_error(exc) from exc
+    except LLMError as exc:
+        circuit.record_failure(key, exc)
         raise
-    except Exception as exc:  # noqa: BLE001 - classified, not swallowed
-        # The seam's job: a caller here must never have to write
-        # `except Exception` to find out that the provider timed out. See
-        # translate_provider_error -- anything that is not the provider's own
-        # exception is re-raised untouched.
-        raise translate_provider_error(exc) from exc
+    except BaseException:
+        # Cancellation, or a bug of ours that ``translate_provider_error``
+        # deliberately passed through. Neither is evidence about the provider,
+        # but the trial slot must be returned -- otherwise one client disconnect
+        # during a probe wedges the breaker in half-open.
+        circuit.release_trial(key)
+        raise
+
+    circuit.record_success(key)
 
     # Recorded *before* the reply is judged. ``text_of`` raises on a truncated or
     # empty answer, and those are exactly the calls the provider still billed --

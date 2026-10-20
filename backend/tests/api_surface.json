@@ -277,6 +277,212 @@
       }
     }
   },
+  "GET /api/v1/analytics/quality": {
+    "parameters": [
+      {
+        "in": "query",
+        "name": "days",
+        "required": false,
+        "schema": {
+          "maximum": 90,
+          "minimum": 1,
+          "type": "integer"
+        }
+      }
+    ],
+    "responses": {
+      "200": {
+        "properties": {
+          "approvals": {
+            "properties": {
+              "acceptance_rate": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "note": {
+                "type": "string"
+              },
+              "pending": {
+                "type": "integer"
+              },
+              "proposals": {
+                "type": "integer"
+              },
+              "rejected": {
+                "type": "integer"
+              },
+              "sent": {
+                "type": "integer"
+              }
+            },
+            "type": "object"
+          },
+          "closed_loop": {
+            "type": "object"
+          },
+          "daily": {
+            "items": {
+              "properties": {
+                "date": {
+                  "type": "string"
+                },
+                "jobs_failed": {
+                  "type": "integer"
+                },
+                "jobs_skipped": {
+                  "type": "integer"
+                },
+                "jobs_succeeded": {
+                  "type": "integer"
+                },
+                "jobs_total": {
+                  "type": "integer"
+                },
+                "runs_failed": {
+                  "type": "integer"
+                },
+                "runs_other": {
+                  "type": "integer"
+                },
+                "runs_succeeded": {
+                  "type": "integer"
+                },
+                "runs_total": {
+                  "type": "integer"
+                },
+                "runs_truncated": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "date"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "generated_at": {
+            "type": "string"
+          },
+          "jobs": {
+            "properties": {
+              "by_job": {
+                "items": {
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "by_status": {
+                "type": "object"
+              },
+              "note": {
+                "type": "string"
+              },
+              "success_rate": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "total": {
+                "type": "integer"
+              }
+            },
+            "type": "object"
+          },
+          "runs": {
+            "properties": {
+              "by_prompt_version": {
+                "items": {
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "by_status": {
+                "type": "object"
+              },
+              "by_stop_reason": {
+                "items": {
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "cached_prompt_ratio": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "elapsed_ms": {
+                "type": "object"
+              },
+              "success_rate": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "total": {
+                "type": "integer"
+              },
+              "totals": {
+                "type": "object"
+              }
+            },
+            "type": "object"
+          },
+          "window": {
+            "properties": {
+              "days": {
+                "type": "integer"
+              },
+              "since": {
+                "type": "string"
+              },
+              "until": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "days",
+              "since",
+              "until"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "approvals",
+          "closed_loop",
+          "daily",
+          "generated_at",
+          "jobs",
+          "runs",
+          "window"
+        ],
+        "type": "object"
+      },
+      "422": "validation_error"
+    }
+  },
   "GET /api/v1/analytics/sources": {
     "responses": {
       "200": {

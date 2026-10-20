@@ -30,6 +30,14 @@ from app.agent.trade_tools import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _allow_the_fake_host(monkeypatch):
+    """The page is fake and so is the host; ``test_url_guard`` owns the policy."""
+    from app import url_guard
+
+    monkeypatch.setattr(url_guard, "ensure_public_http_url", lambda url: url)
+
+
 # --------------------------------------------------------------------------
 # The environment has to match requirements.txt
 # --------------------------------------------------------------------------

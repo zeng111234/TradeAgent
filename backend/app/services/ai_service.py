@@ -3,6 +3,7 @@ import logging
 
 from app.llm import (
     LLMBadResponse,
+    LLMCircuitOpen,
     LLMRateLimited,
     LLMTransient,
     LLMTruncated,
@@ -84,6 +85,11 @@ BODY: [email body in HTML format]"""
         )
     except LLMUnavailable:
         reason = "no_api_key"
+    except LLMCircuitOpen as exc:
+        # Sixth reason, deliberately not folded into "transient": the call was
+        # never attempted, so "the model call failed" would be a lie about where
+        # the time went. The message already says when probing resumes.
+        reason = str(exc)
     except LLMTruncated:
         # Half an email is not an email, and the caller offers this to a human
         # as something to send.

@@ -31,6 +31,20 @@ from app.llm import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _allow_the_fake_host(monkeypatch):
+    """The fetch under test is faked; DNS for ``example.test`` is not.
+
+    ``fetch_public`` refuses a host that does not resolve, which is correct in
+    production and meaningless here: the host exists only in the test. The
+    address policy has its own file (``test_url_guard.py``); this one is about
+    retrying a transport failure.
+    """
+    from app import url_guard
+
+    monkeypatch.setattr(url_guard, "ensure_public_http_url", lambda url: url)
+
+
 # --------------------------------------------------------------------------
 # The judgement
 # --------------------------------------------------------------------------

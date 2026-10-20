@@ -13,6 +13,8 @@ from __future__ import annotations
 # scheduler history, /usage -- each addition marked below). It now stands at
 # 55 paths / 67 operations, and ``test_route_count_unchanged`` is what keeps
 # that number honest: the declared table and the live app must agree exactly.
+# The operational quality report (GET /analytics/quality) brings it to
+# 56 paths / 68 operations.
 EXPECTED_ROUTES: dict[str, set[str]] = {
     "/": {"get"},
     "/health": {"get"},
@@ -42,10 +44,12 @@ EXPECTED_ROUTES: dict[str, set[str]] = {
     "/api/v1/agent/runs/{run_id}": {"get"},
     "/api/v1/agent/runs/{run_id}/events": {"get"},
     "/api/v1/agent/runs/{run_id}/trace.html": {"get"},
-    # --- analytics router (5) ---
+    # --- analytics router (6) ---
     "/api/v1/analytics/countries": {"get"},
     "/api/v1/analytics/dashboard": {"get"},
     "/api/v1/analytics/pipeline": {"get"},
+    # Operational trend, not business analytics: run/job outcomes and latency.
+    "/api/v1/analytics/quality": {"get"},
     "/api/v1/analytics/sources": {"get"},
     "/api/v1/analytics/trends": {"get"},
     # --- customers router (5) ---

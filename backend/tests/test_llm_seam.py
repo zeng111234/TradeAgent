@@ -29,6 +29,7 @@ import pytest
 from app import llm
 from app.llm import (
     LLMBadResponse,
+    LLMCircuitOpen,
     LLMError,
     LLMRateLimited,
     LLMTransient,
@@ -421,6 +422,7 @@ def test_each_failure_reaches_the_caller_as_a_distinct_reason(monkeypatch):
         ("transient", LLMTransient("timeout")),
         ("truncated", LLMTruncated("length")),
         ("bad_response", LLMBadResponse("empty")),
+        ("circuit_open", LLMCircuitOpen("the provider has been failing; paused until 12:00:00")),
     ):
         async def boom(*_args, _error=error, **_kwargs):
             raise _error
