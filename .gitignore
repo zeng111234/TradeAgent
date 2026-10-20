@@ -27,6 +27,16 @@ htmlcov/
 # Generated agent-run artefacts (reproduce with scripts/demo_agent_run.py)
 artifacts/agent-demo/
 
+# Self-probe reports (reproduce with scripts/self_probe.py)
+artifacts/self-probe-*.json
+# Interview-probe reports (reproduce with scripts/interview_probe.py)
+artifacts/interview-*.md
+artifacts/interview-*.json
+
+# Agent work logs. These are this machine's session notes, not project state:
+# useful locally, noise in a clone, and they name paths outside the repo.
+.workbuddy/
+
 # Environment
 .env
 *.env.local

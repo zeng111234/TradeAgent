@@ -30,9 +30,11 @@ Environment:
     OPENAI_BASE_URL, OPENAI_MODEL
 
 Exit codes:
-    0  scan completed (zero prospects kept is a valid result)
+    0  scan completed (zero prospects kept is a valid result — when the search worked)
     1  no model configured
     2  the agent run failed outright
+    3  every external lookup failed (all searches, or every page fetch with
+       nothing kept), so nothing was evaluated -- not a quiet market
 """
 from __future__ import annotations
 
@@ -305,6 +307,16 @@ def main(argv: list[str] | None = None) -> int:
     print(f"[run] rounds/calls: {len(run.steps)}/{run.tool_call_count}")
     print(f"[run] tokens      : {run.prompt_tokens} in / {run.completion_tokens} out")
     print(f"[run] kept        : {outcome.prospect_count} prospect(s)")
+    if outcome.search_errors:
+        print(
+            f"[run] search errs : {len(outcome.search_errors)} "
+            f"({'ALL queries failed -- not a quiet market' if outcome.search_failed_entirely else 'partial, run continued'})"
+        )
+    if outcome.inspect_errors:
+        print(
+            f"[run] fetch errs  : {len(outcome.inspect_errors)} "
+            f"({'ALL page fetches failed' if outcome.inspection_failed_entirely else 'partial, run continued'})"
+        )
     if outcome.leads_path:
         print(f"[out] leads       : {outcome.leads_path}")
         print(f"[out] domains     : {outcome.scanned_path}")
@@ -321,6 +333,11 @@ def main(argv: list[str] | None = None) -> int:
                 "rounds": len(run.steps),
                 "tool_calls": run.tool_call_count,
                 "prospects_kept": outcome.prospect_count,
+                # A zero here is only "quiet market" when the search worked.
+                "search_errors": len(outcome.search_errors),
+                "search_failed_entirely": outcome.search_failed_entirely,
+                "inspect_errors": len(outcome.inspect_errors),
+                "inspection_failed_entirely": outcome.inspection_failed_entirely,
                 "dry_run": dry_run,
             },
             ensure_ascii=False,
@@ -332,7 +349,17 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     send_report_email(outcome.report, outcome.prospect_count)
-    return 2 if run.status == "error" else 0
+    if run.status == "error":
+        return 2
+    if outcome.search_failed_entirely:
+        # The report says so too; the exit code is what turns a silent zero
+        # into a red workflow someone can see.
+        print("[fatal] every search query failed: nothing was evaluated today")
+        return 3
+    if outcome.inspection_failed_entirely and outcome.prospect_count == 0:
+        print("[fatal] every page fetch failed: no candidate could be evaluated")
+        return 3
+    return 0
 
 
 if __name__ == "__main__":
