@@ -103,7 +103,9 @@ async function main() {
     if (unique.length !== 1) throw new Error(`row heights not uniform: ${JSON.stringify(unique)}`)
     if (unique[0] > 48) throw new Error(`row height ${unique[0]} exceeds 48px`)
 
-    // 3. Tool path: first two tools + "+N", whole sequence on hover.
+    // 3. Tool path: first two tools + "+N", whole sequence on hover. The
+    //    "+N" must be *visibly* inside the cell: innerText includes clipped
+    //    overflow, so a text check passes while the count is cut off.
     const cell = page.locator('.el-table__row').first().locator('.tool-path-cell')
     const cellText = (await cell.innerText()).replace(/\s+/g, ' ')
     if (!cellText.includes('list_customers') || !cellText.includes('get_customer')) {
@@ -111,6 +113,16 @@ async function main() {
     }
     if (!cellText.includes('+5')) throw new Error(`overflow count missing: ${cellText}`)
     if (cellText.includes('list_tasks')) throw new Error(`third tool should be behind the count: ${cellText}`)
+    const clipped = await cell.evaluate((el) => {
+      const box = el.getBoundingClientRect()
+      const more = el.querySelector('.tool-path-more')
+      if (!more) return 'no .tool-path-more element'
+      const r = more.getBoundingClientRect()
+      return r.width > 0 && r.right <= box.right + 1 && r.left >= box.left - 1
+        ? false
+        : `+N clipped: cell [${box.left.toFixed(0)},${box.right.toFixed(0)}] more [${r.left.toFixed(0)},${r.right.toFixed(0)}]`
+    })
+    if (clipped) throw new Error(clipped)
     await cell.hover()
     await page.waitForTimeout(400)
     const tip = await page.locator('.el-popper:visible').innerText().catch(() => '')

@@ -812,15 +812,25 @@ onUnmounted(() => {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* History row: two tools, then a count. Whole sequence on hover. */
+/* History row: two tools, then a count. Whole sequence on hover. The `code`
+ * must be allowed to shrink (`min-width: 0` + ellipsis) or it keeps its full
+ * width and pushes the +N out of the cell -- the count is the summary and
+ * cannot be the part that gets clipped. */
 .tool-path-cell {
   display: inline-flex;
   align-items: baseline;
   gap: var(--space-2);
   max-width: 100%;
+  min-width: 0;
   overflow: hidden;
   white-space: nowrap;
   vertical-align: bottom;
+}
+
+.tool-path-cell code {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .tool-path-more {
   color: var(--text-3);
