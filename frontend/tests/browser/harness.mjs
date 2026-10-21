@@ -110,3 +110,40 @@ export function stopVite(child) {
     child.kill()
   }
 }
+
+/**
+ * Answer every `/api/v1/**` request the gate itself does not stub.
+ *
+ * Without it the unstubbed tail falls through to vite's proxy, and with no
+ * backend on :8000 the proxy answers 500 -- which the console-error check at
+ * the bottom of each gate reads as a failure. Local runs always had a backend
+ * listening, which is why only CI ever saw this.
+ *
+ * Playwright checks routes newest-first, so register this BEFORE the gate's
+ * own stubs and they keep winning. Registering it after would swallow them.
+ */
+export async function stubRemainingApi(page) {
+  await page.route('**/api/v1/**', (route) => {
+    const path = new URL(route.request().url()).pathname
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(emptyApiBody(path)),
+    })
+  })
+}
+
+/**
+ * A shape the page's own code will not throw on.
+ *
+ * `[]` where the caller does `response.data.map(...)` or `.filter(...)` on the
+ * response itself, `{ stages: [] }` where it digs into a field, and `{}`
+ * everywhere else -- the views guard most fields with `|| 0` / `?.`, so an
+ * empty object renders as blank rather than crashing. Getting this wrong shows
+ * up as a `pageerror` rather than a 500, which the gates also collect.
+ */
+function emptyApiBody(path) {
+  if (/\/analytics\/(trends|sources|countries)$/.test(path)) return []
+  if (/\/analytics\/pipeline$/.test(path)) return { stages: [], total: 0 }
+  return {}
+}

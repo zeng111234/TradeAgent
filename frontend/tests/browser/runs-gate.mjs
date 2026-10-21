@@ -3,7 +3,7 @@
  * keeps one row height at 48px or under, the tool path shows two tools plus a
  * count with the whole sequence on hover, and a row click opens the drawer.
  */
-import { chromiumPath, startVite, stopVite, APP_URL, waitForServer } from './harness.mjs'
+import { chromiumPath, startVite, stopVite, stubRemainingApi, APP_URL, waitForServer } from './harness.mjs'
 import { chromium } from 'playwright-core'
 
 const RUNS = [
@@ -72,6 +72,10 @@ async function main() {
   page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
 
   try {
+    // Registered first so the two stubs below win. Harmless today -- this
+    // gate's pages are fully stubbed -- but it keeps the next request someone
+    // adds from becoming a CI-only 500.
+    await stubRemainingApi(page)
     await page.route('**/api/v1/agent/capabilities', (r) =>
       r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(CAPABILITIES) }))
     // One dispatcher, because the list call carries query params and the glob

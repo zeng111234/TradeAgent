@@ -3,7 +3,7 @@
  * the draft popover must still work after the column merge. Run against the
  * dev server the suite starts on PORT 5199.
  */
-import { chromiumPath, startVite, stopVite, APP_URL, PORT, waitForServer } from './harness.mjs'
+import { chromiumPath, startVite, stopVite, stubRemainingApi, APP_URL, PORT, waitForServer } from './harness.mjs'
 import { chromium } from 'playwright-core'
 
 const LEAD_FIXTURES = Array.from({ length: 6 }, (_, i) => ({
@@ -45,6 +45,10 @@ async function main() {
   page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
 
   try {
+    // Registered first so the two stubs below win. This page pulls pipeline,
+    // trends, sources and countries on mount; left to the proxy those are 500s
+    // in CI, and every one of them lands in the console-error check at the end.
+    await stubRemainingApi(page)
     await page.route('**/api/v1/agent/scan-leads-draft', (r) =>
       r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ leads: LEAD_FIXTURES, total_found: 6, with_email: 4 }) }))
     await page.route('**/api/v1/agent/import-leads/preview', (r) =>

@@ -3,7 +3,7 @@
  * Edit/Delete keep their dialogs, pagination pages, and the Industry cell
  * stays on one line (tooltip carries the overflow).
  */
-import { chromiumPath, startVite, stopVite, APP_URL, waitForServer } from './harness.mjs'
+import { chromiumPath, startVite, stopVite, stubRemainingApi, APP_URL, waitForServer } from './harness.mjs'
 import { chromium } from 'playwright-core'
 
 const PAGE_SIZE = 20
@@ -43,6 +43,11 @@ async function main() {
   page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
 
   try {
+    // Registered first so the customers stub below wins (Playwright checks
+    // routes newest-first). The row click opens /customers/1, and `customers*`
+    // does not cross the slash -- those requests used to fall to vite's proxy
+    // and come back 500 with no backend behind it.
+    await stubRemainingApi(page)
     await page.route('**/api/v1/customers*', (route) => {
       const url = new URL(route.request().url())
       if (route.request().method() === 'GET' && !url.pathname.match(/\/customers\/\d+/)) {
@@ -57,7 +62,9 @@ async function main() {
           ),
         })
       }
-      return route.continue()
+      // Not continue(): that hands the request to the proxy regardless of any
+      // other route, and the detail page the gate opens is outside this stub.
+      return route.fulfill({ status: 200, contentType: 'application/json', body: '{}' })
     })
 
     await page.goto(`${APP_URL}/customers`, { waitUntil: 'domcontentloaded', timeout: 60_000 })

@@ -5,7 +5,7 @@
  * switching the time window, and a failed refresh keeping the old report on
  * screen (an empty window reads as "nothing ran").
  */
-import { chromiumPath, startVite, stopVite, APP_URL, waitForServer } from './harness.mjs'
+import { chromiumPath, startVite, stopVite, stubRemainingApi, APP_URL, waitForServer } from './harness.mjs'
 import { chromium } from 'playwright-core'
 
 const REPORT = (days) => ({
@@ -70,6 +70,9 @@ async function main() {
   let requestedDays = 14
   let failNext = false
   try {
+    // Registered first so the quality stub below wins -- including the
+    // deliberate 500 it serves once, which is the whole point of check 4.
+    await stubRemainingApi(page)
     await page.route('**/api/v1/analytics/quality*', (route) => {
       if (failNext) {
         failNext = false
