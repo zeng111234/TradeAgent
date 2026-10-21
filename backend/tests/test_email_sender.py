@@ -81,3 +81,49 @@ async def test_without_credentials_nothing_is_dialled(monkeypatch):
 
     assert result["success"] is True
     assert result["simulated"] is True
+
+
+# --------------------------------------------------------------------------
+# Placeholder rendering
+# --------------------------------------------------------------------------
+# The template editor tells the author to write {company_name}; Jinja2 only
+# understands {{ company_name }}. Both must substitute, or every template
+# saved through the UI mails its placeholders out verbatim.
+
+
+def test_single_brace_placeholders_substitute():
+    out = email_sender.render_template(
+        "Quality {product_name} for {company_name}",
+        {"product_name": "yarn", "company_name": "ACME"},
+    )
+    assert out == "Quality yarn for ACME"
+
+
+def test_double_brace_placeholders_still_substitute():
+    out = email_sender.render_template(
+        "Hello {{ contact_name }}", {"contact_name": "Ms. Li"}
+    )
+    assert out == "Hello Ms. Li"
+
+
+def test_an_unknown_placeholder_is_left_standing():
+    """A typo left visible beats a silent gap in a sent mail."""
+    out = email_sender.render_template(
+        "Hi {contct_name} at {company_name}", {"company_name": "ACME"}
+    )
+    assert out == "Hi {contct_name} at ACME"
+
+
+def test_css_braces_are_not_treated_as_placeholders():
+    out = email_sender.render_template(
+        "<style>.a { color: red; }</style><p>Hi {company_name}</p>",
+        {"company_name": "ACME"},
+    )
+    assert out == "<style>.a { color: red; }</style><p>Hi ACME</p>"
+
+
+def test_a_value_containing_braces_is_not_rescanned():
+    out = email_sender.render_template(
+        "Hi {company_name}", {"company_name": "{not_a_place_holder}"}
+    )
+    assert out == "Hi {not_a_place_holder}"

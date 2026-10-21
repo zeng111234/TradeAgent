@@ -21,7 +21,13 @@ def test_capabilities_declares_the_boundary(client):
     # The point of this endpoint: an operator can confirm the boundary without
     # reading the source.
     assert any("send" in item for item in body["cannot"])
-    assert body["write_capable"] == ["create_email_draft", "upsert_customer"]
+    # Every write tool is named here on purpose: adding one is a boundary
+    # decision, and this assertion is where it has to be said out loud.
+    assert body["write_capable"] == [
+        "create_email_draft",
+        "create_email_template",
+        "upsert_customer",
+    ]
 
     names = [t["name"] for t in body["tools"]]
     for forbidden in ("send", "dispatch", "delete"):

@@ -38,6 +38,7 @@ from sqlalchemy import func, or_, select
 from app.config import settings
 from app.models.customer import Customer, CustomerContact, CustomerNote
 from app.models.email_log import EmailLog
+from app.models.email_template import EmailTemplate
 from app.models.task import Task
 from app.models.email_log import EmailStatus
 from app.models.customer import CustomerSource, CustomerStage
@@ -1048,6 +1049,161 @@ async def create_email_draft(
 # Registry
 # --------------------------------------------------------------------------
 
+#: Placeholders the template editor offers and the send path fills in. A
+#: template is a reusable artefact a person will send from, so a placeholder
+#: outside this set is a typo that would otherwise travel all the way to a
+#: customer's inbox as literal text.
+TEMPLATE_VARIABLES = (
+    "company_name",
+    "contact_name",
+    "contact_title",
+    "product_name",
+    "country",
+    "industry",
+)
+
+#: The Templates page filters on exactly these, and its cards are tagged from
+#: them. Free text would still save, but the template would then be invisible
+#: to anyone filtering the page, which is the same as lost.
+TEMPLATE_CATEGORIES = ("cold_outreach", "follow_up", "quotation", "holiday")
+TEMPLATE_LANGUAGES = ("en", "zh", "es")
+
+_PLACEHOLDER_RE = re.compile(r"\{\s*(\w+)\s*\}")
+
+
+@tool(
+    description=(
+        "Save a reusable email template. It appears on the 邮件模板 (Templates) "
+        "page alongside the existing ones, ready for a person to send from. "
+        "Use {company_name}, {contact_name}, {contact_title}, {product_name}, "
+        "{country}, {industry} as placeholders — they are filled per recipient "
+        "when the mail goes out. This does not send anything and does not "
+        "create a draft; it only stores the template."
+    ),
+    tags={"write", "email"},
+)
+async def create_email_template(
+    name: str,
+    subject: str,
+    body: str,
+    category: str = "",
+    language: str = "en",
+    dry_run: bool = False,
+) -> dict:
+    """Store a template the team can send from.
+
+    Like ``upsert_customer``, an existing name is never rewritten. A template a
+    person has already edited is theirs; silently replacing it would lose their
+    wording while looking like a success. The second call reports the row that
+    already exists instead.
+
+    Unlike a draft, this is meant to be reused, so an empty category is refused
+    rather than allowed: the Templates page groups and filters on category, and
+    a template filed under nothing is one nobody can find again.
+    """
+    name = (name or "").strip()
+    subject = (subject or "").strip()
+    body = (body or "").strip()
+    category = (category or "").strip().lower()
+    language = (language or "").strip().lower()
+
+    if not name:
+        return {"error": "name is required"}
+    if not subject:
+        return {"error": "subject is required"}
+    if not body:
+        return {"error": "body is required"}
+    if len(name) > 200:
+        return {"error": "name is too long (200 characters max)"}
+    if len(subject) > 500:
+        return {"error": "subject is too long (500 characters max)"}
+    if category not in TEMPLATE_CATEGORIES:
+        return {
+            "error": (
+                f"unknown category {category!r}. The Templates page filters on "
+                f"exactly these: {', '.join(TEMPLATE_CATEGORIES)}"
+            )
+        }
+    if language not in TEMPLATE_LANGUAGES:
+        return {
+            "error": (
+                f"unknown language {language!r}. Supported: "
+                f"{', '.join(TEMPLATE_LANGUAGES)}"
+            )
+        }
+
+    # Placeholders are checked against the set the send path can fill. The
+    # check is advisory rather than fatal -- a template may legitimately carry
+    # a fixed brand phrase in braces -- but a typo here is invisible until a
+    # customer reads it, which is late to find out.
+    used = []
+    for match in _PLACEHOLDER_RE.finditer(f"{subject}\n{body}"):
+        token = match.group(1)
+        if token not in used:
+            used.append(token)
+    unknown = [t for t in used if t not in TEMPLATE_VARIABLES]
+
+    async with _session_factory()() as db:
+        existing = (
+            await db.execute(
+                select(EmailTemplate).where(func.lower(EmailTemplate.name) == name.lower()).limit(1)
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            return {
+                "status": "duplicate",
+                "template_id": existing.id,
+                "name": existing.name,
+                "reason": (
+                    "a template with this name already exists. Nothing was "
+                    "changed — editing someone's template is not this tool's "
+                    "job. Use a different name if this is genuinely a new one."
+                ),
+                "unknown_placeholders": unknown or None,
+            }
+
+        if dry_run:
+            return {
+                "status": "would_create",
+                "dry_run": True,
+                "name": name,
+                "subject": subject,
+                "category": category,
+                "language": language,
+                "placeholders_used": used,
+                "unknown_placeholders": unknown or None,
+            }
+
+        row = EmailTemplate(
+            name=name[:200],
+            subject=subject[:500],
+            body=body,
+            language=language,
+            category=category,
+            is_ai_generated=1,
+            use_count=0,
+        )
+        db.add(row)
+        await db.commit()
+        await db.refresh(row)
+
+        return {
+            "status": "created",
+            "template_id": row.id,
+            "name": row.name,
+            "category": row.category,
+            "language": row.language,
+            "is_ai_generated": True,
+            "placeholders_used": used,
+            "unknown_placeholders": unknown or None,
+            "visible_in": "邮件模板 (Templates) page",
+        }
+
+
+# --------------------------------------------------------------------------
+# Registry
+# --------------------------------------------------------------------------
+
 # Tools the agent must never have. Kept as an explicit list so the boundary is
 # testable rather than merely absent: tests/test_agent_tools_policy.py asserts
 # no registered tool name matches these.
@@ -1074,6 +1230,7 @@ def build_trade_registry() -> ToolRegistry:
         classify_prospect,
         upsert_customer,
         create_email_draft,
+        create_email_template,
     ):
         registry.register(entry)
     return registry

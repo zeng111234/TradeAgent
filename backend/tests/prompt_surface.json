@@ -1,9 +1,9 @@
 {
   "prompts": {
     "app.agent.loop:DEFAULT_SYSTEM_PROMPT": {
-      "chars": 1948,
-      "fingerprint": "6df7d363546f",
-      "lines": 32,
+      "chars": 2027,
+      "fingerprint": "f64d6349d35b",
+      "lines": 33,
       "opens": "You are an autonomous foreign-trade assistant."
     },
     "app.agent.scan_runner:SCAN_SYSTEM_PROMPT": {

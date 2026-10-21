@@ -12,6 +12,7 @@ import pytest
 from app.agent.trade_tools import (
     classify_prospect,
     create_email_draft,
+    create_email_template,
     get_communication_history,
     get_customer,
     get_customer_signals,
@@ -305,7 +306,122 @@ async def test_create_draft_missing_customer(db):
     assert "error" in result
 
 
+# --- create_email_template ------------------------------------------------
+
+async def test_create_template_writes_a_row_the_templates_page_lists(db):
+    """The whole point: it lands where a person looks for templates."""
+    from sqlalchemy import select
+
+    from app.models.email_template import EmailTemplate
+
+    unique = f"Pytest Template {uuid.uuid4().hex[:8]}"
+    result = await create_email_template(
+        name=unique,
+        subject="Quality {product_name} for {company_name}",
+        body="<p>Dear {contact_name},</p><p>Best regards</p>",
+        category="cold_outreach",
+        language="en",
+    )
+
+    assert result["status"] == "created"
+    assert result["is_ai_generated"] is True
+    try:
+        row = (
+            await db.execute(select(EmailTemplate).where(EmailTemplate.id == result["template_id"]))
+        ).scalar_one()
+        assert row.name == unique
+        assert row.category == "cold_outreach"
+        assert row.language == "en"
+        assert row.is_ai_generated == 1
+        assert row.use_count == 0
+        # Same query the Templates page lists from -- if this returns the row,
+        # the page shows the card.
+        listed = (
+            await db.execute(select(EmailTemplate).order_by(EmailTemplate.id))
+        ).scalars().all()
+        assert row.id in [t.id for t in listed]
+    finally:
+        await _purge_templates(db, result["template_id"])
+
+
+async def test_create_template_reports_placeholders_and_flags_a_typo(db):
+    unique = f"Pytest Vars {uuid.uuid4().hex[:8]}"
+    result = await create_email_template(
+        name=unique,
+        subject="Hello {company_name}",
+        body="<p>Hi {contct_name}, we make {product_name}.</p>",
+        category="follow_up",
+    )
+    assert result["status"] == "created"
+    assert set(result["placeholders_used"]) == {"company_name", "contct_name", "product_name"}
+    assert result["unknown_placeholders"] == ["contct_name"]
+    await _purge_templates(db, result["template_id"])
+
+
+async def test_create_template_refuses_to_rewrite_an_existing_one(db):
+    unique = f"Pytest Dupe {uuid.uuid4().hex[:8]}"
+    first = await create_email_template(
+        name=unique, subject="A", body="<p>a</p>", category="quotation"
+    )
+    assert first["status"] == "created"
+    try:
+        second = await create_email_template(
+            name=unique.upper(), subject="B", body="<p>b</p>", category="holiday"
+        )
+        assert second["status"] == "duplicate"
+        assert second["template_id"] == first["template_id"]
+
+        from sqlalchemy import select
+
+        from app.models.email_template import EmailTemplate
+
+        row = (
+            await db.execute(select(EmailTemplate).where(EmailTemplate.id == first["template_id"]))
+        ).scalar_one()
+        assert row.subject == "A", "the existing template must not be rewritten"
+    finally:
+        await _purge_templates(db, first["template_id"])
+
+
+async def test_create_template_validates_its_enums(db):
+    """A category the page cannot filter by is a template nobody can find."""
+    assert "error" in await create_email_template(
+        name="x", subject="s", body="b", category="newsletter"
+    )
+    assert "error" in await create_email_template(
+        name="x", subject="s", body="b", category="cold_outreach", language="fr"
+    )
+    assert "error" in await create_email_template(name="  ", subject="s", body="b", category="holiday")
+    assert "error" in await create_email_template(name="x", subject=" ", body="b", category="holiday")
+
+
+async def test_create_template_dry_run_writes_nothing(db):
+    unique = f"Pytest DryTpl {uuid.uuid4().hex[:8]}"
+    result = await create_email_template(
+        name=unique, subject="s", body="<p>b</p>", category="holiday", dry_run=True
+    )
+    assert result["status"] == "would_create"
+
+    from sqlalchemy import select
+
+    from app.models.email_template import EmailTemplate
+
+    row = (
+        await db.execute(select(EmailTemplate).where(EmailTemplate.name == unique))
+    ).scalar_one_or_none()
+    assert row is None
+
+
 # --- cleanup helpers ------------------------------------------------------
+
+async def _purge_templates(db, template_id: int) -> None:
+    from sqlalchemy import delete
+
+    from app.models.email_template import EmailTemplate
+
+    await db.execute(delete(EmailTemplate).where(EmailTemplate.id == template_id))
+    await db.commit()
+
 
 async def _delete_customer(db, customer_id: int) -> None:
     from sqlalchemy import delete

@@ -1,5 +1,6 @@
 """Email sending utility with SMTP support and tracking."""
 import asyncio
+import re
 import uuid
 import aiosmtplib
 from email.mime.text import MIMEText
@@ -25,13 +26,36 @@ def generate_tracking_id() -> str:
 
 
 def render_template(template_str: str, variables: dict) -> str:
-    """Render a Jinja2 template string with variables."""
+    """Substitute a template's variables, in the two spellings people write.
+
+    The editor in the Templates page tells the author to write ``{company_name}``
+    and ships its seeded templates in that form; Jinja2 only understands
+    ``{{ company_name }}``. Left as two dialects, every template saved through
+    the UI mailed its placeholders out verbatim -- a mistake the sender sees
+    only after the customer has. So a placeholder written either way is
+    substituted, and one whose name is not a variable is left standing rather
+    than blanked: an untouched ``{comapny_name}`` in a preview is a typo worth
+    catching, while a silent gap is not.
+    """
+    variables = variables or {}
     try:
-        template = Template(template_str)
-        return template.render(**variables)
+        rendered = Template(template_str or "").render(**variables)
     except Exception as e:
         logger.error(f"Template render error: {e}")
-        return template_str
+        rendered = template_str or ""
+
+    def _sub(match: "re.Match[str]") -> str:
+        name = match.group(1)
+        if name not in variables:
+            return match.group(0)
+        value = variables[name]
+        return "" if value is None else str(value)
+
+    # The lookarounds keep this out of Jinja's own ``{{ name }}``: if the
+    # Jinja pass above failed on syntax, its braces are still in the string and
+    # substituting inside them would mangle the template instead of repairing
+    # the dialect.
+    return re.sub(r"(?<!\{)\{(\w+)\}(?!\})", _sub, rendered)
 
 
 def create_tracking_pixel(tracking_id: str) -> str:

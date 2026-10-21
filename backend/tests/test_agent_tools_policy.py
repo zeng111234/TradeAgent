@@ -15,6 +15,7 @@ from app.agent.trade_tools import FORBIDDEN_TOOL_PATTERNS, build_trade_registry
 EXPECTED_TOOLS = [
     "classify_prospect",
     "create_email_draft",
+    "create_email_template",
     "get_communication_history",
     "get_customer",
     "get_customer_assessment",
@@ -48,9 +49,9 @@ def test_no_tool_name_suggests_an_outbound_or_destructive_action(registry):
             )
 
 
-def test_the_only_write_tools_are_drafting_and_importing(registry):
+def test_the_only_write_tools_are_drafting_importing_and_templating(registry):
     writers = sorted(t.name for t in registry.tagged("write"))
-    assert writers == ["create_email_draft", "upsert_customer"]
+    assert writers == ["create_email_draft", "create_email_template", "upsert_customer"]
 
 
 def test_draft_tool_advertises_that_it_does_not_send(registry):
@@ -58,6 +59,13 @@ def test_draft_tool_advertises_that_it_does_not_send(registry):
     description = registry.get("create_email_draft").description.lower()
     assert "does not send" in description or "not send" in description
     assert "human review" in description or "review" in description
+
+
+def test_template_tool_advertises_that_it_only_stores(registry):
+    """A template tool must not read as a send tool to a hurried model."""
+    description = registry.get("create_email_template").description.lower()
+    assert "does not send" in description or "not send" in description
+    assert "template" in description
 
 
 def test_every_tool_has_a_substantive_description(registry):
@@ -103,8 +111,9 @@ def test_agent_module_contains_no_send_helper():
 def test_read_only_tools_are_the_majority_and_carry_the_read_tag(registry):
     readers = registry.tagged("read")
     assert len(readers) >= 7
-    # The two write tools must not be mislabelled as read-only.
+    # The write tools must not be mislabelled as read-only.
     assert "create_email_draft" not in [t.name for t in readers]
+    assert "create_email_template" not in [t.name for t in readers]
     assert "upsert_customer" not in [t.name for t in readers]
 
 
