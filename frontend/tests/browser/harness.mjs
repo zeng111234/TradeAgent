@@ -13,7 +13,7 @@
  * it to package.json without regenerating the lockfile would break `npm ci`.
  */
 import { spawn } from 'node:child_process'
-import { existsSync, readdirSync } from 'node:fs'
+import { existsSync, readdirSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
@@ -31,14 +31,39 @@ export function chromiumPath() {
     join(homedir(), 'Library', 'Caches', 'ms-playwright'),
   ].filter(Boolean)
 
+  // The unpacked folder is named after the archive Playwright fetched, and
+  // that name is not stable: older builds unpack to `chrome-linux`, the
+  // Chrome-for-Testing builds to `chrome-linux64`. Hard-coding one of them
+  // works on whichever machine it was written on and fails on the other --
+  // which is exactly how a green local run turns into a red CI run that says
+  // "No Chromium found" while the browser sits there downloaded. So read the
+  // build directory instead of guessing it.
+  const isDir = (path) => {
+    try {
+      return statSync(path).isDirectory()
+    } catch {
+      return false
+    }
+  }
+
   const candidates = []
   for (const root of roots) {
     if (!existsSync(root)) continue
     for (const entry of readdirSync(root)) {
-      if (!entry.startsWith('chromium-')) continue
-      candidates.push(join(root, entry, 'chrome-win64', 'chrome.exe'))
-      candidates.push(join(root, entry, 'chrome-linux', 'chrome'))
-      candidates.push(join(root, entry, 'chrome-mac', 'Chromium.app', 'Contents', 'MacOS', 'Chromium'))
+      // chromium-<rev> for the full browser, chromium_headless_shell-<rev>
+      // for the shell. Both unpack their binary one level down.
+      if (!entry.startsWith('chromium')) continue
+      const build = join(root, entry)
+      if (!isDir(build)) continue
+      for (const inner of readdirSync(build)) {
+        if (!inner.startsWith('chrome-')) continue
+        const folder = join(build, inner)
+        if (!isDir(folder)) continue
+        candidates.push(join(folder, 'chrome.exe'))
+        candidates.push(join(folder, 'chrome'))
+        // macOS nests the binary inside an app bundle, one level deeper.
+        candidates.push(join(folder, 'Chromium.app', 'Contents', 'MacOS', 'Chromium'))
+      }
     }
   }
   return candidates.find((path) => existsSync(path)) || ''

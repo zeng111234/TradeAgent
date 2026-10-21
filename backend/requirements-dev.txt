@@ -1,0 +1,5 @@
+# Test-only. Deliberately NOT in requirements.txt: that file is what a
+# deployment installs, and a test runner does not belong in a running app.
+# CI installs both; a deploy installs one.
+pytest==8.4.2
+pytest-asyncio==1.4.0
