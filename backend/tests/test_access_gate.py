@@ -20,7 +20,10 @@ import pytest
 from app import access
 from app.config import settings
 
-PASSWORD = "0315"
+# Deliberately not the value any deployment uses. This file is public, and a
+# test constant that happens to match the live gate hands the password to
+# anyone who reads the repo -- which is what the previous constant did.
+PASSWORD = "test-only-password-7f3a"
 
 
 @pytest.fixture

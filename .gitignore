@@ -76,3 +76,6 @@ Thumbs.db
 *.log
 # Schema-migration backups: a copy of the database taken before a migration ran.
 *.backup-*
+
+# Screenshots from the one-off live check (npm run live:check writes them here).
+frontend/live-*.png
