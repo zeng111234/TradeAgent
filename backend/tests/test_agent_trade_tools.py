@@ -10,10 +10,15 @@ import uuid
 import pytest
 
 from app.agent.trade_tools import (
+    add_customer_contact,
+    add_customer_note,
     classify_prospect,
+    complete_task,
     create_email_draft,
     create_email_template,
+    create_task,
     get_communication_history,
+    list_tasks,
     get_customer,
     get_customer_signals,
     list_customers,
@@ -412,7 +417,154 @@ async def test_create_template_dry_run_writes_nothing(db):
     assert row is None
 
 
+# --- notes, contacts, tasks -----------------------------------------------
+
+async def test_add_note_lands_on_the_customer_timeline(db):
+    """The note must show where a person looks for it: the detail page."""
+    from sqlalchemy import select
+
+    from app.models.customer import CustomerNote
+
+    unique = f"Pytest note {uuid.uuid4().hex[:8]}"
+    customer_id = await _any_customer_id(db)
+    result = await add_customer_note(
+        customer_id=customer_id, content=unique, note_type="quotation"
+    )
+    assert result["status"] == "created"
+    try:
+        row = (
+            await db.execute(select(CustomerNote).where(CustomerNote.id == result["note_id"]))
+        ).scalar_one()
+        assert row.content == unique
+        assert row.note_type == "quotation"
+
+        again = await add_customer_note(
+            customer_id=customer_id, content=unique.upper(), note_type="quotation"
+        )
+        assert again["status"] == "duplicate", "the same note twice is one note"
+    finally:
+        await _purge_notes(db, result["note_id"])
+
+
+async def test_add_note_validates_type_and_customer(db):
+    assert "error" in await add_customer_note(customer_id=1, content="x", note_type="gossip")
+    assert "error" in await add_customer_note(customer_id=1, content="  ")
+    assert "error" in await add_customer_note(customer_id=999_999, content="x")
+
+
+async def test_add_contact_refuses_to_invent_and_never_overwrites(db):
+    from sqlalchemy import select
+
+    from app.models.customer import CustomerContact
+
+    customer_id = await _any_customer_id(db)
+    email = f"{uuid.uuid4().hex[:8]}@example.test"
+    result = await add_customer_contact(
+        customer_id=customer_id, name="Pytest Person", email=email
+    )
+    assert result["status"] == "created"
+    try:
+        again = await add_customer_contact(
+            customer_id=customer_id, name="Someone Else", email=email
+        )
+        assert again["status"] == "duplicate"
+        row = (
+            await db.execute(select(CustomerContact).where(CustomerContact.id == result["contact_id"]))
+        ).scalar_one()
+        assert row.name == "Pytest Person", "the existing contact must not be rewritten"
+
+        bad = await add_customer_contact(
+            customer_id=customer_id, name="X", email="not-an-address"
+        )
+        assert "error" in bad
+    finally:
+        await _purge_contacts(db, result["contact_id"])
+
+
+async def test_create_task_writes_a_row_the_tasks_page_lists(db):
+    from sqlalchemy import select
+
+    from app.models.task import Task
+
+    unique = f"Pytest task {uuid.uuid4().hex[:8]}"
+    customer_id = await _any_customer_id(db)
+    result = await create_task(
+        title=unique,
+        description="check in about the sample",
+        customer_id=customer_id,
+        due_date="2027-03-01",
+        priority="high",
+        task_type="sample",
+    )
+    assert result["status"] == "created"
+    assert result["priority"] == "high"
+    try:
+        row = (
+            await db.execute(select(Task).where(Task.id == result["task_id"]))
+        ).scalar_one()
+        assert row.title == unique
+        assert row.status == "pending"
+        assert row.customer_id == customer_id
+        assert row.due_date is not None
+
+        listed = await list_tasks(customer_id=customer_id, status="pending")
+        assert result["task_id"] in [t["task_id"] for t in listed["tasks"]]
+
+        dupe = await create_task(title=unique.upper(), customer_id=customer_id)
+        assert dupe["status"] == "duplicate"
+
+        closed = await complete_task(task_id=result["task_id"])
+        assert closed["status"] == "closed"
+        assert closed["new_status"] == "completed"
+
+        again = await complete_task(task_id=result["task_id"])
+        assert again["status"] == "already_closed"
+    finally:
+        await _purge_tasks(db, result["task_id"])
+
+
+async def test_create_task_refuses_an_unparseable_date(db):
+    """A dropped date is a reminder that silently stopped being one."""
+    result = await create_task(title="Pytest date", due_date="next tuesday")
+    assert "error" in result
+    assert "2026-10-27" in result["error"] or "ISO" in result["error"]
+
+
+async def test_create_task_validates_its_enums(db):
+    assert "error" in await create_task(title="x", priority="whenever")
+    assert "error" in await create_task(title="x", task_type="nap")
+    assert "error" in await create_task(title="  ")
+    assert "error" in await create_task(title="x", customer_id=999_999)
+
+
 # --- cleanup helpers ------------------------------------------------------
+
+async def _purge_notes(db, note_id: int) -> None:
+    from sqlalchemy import delete
+
+    from app.models.customer import CustomerNote
+
+    await db.execute(delete(CustomerNote).where(CustomerNote.id == note_id))
+    await db.commit()
+
+
+async def _purge_contacts(db, contact_id: int) -> None:
+    from sqlalchemy import delete
+
+    from app.models.customer import CustomerContact
+
+    await db.execute(delete(CustomerContact).where(CustomerContact.id == contact_id))
+    await db.commit()
+
+
+async def _purge_tasks(db, task_id: int) -> None:
+    from sqlalchemy import delete
+
+    from app.models.task import Task
+
+    await db.execute(delete(Task).where(Task.id == task_id))
+    await db.commit()
+
 
 async def _purge_templates(db, template_id: int) -> None:
     from sqlalchemy import delete

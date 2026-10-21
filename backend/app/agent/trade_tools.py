@@ -1200,9 +1200,478 @@ async def create_email_template(
         }
 
 
-# --------------------------------------------------------------------------
-# Registry
-# --------------------------------------------------------------------------
+# ------------------------------------------------------- notes and tasks ---
+# The rest of the pages a person writes to. All additive: a note, a contact,
+# a task, and the one status change that closes a task. Nothing here rewrites
+# what somebody else wrote, and nothing here reaches a customer.
+
+#: Note kinds the customer page tags from. Free text would save and then read
+#: as an unlabelled blob in the timeline.
+NOTE_TYPES = ("general", "email", "call", "meeting", "quotation")
+
+#: The Tasks page filters and tags on exactly these two vocabularies.
+TASK_TYPES = ("follow_up", "call", "email", "meeting", "quotation", "sample")
+TASK_PRIORITIES = ("low", "medium", "high", "urgent")
+
+
+def _parse_due(raw: str) -> tuple[Optional[datetime], Optional[str]]:
+    """``2026-10-27`` or an ISO datetime, or an error naming the problem.
+
+    A date the model meant and a date the system stored must agree, and an
+    unparseable one must not silently become "no due date" -- that is how a
+    reminder quietly stops being a reminder.
+    """
+    raw = (raw or "").strip()
+    if not raw:
+        return None, None
+    try:
+        return datetime.fromisoformat(raw), None
+    except ValueError:
+        return None, (
+            f"due_date {raw!r} is not a date. Write it as YYYY-MM-DD or a full "
+            "ISO datetime such as 2026-10-27T09:00."
+        )
+
+
+@tool(
+    description=(
+        "Record a note on a customer's timeline. It shows on the customer's "
+        "detail page under notes, for whoever opens that customer next. Use it "
+        "for what was agreed, what they asked for, or anything the next person "
+        "needs. note_type is one of: general, email, call, meeting, quotation. "
+        "This stores the note only — it notifies nobody. The same content twice "
+        "on one customer is refused as a duplicate rather than added again."
+    ),
+    tags={"write", "crm"},
+)
+async def add_customer_note(
+    customer_id: int,
+    content: str,
+    note_type: str = "general",
+    dry_run: bool = False,
+) -> dict:
+    """Append to the timeline. Notes are history, so nothing is rewritten."""
+    content = (content or "").strip()
+    note_type = (note_type or "general").strip().lower()
+
+    if not content:
+        return {"error": "content is required"}
+    if note_type not in NOTE_TYPES:
+        return {
+            "error": (
+                f"unknown note_type {note_type!r}. Supported: "
+                f"{', '.join(NOTE_TYPES)}"
+            )
+        }
+
+    async with _session_factory()() as db:
+        customer = (
+            await db.execute(select(Customer).where(Customer.id == int(customer_id)))
+        ).scalar_one_or_none()
+        if customer is None:
+            return {"error": f"no customer with id {customer_id}"}
+
+        # The same sentence twice in a timeline is one event listed twice.
+        # Re-running a goal is ordinary; a duplicate note is not two memories.
+        twin = (
+            await db.execute(
+                select(CustomerNote).where(
+                    CustomerNote.customer_id == customer.id,
+                    func.lower(CustomerNote.content) == content.lower(),
+                ).limit(1)
+            )
+        ).scalar_one_or_none()
+        if twin is not None:
+            return {
+                "status": "duplicate",
+                "note_id": twin.id,
+                "customer_id": customer.id,
+                "reason": (
+                    "this note already exists on the customer. Nothing was "
+                    "added — the timeline would show the same entry twice."
+                ),
+            }
+
+        if dry_run:
+            return {
+                "status": "would_create",
+                "dry_run": True,
+                "customer_id": customer.id,
+                "company_name": customer.company_name,
+                "note_type": note_type,
+                "content": content,
+            }
+
+        row = CustomerNote(
+            customer_id=customer.id,
+            content=content,
+            note_type=note_type,
+        )
+        db.add(row)
+        await db.commit()
+        await db.refresh(row)
+        return {
+            "status": "created",
+            "note_id": row.id,
+            "customer_id": customer.id,
+            "company_name": customer.company_name,
+            "note_type": row.note_type,
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+        }
+
+
+@tool(
+    description=(
+        "Add a contact person to a customer. It shows on the customer's detail "
+        "page under contacts. Give the name and whatever you actually have — "
+        "title, email, phone. Never invent an address or a number: leave the "
+        "field empty and say so. Set is_primary=true only if this is the person "
+        "to write to. An existing contact with the same email (or the same "
+        "name) is reported as a duplicate and left untouched."
+    ),
+    tags={"write", "crm"},
+)
+async def add_customer_contact(
+    customer_id: int,
+    name: str,
+    title: str = "",
+    email: str = "",
+    phone: str = "",
+    whatsapp: str = "",
+    linkedin: str = "",
+    is_primary: bool = False,
+    dry_run: bool = False,
+) -> dict:
+    """Add a person, never rewrite one.
+
+    A contact is somebody's real counterpart. Overwriting their address with
+    one scraped from a page would be worse than not having it, so an existing
+    record is reported instead of updated.
+    """
+    name = (name or "").strip()
+    email = (email or "").strip()
+    if not name:
+        return {"error": "name is required"}
+    if email and "@" not in email:
+        return {"error": f"{email!r} does not look like an email address"}
+
+    async with _session_factory()() as db:
+        customer = (
+            await db.execute(select(Customer).where(Customer.id == int(customer_id)))
+        ).scalar_one_or_none()
+        if customer is None:
+            return {"error": f"no customer with id {customer_id}"}
+
+        conditions = [CustomerContact.customer_id == customer.id]
+        if email:
+            conditions.append(func.lower(CustomerContact.email) == email.lower())
+        else:
+            conditions.append(func.lower(CustomerContact.name) == name.lower())
+        existing = (
+            await db.execute(select(CustomerContact).where(*conditions).limit(1))
+        ).scalar_one_or_none()
+        if existing is not None:
+            return {
+                "status": "duplicate",
+                "contact_id": existing.id,
+                "customer_id": customer.id,
+                "existing_name": existing.name,
+                "existing_email": existing.email,
+                "reason": (
+                    "this person is already on the customer. Nothing was "
+                    "changed — overwriting a contact a person saved is not "
+                    "this tool's job."
+                ),
+            }
+
+        if dry_run:
+            return {
+                "status": "would_create",
+                "dry_run": True,
+                "customer_id": customer.id,
+                "company_name": customer.company_name,
+                "name": name,
+                "email": email or None,
+            }
+
+        row = CustomerContact(
+            customer_id=customer.id,
+            name=name[:100],
+            title=(title or "").strip()[:100] or None,
+            email=email or None,
+            phone=(phone or "").strip()[:50] or None,
+            whatsapp=(whatsapp or "").strip()[:50] or None,
+            linkedin=(linkedin or "").strip()[:300] or None,
+            is_primary=1 if is_primary else 0,
+        )
+        db.add(row)
+        await db.commit()
+        await db.refresh(row)
+        return {
+            "status": "created",
+            "contact_id": row.id,
+            "customer_id": customer.id,
+            "company_name": customer.company_name,
+            "name": row.name,
+            "email": row.email,
+            "is_primary": bool(row.is_primary),
+        }
+
+
+@tool(
+    description=(
+        "Create a task on the 待办事项 (Tasks) page — a reminder or a piece of "
+        "work to come back to. Give a title, when it is due (YYYY-MM-DD or an "
+        "ISO datetime), and customer_id if it is about one customer. "
+        "priority: low | medium | high | urgent. "
+        "task_type: follow_up | call | email | meeting | quotation | sample. "
+        "This only stores the task; it does not remind anyone on its own. An "
+        "open task with the same title for the same customer is reported as a "
+        "duplicate rather than added again."
+    ),
+    tags={"write", "tasks"},
+)
+async def create_task(
+    title: str,
+    description: str = "",
+    customer_id: int = 0,
+    due_date: str = "",
+    priority: str = "medium",
+    task_type: str = "follow_up",
+    dry_run: bool = False,
+) -> dict:
+    """Put work on the list a person already works from.
+
+    A task with no due date is a note with delusions: it lands on the page
+    outside every date filter, which is where reminders go to be forgotten.
+    The date is therefore parsed strictly rather than dropped on error.
+    """
+    title = (title or "").strip()
+    description = (description or "").strip()
+    priority = (priority or "medium").strip().lower()
+    task_type = (task_type or "follow_up").strip().lower()
+
+    if not title:
+        return {"error": "title is required"}
+    if len(title) > 300:
+        return {"error": "title is too long (300 characters max)"}
+    if priority not in TASK_PRIORITIES:
+        return {
+            "error": (
+                f"unknown priority {priority!r}. Supported: "
+                f"{', '.join(TASK_PRIORITIES)}"
+            )
+        }
+    if task_type not in TASK_TYPES:
+        return {
+            "error": (
+                f"unknown task_type {task_type!r}. Supported: "
+                f"{', '.join(TASK_TYPES)}"
+            )
+        }
+
+    due, due_error = _parse_due(due_date)
+    if due_error:
+        return {"error": due_error}
+
+    async with _session_factory()() as db:
+        customer = None
+        if customer_id:
+            customer = (
+                await db.execute(select(Customer).where(Customer.id == int(customer_id)))
+            ).scalar_one_or_none()
+            if customer is None:
+                return {"error": f"no customer with id {customer_id}"}
+
+        # Still open, same customer, same title: one piece of work, listed
+        # twice. Closing a duplicate is worse than never making it, because
+        # whoever works the list spends real minutes finding that out.
+        conditions = [
+            func.lower(Task.title) == title.lower(),
+            Task.status.in_(("pending", "in_progress")),
+        ]
+        if customer is not None:
+            conditions.append(Task.customer_id == customer.id)
+        else:
+            conditions.append(Task.customer_id.is_(None))
+        twin = (
+            await db.execute(select(Task).where(*conditions).limit(1))
+        ).scalar_one_or_none()
+        if twin is not None:
+            return {
+                "status": "duplicate",
+                "task_id": twin.id,
+                "reason": (
+                    "an open task with this title already exists. Nothing was "
+                    "added. Give it a different title if this is genuinely "
+                    "separate work."
+                ),
+            }
+
+        if dry_run:
+            return {
+                "status": "would_create",
+                "dry_run": True,
+                "title": title,
+                "due_date": due.isoformat() if due else None,
+                "priority": priority,
+                "task_type": task_type,
+                "customer_id": customer.id if customer else None,
+            }
+
+        row = Task(
+            title=title[:300],
+            description=description or None,
+            customer_id=customer.id if customer else None,
+            due_date=due,
+            priority=priority,
+            task_type=task_type,
+            status="pending",
+        )
+        db.add(row)
+        await db.commit()
+        await db.refresh(row)
+        return {
+            "status": "created",
+            "task_id": row.id,
+            "title": row.title,
+            "due_date": row.due_date.isoformat() if row.due_date else None,
+            "priority": row.priority if isinstance(row.priority, str) else row.priority.value,
+            "task_type": row.task_type,
+            "customer_id": row.customer_id,
+            "company_name": customer.company_name if customer else None,
+            "visible_in": "待办事项 (Tasks) page",
+        }
+
+
+@tool(
+    description=(
+        "Mark a task completed, or cancel it. Only the status changes: the "
+        "title, due date and description stay exactly as they are. Use it when "
+        "you tell me something is finished, or that it is no longer needed."
+    ),
+    tags={"write", "tasks"},
+)
+async def complete_task(
+    task_id: int,
+    cancelled: bool = False,
+    dry_run: bool = False,
+) -> dict:
+    """Close what is already on the list.
+
+    Narrow on purpose: no title, no date, no description can be edited here.
+    Flipping a status is bookkeeping anybody can check; rewriting what a task
+    says is editing somebody's plan.
+    """
+    async with _session_factory()() as db:
+        task = (
+            await db.execute(select(Task).where(Task.id == int(task_id)))
+        ).scalar_one_or_none()
+        if task is None:
+            return {"error": f"no task with id {task_id}"}
+
+        current = task.status if isinstance(task.status, str) else task.status.value
+        if current in ("completed", "cancelled"):
+            return {
+                "status": "already_closed",
+                "task_id": task.id,
+                "current_status": current,
+                "reason": "this task is already closed. Nothing was changed.",
+            }
+
+        new_status = "cancelled" if cancelled else "completed"
+        if dry_run:
+            return {
+                "status": "would_close",
+                "dry_run": True,
+                "task_id": task.id,
+                "title": task.title,
+                "current_status": current,
+                "new_status": new_status,
+            }
+
+        task.status = new_status
+        task.completed_at = datetime.utcnow()
+        await db.commit()
+        return {
+            "status": "closed",
+            "task_id": task.id,
+            "title": task.title,
+            "new_status": new_status,
+        }
+
+
+@tool(
+    description=(
+        "List tasks from the 待办事项 (Tasks) page — what is open, what is due, "
+        "what was already closed. Read-only. Filter by customer_id, or set "
+        "due_only=true for what is due now."
+    ),
+    tags={"read", "tasks"},
+)
+async def list_tasks(
+    customer_id: int = 0,
+    status: str = "",
+    due_only: bool = False,
+    limit: int = 10,
+) -> dict:
+    """Read the list before adding to it.
+
+    Without this the model would create a reminder it cannot see, and a second
+    goal about the same customer would stack a second one on top.
+    """
+    limit = max(1, min(int(limit), MAX_ROWS))
+    status = (status or "").strip().lower()
+
+    conditions = []
+    if customer_id:
+        conditions.append(Task.customer_id == int(customer_id))
+    if status:
+        conditions.append(Task.status == status)
+    if due_only:
+        conditions.append(Task.due_date.isnot(None))
+        conditions.append(Task.due_date <= datetime.utcnow())
+
+    async with _session_factory()() as db:
+        query = select(Task)
+        if conditions:
+            query = query.where(*conditions)
+        rows = (
+            await db.execute(
+                query.order_by(Task.due_date.is_(None), Task.due_date, Task.id).limit(limit)
+            )
+        ).scalars().all()
+
+        out = []
+        for task in rows:
+            company = None
+            if task.customer_id:
+                company = (
+                    await db.execute(
+                        select(Customer.company_name).where(Customer.id == task.customer_id)
+                    )
+                ).scalar_one_or_none()
+            out.append({
+                "task_id": task.id,
+                "title": task.title,
+                "status": task.status if isinstance(task.status, str) else task.status.value,
+                "priority": task.priority if isinstance(task.priority, str) else task.priority.value,
+                "task_type": task.task_type,
+                "due_date": task.due_date.isoformat() if task.due_date else None,
+                "customer_id": task.customer_id,
+                "company_name": company,
+            })
+
+    return {
+        "count": len(out),
+        "tasks": out,
+        "filtered_by": {
+            "customer_id": customer_id or None,
+            "status": status or None,
+            "due_only": due_only,
+        },
+    }
+
 
 # Tools the agent must never have. Kept as an explicit list so the boundary is
 # testable rather than merely absent: tests/test_agent_tools_policy.py asserts
@@ -1229,6 +1698,11 @@ def build_trade_registry() -> ToolRegistry:
         inspect_website,
         classify_prospect,
         upsert_customer,
+        add_customer_contact,
+        add_customer_note,
+        create_task,
+        complete_task,
+        list_tasks,
         create_email_draft,
         create_email_template,
     ):

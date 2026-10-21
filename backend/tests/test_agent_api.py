@@ -24,8 +24,12 @@ def test_capabilities_declares_the_boundary(client):
     # Every write tool is named here on purpose: adding one is a boundary
     # decision, and this assertion is where it has to be said out loud.
     assert body["write_capable"] == [
+        "add_customer_contact",
+        "add_customer_note",
+        "complete_task",
         "create_email_draft",
         "create_email_template",
+        "create_task",
         "upsert_customer",
     ]
 

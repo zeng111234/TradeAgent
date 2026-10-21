@@ -322,6 +322,9 @@ async def api_agent_capabilities():
             "delete or modify an email log",
             "modify or delete an existing email template: a new one can be "
             "created, but a template a person edited is left alone",
+            "edit what a task says: one can be created and closed (completed "
+            "or cancelled), but its title, due date and description are not "
+            "rewritten",
             # Absent capabilities, not policies. "We refuse to quote" would be
             # a promise the code does not keep -- the model can still write a
             # price into a draft. What is true is that there is nothing to read

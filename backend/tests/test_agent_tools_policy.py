@@ -13,9 +13,13 @@ from app.agent.tools import ToolRegistry
 from app.agent.trade_tools import FORBIDDEN_TOOL_PATTERNS, build_trade_registry
 
 EXPECTED_TOOLS = [
+    "add_customer_contact",
+    "add_customer_note",
     "classify_prospect",
+    "complete_task",
     "create_email_draft",
     "create_email_template",
+    "create_task",
     "get_communication_history",
     "get_customer",
     "get_customer_assessment",
@@ -25,6 +29,7 @@ EXPECTED_TOOLS = [
     "get_follow_up_plan",
     "inspect_website",
     "list_customers",
+    "list_tasks",
     "search_prospects",
     "upsert_customer",
 ]
@@ -49,9 +54,36 @@ def test_no_tool_name_suggests_an_outbound_or_destructive_action(registry):
             )
 
 
-def test_the_only_write_tools_are_drafting_importing_and_templating(registry):
+def test_the_only_write_tools_are_additive_and_never_dispatch(registry):
+    """Every write tool appends something or closes a task. None of them send,
+    and none of them rewrite what somebody else wrote."""
     writers = sorted(t.name for t in registry.tagged("write"))
-    assert writers == ["create_email_draft", "create_email_template", "upsert_customer"]
+    assert writers == [
+        "add_customer_contact",
+        "add_customer_note",
+        "complete_task",
+        "create_email_draft",
+        "create_email_template",
+        "create_task",
+        "upsert_customer",
+    ]
+
+
+def test_no_write_tool_edits_an_existing_record(registry):
+    """`complete_task` flips a status and nothing else; the rest create.
+
+    Checked on the descriptions rather than on names: a tool called
+    `update_task` that only appended would be fine, and a tool called
+    `create_task` that overwrote would not be. What the model is told is the
+    contract it acts on.
+    """
+    for name in ("add_customer_note", "add_customer_contact", "create_task"):
+        text = registry.get(name).description.lower()
+        assert any(word in text for word in ("already", "overwrite", "existing", "duplicate")), (
+            f"{name} does not tell the model what happens to a duplicate"
+        )
+    text = registry.get("complete_task").description.lower()
+    assert "only the status" in text or "only the status changes" in text
 
 
 def test_draft_tool_advertises_that_it_does_not_send(registry):
