@@ -30,6 +30,9 @@ def test_capabilities_declares_the_boundary(client):
         "create_email_draft",
         "create_email_template",
         "create_task",
+        "reject_email_draft",
+        "reschedule_task",
+        "update_customer_stage",
         "upsert_customer",
     ]
 

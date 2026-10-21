@@ -318,13 +318,18 @@ async def api_agent_capabilities():
         "write_capable": sorted(t.name for t in registry.tagged("write")),
         "cannot": [
             "send email to a customer",
-            "delete or modify an existing customer",
-            "delete or modify an email log",
+            "delete a customer, or rewrite the details a person saved — its "
+            "name, website, contacts and notes: a customer can be created and "
+            "moved between pipeline stages, but nothing else on an existing "
+            "row is edited",
+            "delete an email log, or rewrite one that has already gone out: a "
+            "pending draft can be rejected — kept as a record, never deleted — "
+            "but a sent message is left exactly as it is",
             "modify or delete an existing email template: a new one can be "
             "created, but a template a person edited is left alone",
-            "edit what a task says: one can be created and closed (completed "
-            "or cancelled), but its title, due date and description are not "
-            "rewritten",
+            "edit what a task says: one can be created, closed (completed "
+            "or cancelled), and moved to a new due date, but its title and "
+            "description are not rewritten",
             # Absent capabilities, not policies. "We refuse to quote" would be
             # a promise the code does not keep -- the model can still write a
             # price into a draft. What is true is that there is nothing to read

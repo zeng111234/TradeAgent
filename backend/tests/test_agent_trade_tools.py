@@ -18,10 +18,18 @@ from app.agent.trade_tools import (
     create_email_template,
     create_task,
     get_communication_history,
+    get_pipeline_stats,
+    get_quality_report,
+    list_email_logs,
+    list_email_templates,
     list_tasks,
     get_customer,
     get_customer_signals,
     list_customers,
+    reject_email_draft,
+    render_email_template,
+    reschedule_task,
+    update_customer_stage,
     upsert_customer,
 )
 
@@ -591,6 +599,420 @@ async def _purge_emails(db, customer_id: int) -> None:
 
     await db.execute(delete(EmailLog).where(EmailLog.customer_id == customer_id))
     await db.commit()
+
+
+async def _purge_one_email(db, email_id: int) -> None:
+    from sqlalchemy import delete
+
+    from app.models.email_log import EmailLog
+
+    await db.execute(delete(EmailLog).where(EmailLog.id == email_id))
+    await db.commit()
+
+
+# --- list_email_templates -------------------------------------------------
+
+async def test_list_email_templates_returns_the_seeded_templates(db):
+    """Read-back is the point: a template you can only write is unusable."""
+    result = await list_email_templates()
+
+    assert result["count"] >= 2, "the demo seed ships two templates"
+    names = [t["name"] for t in result["templates"]]
+    assert "Cold Outreach - General" in names
+
+    for tpl in result["templates"]:
+        for key in ("id", "name", "category", "language", "subject", "placeholders_used"):
+            assert key in tpl
+        assert isinstance(tpl["placeholders_used"], list)
+
+
+async def test_list_email_templates_filters_by_category(db):
+    result = await list_email_templates(category="follow_up")
+    assert result["count"] >= 1
+    assert all(t["category"] == "follow_up" for t in result["templates"])
+
+    # A category the page cannot filter by is refused, not silently ignored.
+    assert "error" in await list_email_templates(category="newsletter")
+    assert "error" in await list_email_templates(language="fr")
+
+
+async def test_list_email_templates_searches_names_and_subjects(db):
+    by_name = await list_email_templates(search="Cold Outreach")
+    assert any("Cold Outreach" in t["name"] for t in by_name["templates"])
+
+    by_subject = await list_email_templates(search="inquiry")
+    assert by_subject["count"] >= 1, "the seeded follow-up subject contains 'inquiry'"
+
+
+# --- render_email_template ------------------------------------------------
+
+async def test_render_template_fills_the_variables_from_the_customer_record(db):
+    from sqlalchemy import select
+
+    from app.models.email_template import EmailTemplate
+
+    row = (
+        await db.execute(
+            select(EmailTemplate).where(EmailTemplate.name == "Cold Outreach - General")
+        )
+    ).scalar_one()
+    customer_id = await _any_customer_id(db)
+
+    result = await render_email_template(template_id=row.id, customer_id=customer_id)
+
+    assert "error" not in result
+    assert result["subject"], "a rendered subject must not come back empty"
+    # The company name came from the CRM, not from the caller.
+    from app.models.customer import Customer
+
+    customer = (
+        await db.execute(select(Customer).where(Customer.id == customer_id))
+    ).scalar_one()
+    assert customer.company_name in result["subject"]
+    assert "company_name" not in (result["unresolved_placeholders"] or [])
+    assert "create_email_draft" in result["next_step"]
+
+
+async def test_render_template_leaves_an_unknown_placeholder_standing(db):
+    """A typo must stay visible; a silent gap is worse than no fill at all."""
+    from sqlalchemy import select
+
+    from app.models.email_template import EmailTemplate
+
+    row = (
+        await db.execute(
+            select(EmailTemplate).where(EmailTemplate.name == "Cold Outreach - General")
+        )
+    ).scalar_one()
+
+    result = await render_email_template(template_id=row.id, company_name="Acme Textiles")
+
+    assert "Acme Textiles" in result["subject"]
+    # contact_name was never supplied, so it is reported rather than blanked.
+    assert "contact_name" in (result["unresolved_placeholders"] or [])
+    assert "{contact_name}" in result["body"]
+
+
+async def test_render_template_accepts_the_double_brace_dialect(db):
+    """The editor teaches one dialect, Jinja understands the other."""
+    unique = f"Pytest Braces {uuid.uuid4().hex[:8]}"
+    created = await create_email_template(
+        name=unique,
+        subject="Hello {{ company_name }}",
+        body="<p>Hi {contact_name}, we make {product_name}.</p>",
+        category="follow_up",
+    )
+    assert created["status"] == "created"
+    try:
+        result = await render_email_template(
+            template_id=created["template_id"],
+            company_name="Acme Textiles",
+            contact_name="Hans",
+            product_name="gold thread",
+        )
+        assert result["subject"] == "Hello Acme Textiles"
+        assert "Hans" in result["body"] and "gold thread" in result["body"]
+        assert result["unresolved_placeholders"] is None
+    finally:
+        await _purge_templates(db, created["template_id"])
+
+
+async def test_render_template_rejects_unknown_ids(db):
+    assert "error" in await render_email_template(template_id=999999)
+    from sqlalchemy import select
+
+    from app.models.email_template import EmailTemplate
+
+    row = (
+        await db.execute(select(EmailTemplate).limit(1))
+    ).scalar_one()
+    assert "error" in await render_email_template(template_id=row.id, customer_id=999999)
+
+
+# --- list_email_logs ------------------------------------------------------
+
+async def test_list_email_logs_reports_the_pending_queue(db):
+    """The desk, seen whole — what is waiting, for whom, and what it says."""
+    customer_id = await _any_customer_id(db)
+    created = await create_email_draft(
+        customer_id=customer_id,
+        subject=f"Queue check {uuid.uuid4().hex[:8]}",
+        body="<p>Checking the queue view.</p>",
+    )
+    assert created["status"] == "draft_created"
+    try:
+        pending = await list_email_logs(status="pending")
+        assert created["email_log_id"] in [e["id"] for e in pending["emails"]]
+        assert pending["counts_by_status"].get("pending", 0) >= 1
+
+        mine = await list_email_logs(customer_id=customer_id)
+        assert all(e["customer_id"] == customer_id for e in mine["emails"])
+        assert any(e["id"] == created["email_log_id"] for e in mine["emails"])
+    finally:
+        await _purge_emails(db, customer_id)
+
+
+async def test_list_email_logs_validates_the_status(db):
+    """A status outside the page's vocabulary is a filter that returns nothing."""
+    assert "error" in await list_email_logs(status="draf")
+    result = await list_email_logs()
+    assert result["count"] >= 0
+    for email in result["emails"]:
+        for key in ("id", "customer_id", "to_email", "subject", "status"):
+            assert key in email
+
+
+# --- get_pipeline_stats ---------------------------------------------------
+
+async def test_get_pipeline_stats_counts_every_stage(db):
+    result = await get_pipeline_stats()
+
+    assert "dashboard" in result and "stages" in result
+    for key in ("total_customers", "open_rate", "reply_rate", "pending_tasks", "overdue_tasks"):
+        assert key in result["dashboard"]
+    # The funnel covers the whole vocabulary, so a stage with nobody in it is
+    # reported as zero rather than missing.
+    assert set(result["stages"]) == {
+        "new", "contacted", "interested", "quoting",
+        "sample", "ordering", "completed", "lost",
+    }
+    assert sum(result["stages"].values()) == result["total_customers_in_funnel"]
+    assert result["total_customers_in_funnel"] >= result["dashboard"]["total_customers"]
+
+
+# --- get_quality_report ---------------------------------------------------
+
+async def test_get_quality_report_returns_operational_numbers(db):
+    result = await get_quality_report(days=14)
+
+    assert result["days"] == 14
+    assert "runs" in result
+    # Read-only: asking about the system must not write to it.
+    assert "error" not in result
+
+
+# --- update_customer_stage ------------------------------------------------
+
+async def test_update_customer_stage_moves_only_the_stage(db):
+    from sqlalchemy import select
+
+    from app.models.customer import Customer
+
+    unique = f"Pytest Stage Co {uuid.uuid4().hex[:8]}"
+    created = await upsert_customer(
+        company_name=unique, country="Germany", products="gold thread", score=42.0
+    )
+    assert created["status"] == "created"
+    try:
+        moved = await update_customer_stage(customer_id=created["customer_id"], stage="quoting")
+        assert moved["status"] == "stage_updated"
+        assert moved["stage_before"] == "new"
+        assert moved["stage_after"] == "quoting"
+
+        row = (
+            await db.execute(select(Customer).where(Customer.id == created["customer_id"]))
+        ).scalar_one()
+        assert row.stage.value == "quoting"
+        assert row.country == "Germany", "curated fields must not move with the stage"
+        assert row.products == "gold thread"
+        assert row.score == 42.0
+    finally:
+        await _delete_customer(db, created["customer_id"])
+
+
+async def test_update_customer_stage_refuses_an_unknown_stage(db):
+    created = await upsert_customer(company_name=f"Pytest Bad Stage {uuid.uuid4().hex[:8]}")
+    try:
+        result = await update_customer_stage(customer_id=created["customer_id"], stage="negotiating")
+        assert "error" in result
+        assert "quoting" in result["error"], "the error should name the real vocabulary"
+    finally:
+        await _delete_customer(db, created["customer_id"])
+
+
+async def test_update_customer_stage_is_idempotent(db):
+    created = await upsert_customer(company_name=f"Pytest Same Stage {uuid.uuid4().hex[:8]}")
+    try:
+        again = await update_customer_stage(customer_id=created["customer_id"], stage="new")
+        assert again["status"] == "unchanged"
+        assert again["stage"] == "new"
+    finally:
+        await _delete_customer(db, created["customer_id"])
+
+
+async def test_update_customer_stage_dry_run_writes_nothing(db):
+    from sqlalchemy import select
+
+    from app.models.customer import Customer
+
+    created = await upsert_customer(company_name=f"Pytest Stage Dry {uuid.uuid4().hex[:8]}")
+    try:
+        result = await update_customer_stage(
+            customer_id=created["customer_id"], stage="lost", dry_run=True
+        )
+        assert result["status"] == "would_change"
+        row = (
+            await db.execute(select(Customer).where(Customer.id == created["customer_id"]))
+        ).scalar_one()
+        assert row.stage.value == "new", "dry_run must not write"
+    finally:
+        await _delete_customer(db, created["customer_id"])
+
+
+async def test_update_customer_stage_unknown_customer(db):
+    assert "error" in await update_customer_stage(customer_id=999999, stage="quoting")
+
+
+# --- reschedule_task ------------------------------------------------------
+
+async def test_reschedule_task_moves_only_the_due_date(db):
+    created = await create_task(
+        title=f"Pytest Reschedule {uuid.uuid4().hex[:8]}",
+        description="send the revised quotation",
+        due_date="2026-10-01",
+        priority="high",
+    )
+    assert created["status"] == "created"
+    try:
+        moved = await reschedule_task(task_id=created["task_id"], due_date="2026-11-05")
+        assert moved["status"] == "rescheduled"
+        assert moved["due_date_before"] == "2026-10-01T00:00:00"
+        assert moved["due_date_after"] == "2026-11-05T00:00:00"
+
+        rows = await list_tasks(status="pending")
+        task = next(t for t in rows["tasks"] if t["task_id"] == created["task_id"])
+        assert task["due_date"] == "2026-11-05T00:00:00"
+        assert task["title"] == created["title"], "the title must not be rewritten"
+        assert task["priority"] == "high", "the priority must not be rewritten"
+    finally:
+        await _purge_tasks(db, created["task_id"])
+
+
+async def test_reschedule_task_can_clear_the_date(db):
+    created = await create_task(
+        title=f"Pytest Clear Date {uuid.uuid4().hex[:8]}", due_date="2026-10-01"
+    )
+    try:
+        moved = await reschedule_task(task_id=created["task_id"], due_date="")
+        assert moved["status"] == "rescheduled"
+        assert moved["due_date_after"] is None
+    finally:
+        await _purge_tasks(db, created["task_id"])
+
+
+async def test_reschedule_task_parses_the_date_strictly(db):
+    """A date the model meant and a date the system stored must agree."""
+    created = await create_task(title=f"Pytest Bad Date {uuid.uuid4().hex[:8]}")
+    try:
+        result = await reschedule_task(task_id=created["task_id"], due_date="next tuesday")
+        assert "error" in result
+        assert "YYYY-MM-DD" in result["error"]
+    finally:
+        await _purge_tasks(db, created["task_id"])
+
+
+async def test_reschedule_task_refuses_a_closed_task(db):
+    created = await create_task(
+        title=f"Pytest Closed Move {uuid.uuid4().hex[:8]}", due_date="2026-10-01"
+    )
+    try:
+        await complete_task(task_id=created["task_id"])
+        moved = await reschedule_task(task_id=created["task_id"], due_date="2026-12-01")
+        assert moved["status"] == "already_closed"
+        assert moved["current_status"] == "completed"
+    finally:
+        await _purge_tasks(db, created["task_id"])
+
+
+async def test_reschedule_task_unchanged_when_the_date_is_the_same(db):
+    created = await create_task(
+        title=f"Pytest Same Date {uuid.uuid4().hex[:8]}", due_date="2026-10-01"
+    )
+    try:
+        result = await reschedule_task(task_id=created["task_id"], due_date="2026-10-01")
+        assert result["status"] == "unchanged"
+    finally:
+        await _purge_tasks(db, created["task_id"])
+
+
+async def test_reschedule_task_unknown_id(db):
+    assert "error" in await reschedule_task(task_id=999999, due_date="2026-11-01")
+
+
+# --- reject_email_draft ---------------------------------------------------
+
+async def test_reject_email_draft_keeps_the_row_and_marks_it_rejected(db):
+    from sqlalchemy import select
+
+    from app.models.email_log import EmailLog
+
+    customer_id = await _any_customer_id(db)
+    created = await create_email_draft(
+        customer_id=customer_id,
+        subject=f"Withdraw me {uuid.uuid4().hex[:8]}",
+        body="<p>Second thoughts.</p>",
+    )
+    try:
+        rejected = await reject_email_draft(
+            email_id=created["email_log_id"], reason="quoting changed, resend later"
+        )
+        assert rejected["status"] == "rejected"
+        assert rejected["reason_recorded"] == "quoting changed, resend later"
+
+        row = (
+            await db.execute(select(EmailLog).where(EmailLog.id == created["email_log_id"]))
+        ).scalar_one()
+        assert row.status.value == "rejected", "kept as a record, never deleted"
+        assert row.subject == rejected["subject"], "the draft's words are not rewritten"
+
+        again = await reject_email_draft(email_id=created["email_log_id"], reason="again")
+        assert again["status"] == "already_rejected"
+    finally:
+        await _purge_one_email(db, created["email_log_id"])
+
+
+async def test_reject_email_draft_refuses_anything_already_sent(db):
+    from sqlalchemy import select
+
+    from app.models.email_log import EmailLog, EmailStatus
+
+    customer_id = await _any_customer_id(db)
+    created = await create_email_draft(
+        customer_id=customer_id,
+        subject=f"Already sent {uuid.uuid4().hex[:8]}",
+        body="<p>Gone.</p>",
+    )
+    try:
+        await db.execute(
+            select(EmailLog).where(EmailLog.id == created["email_log_id"])
+        )
+        row = (
+            await db.execute(select(EmailLog).where(EmailLog.id == created["email_log_id"]))
+        ).scalar_one()
+        row.status = EmailStatus.SENT
+        await db.commit()
+
+        result = await reject_email_draft(email_id=created["email_log_id"], reason="too late")
+        assert "error" in result
+        assert "sent" in result["error"]
+    finally:
+        await _purge_one_email(db, created["email_log_id"])
+
+
+async def test_reject_email_draft_dry_run_and_unknown_id(db):
+    customer_id = await _any_customer_id(db)
+    created = await create_email_draft(
+        customer_id=customer_id,
+        subject=f"Dry reject {uuid.uuid4().hex[:8]}",
+        body="<p>Preview only.</p>",
+    )
+    try:
+        preview = await reject_email_draft(email_id=created["email_log_id"], dry_run=True)
+        assert preview["status"] == "would_reject"
+        assert preview["dry_run"] is True
+        assert "error" in await reject_email_draft(email_id=999999)
+    finally:
+        await _purge_one_email(db, created["email_log_id"])
 
 
 # --------------------------------------------------------------------------

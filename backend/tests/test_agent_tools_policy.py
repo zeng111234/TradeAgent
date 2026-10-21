@@ -27,10 +27,18 @@ EXPECTED_TOOLS = [
     # The follow-up plan, read-only. It is how the agent reads the schedule the
     # deterministic planner produced instead of guessing who to chase.
     "get_follow_up_plan",
+    "get_pipeline_stats",
+    "get_quality_report",
     "inspect_website",
     "list_customers",
+    "list_email_logs",
+    "list_email_templates",
     "list_tasks",
+    "reject_email_draft",
+    "render_email_template",
+    "reschedule_task",
     "search_prospects",
+    "update_customer_stage",
     "upsert_customer",
 ]
 
@@ -55,8 +63,10 @@ def test_no_tool_name_suggests_an_outbound_or_destructive_action(registry):
 
 
 def test_the_only_write_tools_are_additive_and_never_dispatch(registry):
-    """Every write tool appends something or closes a task. None of them send,
-    and none of them rewrite what somebody else wrote."""
+    """Every write tool appends something, or moves one status or date.
+
+    None of them send, and none of them rewrite what somebody else wrote.
+    """
     writers = sorted(t.name for t in registry.tagged("write"))
     assert writers == [
         "add_customer_contact",
@@ -65,25 +75,38 @@ def test_the_only_write_tools_are_additive_and_never_dispatch(registry):
         "create_email_draft",
         "create_email_template",
         "create_task",
+        "reject_email_draft",
+        "reschedule_task",
+        "update_customer_stage",
         "upsert_customer",
     ]
 
 
-def test_no_write_tool_edits_an_existing_record(registry):
-    """`complete_task` flips a status and nothing else; the rest create.
+def test_write_tools_never_rewrite_what_a_person_wrote(registry):
+    """Three kinds of write are allowed, and each has a single-field contract.
 
-    Checked on the descriptions rather than on names: a tool called
-    `update_task` that only appended would be fine, and a tool called
-    `create_task` that overwrote would not be. What the model is told is the
-    contract it acts on.
+    A tool that *creates* says what happens to a duplicate; a tool that
+    *closes or moves state* says which one field changes and that the rest is
+    left alone. Checked on the descriptions rather than on names, because what
+    the model is told is the contract it acts on: a tool called `update_task`
+    that only appended would be fine, and a tool called `create_task` that
+    overwrote would not be.
     """
     for name in ("add_customer_note", "add_customer_contact", "create_task"):
         text = registry.get(name).description.lower()
         assert any(word in text for word in ("already", "overwrite", "existing", "duplicate")), (
             f"{name} does not tell the model what happens to a duplicate"
         )
+    # The state movers: each names the one field that may change.
     text = registry.get("complete_task").description.lower()
     assert "only the status" in text or "only the status changes" in text
+    text = registry.get("update_customer_stage").description.lower()
+    assert "only the stage" in text
+    text = registry.get("reschedule_task").description.lower()
+    assert "only the due date" in text
+    # A withdrawal keeps the record; a reader must not mistake it for a delete.
+    text = registry.get("reject_email_draft").description.lower()
+    assert "kept" in text and "deleted" in text
 
 
 def test_draft_tool_advertises_that_it_does_not_send(registry):

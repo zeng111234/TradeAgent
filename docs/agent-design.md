@@ -172,9 +172,9 @@ number, because a number gets acted on.
 
 The agent can investigate, read, and prepare drafts. It cannot dispatch.
 
-There is no send tool, no delete tool, and no tool that modifies an existing
-customer or email log. `create_email_draft` stores a draft with status
-`pending`, which is what the existing two-step review flow already consumes.
+There is no send tool, no delete tool, and no tool that rewrites the content a
+person saved. `create_email_draft` stores a draft with status `pending`, which
+is what the existing two-step review flow already consumes.
 
 Prompt wording is not the mechanism. The mechanism is that the capability does
 not exist in the registry, which `tests/test_agent_tools_policy.py` asserts:
@@ -182,11 +182,26 @@ not exist in the registry, which `tests/test_agent_tools_policy.py` asserts:
 - no registered tool name matches `send`, `dispatch`, `delete`, `remove`,
   `drop`, `purge`
 - the agent package contains no SMTP import at all
-- the only write-capable tools are `create_email_draft` and `upsert_customer`
+- every write tool either appends a record or moves exactly one status or
+  schedule field, and its description says which
 
 `upsert_customer` refuses to modify an existing row and reports `skipped`
 instead. An agent silently rewriting curated data is worse than an agent adding
 a duplicate you can delete.
+
+The same rule, stated as the boundary it actually is: the four tools that touch
+an existing row — `complete_task`, `reschedule_task`, `update_customer_stage`,
+`reject_email_draft` — each change one field and nothing else, because flipping
+a status or moving a date is bookkeeping anybody can check, while rewriting what
+a task says or what a customer's details say is editing somebody's work. A
+rejected draft is kept, not deleted: the next run needs to know the approach was
+already turned down, and a deletion carries none of that.
+
+Read-back is part of the same boundary. A capability the agent cannot see is
+one it cannot use honestly, so the tools that write also have the tools that
+read: `list_email_templates` and `render_email_template` before
+`create_email_template`, `list_email_logs` for the pending queue,
+`get_pipeline_stats` and `get_quality_report` for the pages a person opens.
 
 ## The trace is the point
 

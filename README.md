@@ -97,10 +97,11 @@ if score >= 40:         keep()
 |---|---|
 | 任何 `send_*` | 外发给真实客户必须由人触发 |
 | 任何 `delete_*` | 破坏性操作不应由 agent 自主执行 |
-| 修改已有客户/邮件记录 | agent 静默改写人工维护的数据，比多一条重复记录更糟 |
+| 改写人工维护的内容 | agent 静默改写别人的数据，比多一条重复记录更糟 |
 
 - `create_email_draft` 只写入 `pending` 状态的草稿，由现有两步式人工审核流程消费
 - `upsert_customer` 遇到已存在的客户返回 `skipped`，绝不覆盖
+- 能碰已有记录的工具只有四个，且各自只动一个字段：`complete_task`（状态）、`reschedule_task`（截止日期）、`update_customer_stage`（阶段）、`reject_email_draft`（撤回待审草稿，记录保留不删除）
 - `GET /api/v1/agent/capabilities` 会把这个边界显式列出来，不必读源码就能确认
 
 `tests/test_agent_tools_policy.py` 断言：没有任何工具名匹配 `send` / `dispatch` / `delete` / `remove` / `drop` / `purge`，且 agent 包内不存在任何 SMTP 引用。

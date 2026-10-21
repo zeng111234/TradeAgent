@@ -1071,6 +1071,38 @@ TEMPLATE_LANGUAGES = ("en", "zh", "es")
 _PLACEHOLDER_RE = re.compile(r"\{\s*(\w+)\s*\}")
 
 
+def _placeholders(text: str) -> list[str]:
+    """Placeholder names in a template, in order of first appearance."""
+    used: list[str] = []
+    for match in _PLACEHOLDER_RE.finditer(text):
+        token = match.group(1)
+        if token not in used:
+            used.append(token)
+    return used
+
+
+def _unresolved(text: str) -> list[str]:
+    """Placeholder names still standing after a render.
+
+    ``render_template`` leaves an unknown name alone on purpose: an untouched
+    ``{comapny_name}`` is a typo worth catching, while a silent gap is not. So
+    the leftovers are the interesting output, and they are reported by name.
+    """
+    found: list[str] = []
+    for match in _PLACEHOLDER_RE.finditer(text):
+        start, end = match.span()
+        # A match that is part of Jinja's own ``{{ name }}`` is not a leftover
+        # of this dialect; the render pass either filled it or left it whole.
+        if start > 0 and text[start - 1] == "{":
+            continue
+        if end < len(text) and text[end] == "}":
+            continue
+        name = match.group(1)
+        if name not in found:
+            found.append(name)
+    return found
+
+
 @tool(
     description=(
         "Save a reusable email template. It appears on the 邮件模板 (Templates) "
@@ -1136,11 +1168,7 @@ async def create_email_template(
     # check is advisory rather than fatal -- a template may legitimately carry
     # a fixed brand phrase in braces -- but a typo here is invisible until a
     # customer reads it, which is late to find out.
-    used = []
-    for match in _PLACEHOLDER_RE.finditer(f"{subject}\n{body}"):
-        token = match.group(1)
-        if token not in used:
-            used.append(token)
+    used = _placeholders(f"{subject}\n{body}")
     unknown = [t for t in used if t not in TEMPLATE_VARIABLES]
 
     async with _session_factory()() as db:
@@ -1673,6 +1701,552 @@ async def list_tasks(
     }
 
 
+# ------------------------------------------------- templates, read back ---
+# A template the agent can write but never read is a template it can never
+# use: "send the quotation template to Hans" needs the body before it needs
+# anything else. These two close that loop, and neither one writes.
+
+@tool(
+    description=(
+        "List email templates that already exist, from the 邮件模板 (Templates) "
+        "page — name, category, language, subject, and which placeholders each "
+        "one uses. Filter by category or language, or search names and subjects. "
+        "Read-only: check here before writing a new template, and use "
+        "render_email_template to fill one in."
+    ),
+    tags={"read", "email"},
+)
+async def list_email_templates(
+    category: str = "",
+    language: str = "",
+    search: str = "",
+    limit: int = 10,
+) -> dict:
+    """See what is already on the shelf.
+
+    ``create_email_template`` refuses to rewrite a name that is taken, so
+    without a way to look, a second goal about the same template always ends
+    in ``duplicate`` and the model never learns what the first one said.
+    """
+    limit = max(1, min(int(limit or 10), MAX_ROWS))
+    category = (category or "").strip().lower()
+    language = (language or "").strip().lower()
+
+    if category and category not in TEMPLATE_CATEGORIES:
+        return {
+            "error": (
+                f"unknown category {category!r}. The Templates page filters on "
+                f"exactly these: {', '.join(TEMPLATE_CATEGORIES)}"
+            )
+        }
+    if language and language not in TEMPLATE_LANGUAGES:
+        return {
+            "error": (
+                f"unknown language {language!r}. Supported: "
+                f"{', '.join(TEMPLATE_LANGUAGES)}"
+            )
+        }
+
+    stmt = select(EmailTemplate)
+    if category:
+        stmt = stmt.where(EmailTemplate.category == category)
+    if language:
+        stmt = stmt.where(EmailTemplate.language == language)
+    if search:
+        pattern = f"%{search.strip()}%"
+        stmt = stmt.where(
+            or_(EmailTemplate.name.ilike(pattern), EmailTemplate.subject.ilike(pattern))
+        )
+    stmt = stmt.order_by(EmailTemplate.use_count.desc(), EmailTemplate.id.desc()).limit(limit)
+
+    async with _session_factory()() as db:
+        rows = (await db.execute(stmt)).scalars().all()
+
+    return {
+        "count": len(rows),
+        "filters": {
+            "category": category or None,
+            "language": language or None,
+            "search": search or None,
+        },
+        "templates": [
+            {
+                "id": t.id,
+                "name": t.name,
+                "category": t.category,
+                "language": t.language,
+                "subject": t.subject,
+                "body_preview": (t.body or "")[:400],
+                "placeholders_used": _placeholders(f"{t.subject}\n{t.body or ''}"),
+                "use_count": t.use_count or 0,
+                "is_ai_generated": bool(t.is_ai_generated),
+            }
+            for t in rows
+        ],
+        "note": "read-only. Use render_email_template to fill one in for a customer.",
+    }
+
+
+@tool(
+    description=(
+        "Fill a saved template's placeholders and return the subject and body "
+        "ready to pass to create_email_draft. Read-only — nothing is stored and "
+        "nothing is sent. Pass customer_id to fill company, country, industry, "
+        "product and the primary contact's name and title from the CRM, or set "
+        "any of them by hand. A placeholder with no value is left standing and "
+        "listed in unresolved_placeholders, so a typo stays visible instead of "
+        "reaching a customer."
+    ),
+    tags={"read", "email"},
+)
+async def render_email_template(
+    template_id: int,
+    customer_id: int = 0,
+    company_name: str = "",
+    contact_name: str = "",
+    contact_title: str = "",
+    product_name: str = "",
+    country: str = "",
+    industry: str = "",
+) -> dict:
+    """Preview what a template would actually say.
+
+    The fill goes through the same ``render_template`` the send path uses, so
+    what comes back here is what a recipient would get — including the two
+    brace dialects the editor accepts. Substituting by hand in the reply is
+    how ``{comapny_name}`` ends up in a customer's inbox.
+    """
+    from app.utils.email_sender import render_template
+
+    async with _session_factory()() as db:
+        template = (
+            await db.execute(select(EmailTemplate).where(EmailTemplate.id == int(template_id)))
+        ).scalar_one_or_none()
+        if template is None:
+            return {"error": f"no template with id {template_id}"}
+
+        customer = None
+        contact = None
+        if customer_id:
+            customer = (
+                await db.execute(select(Customer).where(Customer.id == int(customer_id)))
+            ).scalar_one_or_none()
+            if customer is None:
+                return {"error": f"no customer with id {customer_id}"}
+            contact = (
+                await db.execute(
+                    select(CustomerContact)
+                    .where(
+                        CustomerContact.customer_id == customer.id,
+                        CustomerContact.is_primary == 1,
+                    )
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+
+    # CRM values first, explicit arguments second: a hand-set value wins over
+    # what the record says, because the person asking is the one who knows
+    # what they meant.
+    variables = {
+        "company_name": (customer.company_name if customer else "") or "",
+        "country": (customer.country if customer else "") or "",
+        "industry": (customer.industry if customer else "") or "",
+        "product_name": (customer.products if customer else "") or "",
+        "contact_name": (contact.name if contact else "") or "",
+        "contact_title": (contact.title if contact else "") or "",
+    }
+    for key, value in (
+        ("company_name", company_name),
+        ("contact_name", contact_name),
+        ("contact_title", contact_title),
+        ("product_name", product_name),
+        ("country", country),
+        ("industry", industry),
+    ):
+        if (value or "").strip():
+            variables[key] = value.strip()
+
+    # Only the filled ones are handed to the renderer. ``render_template``
+    # substitutes every name it is given and blanks the rest, so passing an
+    # empty ``contact_name`` would silently eat the placeholder instead of
+    # leaving ``{contact_name}`` standing where a reader can see it.
+    filled = {k: v for k, v in variables.items() if (v or "").strip()}
+
+    subject = render_template(template.subject, filled)
+    body = render_template(template.body, filled)
+    unresolved = _unresolved(f"{subject}\n{body}")
+
+    return {
+        "template_id": template.id,
+        "template_name": template.name,
+        "customer_id": customer.id if customer else None,
+        "variables_used": filled,
+        "subject": subject,
+        "body": body,
+        "unresolved_placeholders": unresolved or None,
+        "next_step": (
+            "pass subject and body to create_email_draft — it stores the draft "
+            "for human review and sends nothing"
+        ),
+    }
+
+
+# ------------------------------------------------------- the mail queue ---
+#: The statuses the Emails page filters on. A status outside this set is not
+#: a spelling problem — it is a filter that would silently return nothing.
+EMAIL_STATUSES = (
+    "pending", "sending", "sent", "delivered", "opened",
+    "replied", "rejected", "bounced", "failed",
+)
+
+
+@tool(
+    description=(
+        "List email logs across the whole CRM — the queue behind the 邮件 "
+        "(Emails) page. status='pending' is what is waiting for a human to "
+        "review and send; 'rejected' is what a person turned down; 'replied' "
+        "is what came back. Filter by status or by one customer. Read-only."
+    ),
+    tags={"read", "email"},
+)
+async def list_email_logs(
+    status: str = "",
+    customer_id: int = 0,
+    limit: int = 15,
+) -> dict:
+    """The queue, seen whole.
+
+    ``get_communication_history`` answers "what has this customer received";
+    this answers "what is on the desk". Without it the agent writes a second
+    draft for a customer whose first is still waiting, because its only
+    duplicate check is same-subject-same-customer — it cannot see that the
+    review queue is already three deep.
+    """
+    limit = max(1, min(int(limit or 15), MAX_ROWS))
+    status = (status or "").strip().lower()
+    if status and status not in EMAIL_STATUSES:
+        return {"error": f"unknown status {status!r}. One of: {', '.join(EMAIL_STATUSES)}"}
+
+    stmt = select(EmailLog)
+    if status:
+        stmt = stmt.where(EmailLog.status == status)
+    if customer_id:
+        stmt = stmt.where(EmailLog.customer_id == int(customer_id))
+    stmt = stmt.order_by(EmailLog.created_at.desc(), EmailLog.id.desc()).limit(limit)
+
+    async with _session_factory()() as db:
+        rows = (await db.execute(stmt)).scalars().all()
+
+    counts: dict[str, int] = {}
+    for row in rows:
+        key = _status(row.status)
+        counts[key] = counts.get(key, 0) + 1
+
+    return {
+        "count": len(rows),
+        "filters": {"status": status or None, "customer_id": customer_id or None},
+        "counts_by_status": counts,
+        "emails": [
+            {
+                "id": e.id,
+                "customer_id": e.customer_id,
+                "to_email": e.to_email,
+                "to_name": e.to_name,
+                "subject": e.subject,
+                "status": _status(e.status),
+                "created_at": e.created_at.isoformat() if e.created_at else None,
+                "sent_at": e.sent_at.isoformat() if e.sent_at else None,
+                "body_preview": (e.body or "")[:400],
+            }
+            for e in rows
+        ],
+    }
+
+
+# ----------------------------------------------------- business overview ---
+
+@tool(
+    description=(
+        "The 仪表盘 (Dashboard) numbers: how many customers sit at each "
+        "pipeline stage, open and reply rates, and the task backlog. Read-only "
+        "facts with no verdict attached — you decide what they mean."
+    ),
+    tags={"read", "crm"},
+)
+async def get_pipeline_stats() -> dict:
+    """The book of business in aggregate.
+
+    ``list_customers`` can answer the same question one page at a time, but a
+    funnel question is a count question: asked of a capped list it comes back
+    wrong whenever the pipeline is longer than the cap, and wrong confidently.
+    """
+    from app.services.analytics_service import get_dashboard_stats, get_pipeline_funnel
+
+    async with _session_factory()() as db:
+        stats = await get_dashboard_stats(db)
+        funnel = await get_pipeline_funnel(db)
+
+    return {
+        "dashboard": stats,
+        "stages": {entry["stage"].lower(): entry["count"] for entry in funnel["stages"]},
+        "total_customers_in_funnel": funnel["total"],
+    }
+
+
+@tool(
+    description=(
+        "Operational quality of the agent itself over the last N days: runs by "
+        "status and stop reason, latency, tool calls, and the email funnel. "
+        "Read-only. Use it to answer how the system has been behaving — it says "
+        "nothing about any customer."
+    ),
+    tags={"read", "ops"},
+)
+async def get_quality_report(days: int = 7) -> dict:
+    """The system's own record, for when the question is about the system."""
+    from app.services.quality_service import get_quality_report
+
+    days = max(1, min(int(days or 7), 90))
+    async with _session_factory()() as db:
+        report = await get_quality_report(db, days=days)
+    report = dict(report)
+    report["days"] = days
+    return report
+
+
+# --------------------------------------------- stage, date, and withdrawal ---
+# The rest of the state a person moves by hand: where a customer stands in the
+# pipeline, when a task is due, and whether a pending draft is still wanted.
+# Each one moves exactly one field and edits nothing anybody wrote.
+
+#: The pipeline, in the order a relationship moves through it. The order is
+#: not enforced — a customer can jump from new to lost — but the vocabulary
+#: is: a stage the Customers page cannot display is a stage nobody can find.
+CUSTOMER_STAGES = (
+    "new", "contacted", "interested", "quoting",
+    "sample", "ordering", "completed", "lost",
+)
+
+
+@tool(
+    description=(
+        "Move a customer to a different pipeline stage: new, contacted, "
+        "interested, quoting, sample, ordering, completed or lost. Only the "
+        "stage changes — the company's details, contacts and notes are left "
+        "exactly as they are. Use it when you tell me where a customer now "
+        "stands. dry_run=true previews without writing."
+    ),
+    tags={"write", "crm"},
+)
+async def update_customer_stage(
+    customer_id: int,
+    stage: str,
+    dry_run: bool = False,
+) -> dict:
+    """Record where a relationship now stands.
+
+    ``upsert_customer`` refuses to touch an existing row because an agent
+    silently rewriting curated data is worse than a duplicate. A stage is not
+    curated data — it is the one field whose whole purpose is to change, and
+    ``complete_task`` set the precedent: flipping a status is bookkeeping
+    anybody can check. Everything else on the row is off limits, which is why
+    this tool takes no other parameter.
+    """
+    stage = (stage or "").strip().lower()
+    if stage not in CUSTOMER_STAGES:
+        return {"error": f"unknown stage {stage!r}. One of: {', '.join(CUSTOMER_STAGES)}"}
+
+    async with _session_factory()() as db:
+        customer = (
+            await db.execute(select(Customer).where(Customer.id == int(customer_id)))
+        ).scalar_one_or_none()
+        if customer is None:
+            return {"error": f"no customer with id {customer_id}"}
+
+        current = _status(customer.stage)
+        if current == stage:
+            return {
+                "status": "unchanged",
+                "customer_id": customer.id,
+                "company_name": customer.company_name,
+                "stage": current,
+                "reason": "the customer is already in this stage. Nothing was changed.",
+            }
+
+        if dry_run:
+            return {
+                "status": "would_change",
+                "dry_run": True,
+                "customer_id": customer.id,
+                "company_name": customer.company_name,
+                "stage_before": current,
+                "stage_after": stage,
+            }
+
+        customer.stage = CustomerStage[stage.upper()]
+        await db.commit()
+        await db.refresh(customer)
+        return {
+            "status": "stage_updated",
+            "customer_id": customer.id,
+            "company_name": customer.company_name,
+            "stage_before": current,
+            "stage_after": _status(customer.stage),
+            "visible_in": "客户 (Customers) page and the customer's detail page",
+        }
+
+
+@tool(
+    description=(
+        "Move a task's due date, or clear it by passing an empty string. Only "
+        "the due date changes — the title, description, priority and status "
+        "stay exactly as they are. Write the date as YYYY-MM-DD. A task that is "
+        "already closed is not rescheduled. dry_run=true previews without "
+        "writing."
+    ),
+    tags={"write", "tasks"},
+)
+async def reschedule_task(
+    task_id: int,
+    due_date: str,
+    dry_run: bool = False,
+) -> dict:
+    """Move the date, and only the date.
+
+    ``complete_task`` closes a task without touching its words; this moves its
+    date without touching its words. Rewriting a title or a description is
+    editing somebody's plan — deciding when the plan happens next is the part
+    a person hands over every day ("push that to next week"), so it is the one
+    field here that can move.
+    """
+    due, due_error = _parse_due(due_date)
+    if due_error:
+        return {"error": due_error}
+
+    async with _session_factory()() as db:
+        task = (
+            await db.execute(select(Task).where(Task.id == int(task_id)))
+        ).scalar_one_or_none()
+        if task is None:
+            return {"error": f"no task with id {task_id}"}
+
+        current_status = task.status if isinstance(task.status, str) else task.status.value
+        if current_status in ("completed", "cancelled"):
+            return {
+                "status": "already_closed",
+                "task_id": task.id,
+                "title": task.title,
+                "current_status": current_status,
+                "reason": (
+                    "this task is already closed, so there is nothing left to "
+                    "schedule. Create a new task if the work is back on."
+                ),
+            }
+
+        before = task.due_date.isoformat() if task.due_date else None
+        after = due.isoformat() if due else None
+        if before == after:
+            return {
+                "status": "unchanged",
+                "task_id": task.id,
+                "title": task.title,
+                "due_date": before,
+                "reason": "the task is already due then. Nothing was changed.",
+            }
+
+        if dry_run:
+            return {
+                "status": "would_reschedule",
+                "dry_run": True,
+                "task_id": task.id,
+                "title": task.title,
+                "due_date_before": before,
+                "due_date_after": after,
+            }
+
+        task.due_date = due
+        await db.commit()
+        await db.refresh(task)
+        return {
+            "status": "rescheduled",
+            "task_id": task.id,
+            "title": task.title,
+            "due_date_before": before,
+            "due_date_after": task.due_date.isoformat() if task.due_date else None,
+            "visible_in": "待办事项 (Tasks) page",
+        }
+
+
+@tool(
+    description=(
+        "Withdraw an email draft that is still waiting for review: it is "
+        "marked rejected with your reason and KEPT as a record — never "
+        "deleted, and never sent. Only a draft in 'pending' can be rejected; "
+        "anything already sent is left alone."
+    ),
+    tags={"write", "email"},
+)
+async def reject_email_draft(
+    email_id: int,
+    reason: str = "",
+    dry_run: bool = False,
+) -> dict:
+    """Turn down a proposal, keeping the evidence.
+
+    The API's own reject endpoint keeps the row for the same reason this tool
+    does: a draft a person turned down is information the next run needs
+    ("that approach was already refused"), and a deletion carries none of it.
+    A status flip, like ``complete_task`` — no content is edited.
+    """
+    reason = (reason or "").strip()
+
+    async with _session_factory()() as db:
+        draft = (
+            await db.execute(select(EmailLog).where(EmailLog.id == int(email_id)))
+        ).scalar_one_or_none()
+        if draft is None:
+            return {"error": f"no email log with id {email_id}"}
+
+        current = _status(draft.status)
+        if current == "rejected":
+            return {
+                "status": "already_rejected",
+                "email_log_id": draft.id,
+                "customer_id": draft.customer_id,
+                "subject": draft.subject,
+                "reason_recorded": draft.error_message,
+            }
+        if current != "pending":
+            return {
+                "error": (
+                    f"only a draft waiting for review can be rejected; this one "
+                    f"is '{current}'. Nothing was changed."
+                )
+            }
+
+        if dry_run:
+            return {
+                "status": "would_reject",
+                "dry_run": True,
+                "email_log_id": draft.id,
+                "customer_id": draft.customer_id,
+                "subject": draft.subject,
+            }
+
+        draft.status = EmailStatus.REJECTED
+        draft.error_message = reason or "rejected by the agent"
+        await db.commit()
+        await db.refresh(draft)
+        return {
+            "status": "rejected",
+            "email_log_id": draft.id,
+            "customer_id": draft.customer_id,
+            "subject": draft.subject,
+            "reason_recorded": draft.error_message,
+            "note": "the draft is kept as a record. It was not sent and not deleted.",
+        }
+
+
 # Tools the agent must never have. Kept as an explicit list so the boundary is
 # testable rather than merely absent: tests/test_agent_tools_policy.py asserts
 # no registered tool name matches these.
@@ -1683,8 +2257,10 @@ def build_trade_registry() -> ToolRegistry:
     """Every tool the agent may call.
 
     Enforced here by omission rather than by asking the model to behave: there
-    is no send tool, no delete tool, and no tool that edits an existing
-    customer or email log.
+    is no send tool, no delete tool, and no tool that rewrites the content a
+    person saved. The tools that touch an existing row at all — closing a
+    task, moving a stage, moving a due date, withdrawing a pending draft —
+    each move exactly one status or schedule field and nothing else.
     """
     registry = ToolRegistry()
     for entry in (
@@ -1694,15 +2270,23 @@ def build_trade_registry() -> ToolRegistry:
         get_customer_signals,
         get_customer_assessment,
         get_follow_up_plan,
+        get_pipeline_stats,
+        get_quality_report,
         search_prospects,
         inspect_website,
         classify_prospect,
+        list_tasks,
+        list_email_logs,
+        list_email_templates,
+        render_email_template,
         upsert_customer,
         add_customer_contact,
         add_customer_note,
         create_task,
         complete_task,
-        list_tasks,
+        reschedule_task,
+        update_customer_stage,
+        reject_email_draft,
         create_email_draft,
         create_email_template,
     ):
