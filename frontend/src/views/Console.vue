@@ -866,8 +866,22 @@ onUnmounted(stopTimers)
 .console-shell {
   display: grid;
   grid-template-columns: 248px minmax(0, 920px);
+  /* The row must be bounded by the shell, not by its content. With the default
+     `auto` row, a long transcript sized the page -- the page then sized the
+     row -- and the whole document grew past the viewport: the body scrolled,
+     the sticky sidebar slid up out of view and left a bare strip under itself,
+     and the composer ended up below the fold. `minmax(0, 1fr)` hands the
+     scrolling back to `.console-scroll`, which is what has `overflow-y`; the
+     page itself gets `min-height: 0` for the same reason. Either alone is
+     enough today, and both are stated so neither has to be rediscovered. */
+  grid-template-rows: minmax(0, 1fr);
   gap: var(--space-5, 24px);
-  justify-content: center;
+  /* Start, not center. The tracks are 1192px wide inside a 1316px column, and
+     centring put 96px of nothing between the dark sidebar and the thread rail.
+     Starting at the same 32px gutter as the topbar breadcrumb lines the rail
+     up with it and puts the unused width on the right, where it reads as a
+     margin instead of a hole. */
+  justify-content: start;
   height: calc(100vh - 52px - var(--space-6) - var(--space-8));
 }
 
@@ -877,6 +891,7 @@ onUnmounted(stopTimers)
   flex-direction: column;
   height: 100%;
   min-width: 0;
+  min-height: 0;
 }
 
 /* ------------------------------------------------------------ thread rail -- */

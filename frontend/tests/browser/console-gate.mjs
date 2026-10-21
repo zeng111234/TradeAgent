@@ -300,12 +300,82 @@ async function main() {
     const actions = await page.locator('.turn').first().locator('.result-actions button').count()
     if (actions !== 3) throw new Error(`expected copy/rerun/export, got ${actions} actions`)
 
+    // The rail must sit at the same gutter as the topbar breadcrumb. It used to
+    // be centred inside a wider grid, which left 96px of empty page between the
+    // dark sidebar and the conversation list at 1600px: a blank block that read
+    // as a broken column, not as a margin. 1440 has no slack to give away, so
+    // widen first -- at that width centring and starting look identical.
+    await page.setViewportSize({ width: 1600, height: 900 })
+    await page.waitForTimeout(250)
+    const frame = await page.evaluate(() => {
+      const box = (sel) => {
+        const el = document.querySelector(sel)
+        return el ? el.getBoundingClientRect() : null
+      }
+      const rail = box('.thread-rail')
+      const sidebar = box('.sidebar')
+      const crumb = box('.topbar-crumb')
+      return {
+        gap: Math.round(rail.x - sidebar.right),
+        railX: Math.round(rail.x),
+        crumbX: Math.round(crumb.x),
+      }
+    })
+    if (frame.gap > 40) {
+      throw new Error(`dead band between sidebar and rail: ${JSON.stringify(frame)}`)
+    }
+    if (Math.abs(frame.railX - frame.crumbX) > 2) {
+      throw new Error(`rail is not aligned with the breadcrumb: ${JSON.stringify(frame)}`)
+    }
+
+    // A long transcript scrolls inside the console, not the document. Checked
+    // further down at 1000px, where the single-column layout has no stretched
+    // row to hide the problem: at 1440 the row is simply taller than the
+    // content, so a broken row and a working one measure the same.
+
     // Below 1280 the thread list is a slide-over. It used to slide out at
     // left: 0, i.e. underneath the sticky sidebar (z-index 100), so 220 of its
     // 272 pixels were covered: the list looked like a black strip and its rows
     // could not be clicked. Resize the same page -- the routes stay installed.
     await page.setViewportSize({ width: 1000, height: 800 })
     await page.reload({ waitUntil: 'networkidle' })
+
+    // A long transcript scrolls inside the console, not the document. With an
+    // auto-sized grid row the page outgrew the viewport, the body scrolled, the
+    // sticky sidebar slid up and left a bare strip under itself, and the
+    // composer ended up below the fold. A short window reproduces it with the
+    // stubbed answer, without needing a long one.
+    await page.setViewportSize({ width: 1000, height: 460 })
+    await page.waitForTimeout(300)
+    const tall = await page.evaluate(() => {
+      const scroller = document.querySelector('.console-scroll')
+      const shell = document.querySelector('.console-shell').getBoundingClientRect()
+      const pageBox = document.querySelector('.console-page').getBoundingClientRect()
+      return {
+        pageHeight: Math.round(pageBox.height),
+        shellHeight: Math.round(shell.height),
+        docScroll: document.documentElement.scrollHeight,
+        viewport: document.documentElement.clientHeight,
+        innerScrolls: scroller.scrollHeight > scroller.clientHeight + 4,
+        composerBottom: Math.round(document.querySelector('.composer').getBoundingClientRect().bottom),
+        sidebarBottom: Math.round(document.querySelector('.sidebar').getBoundingClientRect().bottom),
+      }
+    })
+    if (tall.pageHeight > tall.shellHeight + 1) {
+      throw new Error(`the page grew past its shell: ${JSON.stringify(tall)}`)
+    }
+    if (tall.docScroll > tall.viewport + 1) {
+      throw new Error(`the document grew past the viewport: ${JSON.stringify(tall)}`)
+    }
+    if (!tall.innerScrolls) {
+      throw new Error(`the transcript is not the scroller: ${JSON.stringify(tall)}`)
+    }
+    if (tall.composerBottom > tall.viewport + 1 || tall.sidebarBottom > tall.viewport + 1) {
+      throw new Error(`composer or sidebar pushed out of view: ${JSON.stringify(tall)}`)
+    }
+    await page.setViewportSize({ width: 1000, height: 800 })
+    await page.waitForTimeout(250)
+
     await page.locator('.rail-toggle').click()
     await page.waitForTimeout(300)
     const drawer = await page.evaluate(() => {
@@ -331,7 +401,7 @@ async function main() {
 
     if (errors.length) throw new Error(`page errors: ${errors.slice(0, 3).join(' | ')}`)
 
-    console.log('PASS console-gate: stop+cancel, live text, cancelled note, reasoning, tokens, unpriced cost, drawer clears sidebar')
+    console.log('PASS console-gate: stop+cancel, live text, cancelled note, reasoning, tokens, unpriced cost, rail alignment, bounded page, drawer clears sidebar')
     return 0
   } catch (e) {
     console.log(`FAIL console-gate: ${e.message}`)
