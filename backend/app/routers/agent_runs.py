@@ -802,7 +802,10 @@ def _snapshot(row, *, with_diagram: bool = True) -> dict[str, Any]:
     )
     usage_complete = not any(step.get("usage_missing") for step in trace)
     model = getattr(row, "model", None)
-    cost = cost_of(usage, model) if (model and usage_complete) else None
+    cost = (
+        cost_of(usage, model, at=getattr(row, "created_at", None))
+        if (model and usage_complete) else None
+    )
     payload = {
         "run_id": row.run_id,
         "goal": row.goal,

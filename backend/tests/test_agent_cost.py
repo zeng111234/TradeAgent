@@ -46,7 +46,10 @@ def test_a_priced_run_reports_the_arithmetic(priced):
 
     # 600 fresh * 1.0 + 400 cached * 0.25 + 500 out * 2.0 = 1700 / 1e6
     assert payload["model"] == "fake-model"
-    assert payload["cost"] == {"amount": 0.0017, "currency": "USD", "estimated": False}
+    assert payload["cost"]["amount"] == pytest.approx(0.0017)
+    assert payload["cost"]["currency"] == "USD"
+    assert payload["cost"]["estimated"] is False
+    assert payload["cost"]["peak"] is False
     assert payload["cache_hit_rate"] == 0.4
     assert payload["usage_complete"] is True
 
@@ -129,3 +132,59 @@ def test_a_legacy_row_with_no_model_is_not_priced(client, monkeypatch, priced):
 
     assert body["model"] is None
     assert body["cost"] is None
+
+
+PEAK_PRICES = (
+    '{"peak-model": {"inputPerMtok": 0.15, "cachedInputPerMtok": 0.003,'
+    ' "outputPerMtok": 0.6, "peakInputPerMtok": 0.3,'
+    ' "peakCachedInputPerMtok": 0.006, "peakOutputPerMtok": 1.2,'
+    ' "peakHoursUtc": [[1, 4], [6, 10]], "currency": "USD",'
+    ' "source": "test rate card"}}'
+)
+
+
+def test_peak_windows_double_the_amount_and_say_so(monkeypatch):
+    """A flat rate is wrong by the peak multiplier for half the working day."""
+    from datetime import datetime
+
+    from app.llm_usage import Usage, cost_of
+
+    monkeypatch.setattr(settings, "LLM_PRICES_JSON", PEAK_PRICES)
+    usage = Usage(prompt_tokens=1_000_000, completion_tokens=1_000_000)
+
+    off_peak = cost_of(usage, "peak-model", at=datetime(2026, 10, 21, 12, 0))
+    peak = cost_of(usage, "peak-model", at=datetime(2026, 10, 21, 8, 0))
+
+    assert off_peak.amount == pytest.approx(0.15 + 0.6)
+    assert off_peak.peak is False
+    assert peak.amount == pytest.approx(0.3 + 1.2)
+    assert peak.peak is True
+    assert peak.source == "test rate card"
+
+
+def test_weekend_is_never_peak(monkeypatch):
+    from datetime import datetime
+
+    from app.llm_usage import Usage, cost_of
+
+    monkeypatch.setattr(settings, "LLM_PRICES_JSON", PEAK_PRICES)
+    usage = Usage(prompt_tokens=1_000_000, completion_tokens=1_000_000)
+
+    saturday = cost_of(usage, "peak-model", at=datetime(2026, 10, 24, 8, 0))
+
+    assert saturday.peak is False
+    assert saturday.amount == pytest.approx(0.15 + 0.6)
+
+
+def test_a_cached_input_rate_is_used_inside_the_peak_window(monkeypatch):
+    from datetime import datetime
+
+    from app.llm_usage import Usage, cost_of
+
+    monkeypatch.setattr(settings, "LLM_PRICES_JSON", PEAK_PRICES)
+    usage = Usage(prompt_tokens=1_000_000, cached_prompt_tokens=1_000_000)
+
+    peak = cost_of(usage, "peak-model", at=datetime(2026, 10, 21, 7, 0))
+
+    assert peak.amount == pytest.approx(0.006)
+    assert peak.estimated is False

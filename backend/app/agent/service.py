@@ -23,6 +23,7 @@ import tempfile
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
+from datetime import datetime, timezone
 from typing import Any, Callable, Optional
 
 from app.config import settings
@@ -248,7 +249,10 @@ def summarise(result: AgentResult) -> dict[str, Any]:
     )
     # A lower bound is not a bill: when a provider did not report usage, the
     # cost is unknown, not the price of the rounds that happened to report.
-    cost = cost_of(usage, model) if run.usage_complete else None
+    cost = (
+        cost_of(usage, model, at=datetime.now(timezone.utc))
+        if run.usage_complete else None
+    )
     return {
         "run_id": run.run_id,
         "status": run.status,

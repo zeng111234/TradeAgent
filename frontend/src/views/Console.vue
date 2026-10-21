@@ -111,6 +111,9 @@
                 {{ t('console.metaRounds', { n: turn.rounds }) }}
                 · {{ t('console.metaCalls', { n: turn.calls }) }}
                 · {{ t('console.metaElapsed', { n: elapsed(turn) }) }}
+                <template v-if="stepTokens(turn)">
+                  · {{ t('console.tokens', { n: formatTokens(stepTokens(turn)) }) }}
+                </template>
               </span>
             </div>
 
@@ -154,12 +157,25 @@
               >{{ t('console.cancelledNoAnswer') }}</p>
 
               <div v-if="turn.result" class="result-meta">
-                <span v-if="turn.result.model">{{ turn.result.model }}</span>
-                <span v-if="tokenTotal(turn)">
-                  {{ t('console.tokens', { n: formatTokens(tokenTotal(turn)) }) }}
+                <span v-if="turn.result.model" class="meta-chip meta-chip--model">
+                  {{ turn.result.model }}
                 </span>
-                <span v-if="costLabel(turn)">{{ costLabel(turn) }}</span>
-                <span v-if="cacheLabel(turn)">{{ cacheLabel(turn) }}</span>
+                <span
+                  v-if="tokenTotal(turn)"
+                  class="meta-chip"
+                  :title="t('console.tokensTip', { n: formatTokens(tokenTotal(turn)) })"
+                >{{ t('console.tokensIn', { n: formatTokens(turn.result.prompt_tokens) }) }}</span>
+                <span v-if="tokenTotal(turn)" class="meta-chip">
+                  {{ t('console.tokensOut', { n: formatTokens(turn.result.completion_tokens) }) }}
+                </span>
+                <span v-if="cacheLabel(turn)" class="meta-chip" :title="cacheTip(turn)">
+                  {{ cacheLabel(turn) }}
+                </span>
+                <span
+                  v-if="costLabel(turn)"
+                  class="meta-chip meta-chip--cost"
+                  :title="costTip(turn)"
+                >{{ costLabel(turn) }}</span>
               </div>
 
               <div v-if="turn.result?.final_output" class="result-actions">
@@ -307,19 +323,54 @@ const outcome = (turn) =>
 const tokenTotal = (turn) =>
   (turn.result?.prompt_tokens || 0) + (turn.result?.completion_tokens || 0)
 
+/** Tokens spent so far, summed over the rounds that have landed. */
+const stepTokens = (turn) =>
+  (turn.steps || []).reduce(
+    (total, step) => total + (step.prompt_tokens || 0) + (step.completion_tokens || 0),
+    0,
+  )
+
 /** Cost, or the honest reason there is none. Never `$0.00` for "unknown". */
 function costLabel(turn) {
   const result = turn.result
   if (!result) return ''
   if (result.usage_complete === false) return t('console.usageMissing')
   if (!result.cost) return t('console.unpriced')
-  return formatCost(result.cost)
+  return t('console.costLabel', { v: formatCost(result.cost) })
 }
 
 function cacheLabel(turn) {
   const rate = turn.result?.cache_hit_rate
   if (rate === null || rate === undefined) return ''
   return t('console.cacheRate', { n: Math.round(rate * 100) })
+}
+
+/** Where the cache hit came from, so the percentage is checkable. */
+function cacheTip(turn) {
+  const result = turn.result || {}
+  return t('console.cacheTip', {
+    hit: formatTokens(result.cached_prompt_tokens || 0),
+    total: formatTokens(result.prompt_tokens || 0),
+  })
+}
+
+/** The split the amount was computed from, and why it is only an estimate. */
+function costTip(turn) {
+  const result = turn.result || {}
+  if (result.usage_complete === false) return t('console.usageMissingTip')
+  if (!result.cost) return t('console.unpricedTip')
+  const cached = result.cached_prompt_tokens || 0
+  const parts = [
+    t('console.costTip', {
+      fresh: formatTokens(Math.max(0, (result.prompt_tokens || 0) - cached)),
+      cached: formatTokens(cached),
+      out: formatTokens(result.completion_tokens || 0),
+    }),
+    result.cost.peak ? t('console.costPeak') : t('console.costOffPeak'),
+  ]
+  if (result.cost.source) parts.push(result.cost.source)
+  if (result.cost.estimated) parts.push(t('console.costEstimated'))
+  return parts.join(' · ')
 }
 
 const copiedTurn = ref(0)
@@ -1232,11 +1283,32 @@ onUnmounted(stopTimers)
 .result-meta {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--space-3);
-  margin-top: var(--space-2);
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
   font-size: 11px;
   color: var(--text-3);
   font-variant-numeric: tabular-nums;
+}
+/* Usage as separate pills: "8.3k tokens / unpriced / 87%" in one grey line
+   made the three numbers look like one sentence and the amount unreadable. */
+.meta-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  background: var(--bg-subtle);
+  white-space: nowrap;
+  cursor: default;
+}
+.meta-chip--model {
+  color: var(--text-2);
+}
+.meta-chip--cost {
+  color: var(--text-1);
+  border-color: var(--border);
+  background: var(--bg-card);
 }
 .result-actions {
   display: flex;

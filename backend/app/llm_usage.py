@@ -39,6 +39,7 @@ import json
 import logging
 import threading
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any, Mapping, Optional
 
 from app.config import settings
@@ -223,6 +224,46 @@ class Price:
     cached_input_per_mtok: Optional[float] = None
     currency: str = "USD"
     source: str = ""
+    #: Time-of-day pricing, for providers that charge one rate at peak and
+    #: another off it. ``None`` means the same rate all day. Without these, a
+    #: single number would be wrong by the peak multiplier half the time.
+    peak_input_per_mtok: Optional[float] = None
+    peak_output_per_mtok: Optional[float] = None
+    peak_cached_input_per_mtok: Optional[float] = None
+    #: ``(start_hour, end_hour)`` in UTC, half-open, e.g. ``((1, 4), (6, 10))``.
+    peak_hours_utc: tuple[tuple[int, int], ...] = ()
+    #: Provider peak windows are weekday-only; weekends bill at the low rate.
+    peak_weekdays_only: bool = True
+
+    def is_peak(self, at: datetime) -> bool:
+        if not self.peak_hours_utc:
+            return False
+        moment = at
+        if moment.tzinfo is not None:
+            moment = moment.astimezone(timezone.utc).replace(tzinfo=None)
+        if self.peak_weekdays_only and moment.weekday() >= 5:
+            return False
+        return any(start <= moment.hour < end for start, end in self.peak_hours_utc)
+
+    def rates_at(self, at: Optional[datetime]) -> tuple[float, float, float, bool]:
+        """``(fresh input, cached input, output, is_peak)`` per million tokens."""
+        if at is None or not self.is_peak(at):
+            cached = (
+                self.cached_input_per_mtok
+                if self.cached_input_per_mtok is not None
+                else self.input_per_mtok
+            )
+            return self.input_per_mtok, cached, self.output_per_mtok, False
+
+        fresh = self.peak_input_per_mtok or self.input_per_mtok
+        cached = self.peak_cached_input_per_mtok
+        if cached is None:
+            cached = (
+                self.cached_input_per_mtok
+                if self.cached_input_per_mtok is not None
+                else fresh
+            )
+        return fresh, cached, self.peak_output_per_mtok or self.output_per_mtok, True
 
 
 @dataclass(frozen=True)
@@ -231,12 +272,19 @@ class Cost:
     currency: str
     #: True when a component had to fall back to a rate that was not stated.
     estimated: bool = False
+    #: The operator's own words for where the rate came from. A number without
+    #: its basis cannot be audited a month later.
+    source: str = ""
+    #: Whether the peak rate (rather than the base rate) produced the amount.
+    peak: bool = False
 
     def as_dict(self) -> dict:
         return {
             "amount": round(self.amount, 6),
             "currency": self.currency,
             "estimated": self.estimated,
+            "source": self.source,
+            "peak": self.peak,
         }
 
 
@@ -274,11 +322,44 @@ def _load_prices() -> dict:
                 ),
                 currency=str(spec.get("currency", "USD")),
                 source=str(spec.get("source", "")),
+                peak_input_per_mtok=_optional_float(spec.get("peakInputPerMtok")),
+                peak_output_per_mtok=_optional_float(spec.get("peakOutputPerMtok")),
+                peak_cached_input_per_mtok=_optional_float(
+                    spec.get("peakCachedInputPerMtok")
+                ),
+                peak_hours_utc=_parse_windows(spec.get("peakHoursUtc")),
+                peak_weekdays_only=bool(spec.get("peakWeekdaysOnly", True)),
             )
         except (KeyError, TypeError, ValueError):
             logger.warning("LLM_PRICES_JSON entry for %r ignored: needs "
                            "inputPerMtok and outputPerMtok", model)
     return prices
+
+
+def _optional_float(value: Any) -> Optional[float]:
+    return None if value is None else float(value)
+
+
+def _parse_windows(raw: Any) -> tuple[tuple[int, int], ...]:
+    """``[[1, 4], [6, 10]]`` -> ``((1, 4), (6, 10))``; bad entries are dropped.
+
+    Dropping a malformed window leaves the base rate in force, which is wrong by
+    at most the peak multiplier -- refusing the whole entry over one typo would
+    leave the run unpriced, which is worse.
+    """
+    if not raw:
+        return ()
+    windows = []
+    for item in raw:
+        try:
+            start, end = int(item[0]), int(item[1])
+            if not (0 <= start < end <= 24):
+                raise ValueError
+        except (TypeError, ValueError, IndexError):
+            logger.warning("LLM_PRICES_JSON peakHoursUtc entry %r ignored", item)
+            continue
+        windows.append((start, end))
+    return tuple(windows)
 
 
 def price_for(model: str) -> Optional[Price]:
@@ -300,21 +381,28 @@ def price_for(model: str) -> Optional[Price]:
     return prices[max(candidates, key=len)]
 
 
-def cost_of(usage: Usage, model: str) -> Optional[Cost]:
+def cost_of(usage: Usage, model: str, at: Optional[datetime] = None) -> Optional[Cost]:
     """Money for ``usage`` at ``model``'s declared price, or ``None``.
 
     ``None`` means "unpriced", not "free" -- see the module docstring. Callers
     are expected to print it as unknown rather than summing it as zero.
+
+    ``at`` is when the call was made; providers with peak pricing charge double
+    inside their window, so a single flat rate would be wrong half the day.
+    Callers that genuinely do not know pass nothing and get the base (low) rate.
     """
     price = price_for(model)
     if price is None:
         return None
 
-    estimated = False
-    cached_rate = price.cached_input_per_mtok
-    if cached_rate is None:
-        cached_rate = price.input_per_mtok
-        estimated = usage.cached_prompt_tokens > 0
+    input_rate, cached_rate, output_rate, peak = price.rates_at(at)
+
+    # A cache rate the table does not state was substituted by a fresh-input
+    # rate. That over-estimates, and the estimate must say so.
+    cached_rate_stated = price.cached_input_per_mtok is not None or (
+        peak and price.peak_cached_input_per_mtok is not None
+    )
+    estimated = usage.cached_prompt_tokens > 0 and not cached_rate_stated
 
     # Cache writes have no rate in this table. They are input tokens (billed at
     # a premium the table cannot express), so they are costed at the fresh-input
@@ -323,11 +411,17 @@ def cost_of(usage: Usage, model: str) -> Optional[Cost]:
         estimated = True
 
     amount = (
-        (usage.uncached_prompt_tokens + usage.cache_write_tokens) * price.input_per_mtok
+        (usage.uncached_prompt_tokens + usage.cache_write_tokens) * input_rate
         + usage.cached_prompt_tokens * cached_rate
-        + usage.completion_tokens * price.output_per_mtok
+        + usage.completion_tokens * output_rate
     ) / 1_000_000.0
-    return Cost(amount=amount, currency=price.currency, estimated=estimated)
+    return Cost(
+        amount=amount,
+        currency=price.currency,
+        estimated=estimated,
+        source=price.source,
+        peak=peak,
+    )
 
 
 @dataclass
@@ -382,7 +476,7 @@ def record(scope: str, model: str, usage: Usage) -> LedgerEntry:
         entry.calls += 1
         entry.usage = entry.usage.plus(usage)
 
-        cost = cost_of(usage, key[1])
+        cost = cost_of(usage, key[1], at=datetime.now(timezone.utc))
         # No price declared: the call is counted as a call and as zero priced
         # calls, which is what ``snapshot`` reads "unpriced" off.
         if cost is not None:

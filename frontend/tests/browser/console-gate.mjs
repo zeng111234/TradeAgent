@@ -271,12 +271,13 @@ async function main() {
     }
 
     const meta = await page.locator('.result-meta').first().innerText()
-    for (const wanted of ['fake-model', '1.5k tokens', '未定价']) {
+    // Usage is three separate facts, and the gate checks each one: a single
+    // "N tokens" line can be right while the split behind it is wrong.
+    for (const wanted of ['fake-model', '输入 1.2k', '输出 300', '缓存命中 40%', '未定价']) {
       if (!meta.includes(wanted)) {
         throw new Error(`result meta missing "${wanted}": ${meta.replace(/\n/g, ' ')}`)
       }
     }
-    if (!/40%/.test(meta)) throw new Error(`cache hit rate missing: ${meta}`)
 
     // The trace is collapsed by default; reasoning lives inside it.
     await page.locator('.trace-toggle').first().click()

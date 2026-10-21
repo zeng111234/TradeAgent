@@ -139,8 +139,17 @@
             {{ result.did_investigate ? '是' : '否' }}
           </el-tag>
         </el-descriptions-item>
-        <el-descriptions-item label="耗时" :span="2">
-          {{ result.elapsed }}s · {{ result.prompt_tokens }}+{{ result.completion_tokens }} tokens
+        <el-descriptions-item label="耗时">
+          {{ result.elapsed }}s
+        </el-descriptions-item>
+        <el-descriptions-item label="Token / 缓存">
+          输入 {{ formatTokens(result.prompt_tokens) }} · 输出 {{ formatTokens(result.completion_tokens) }}
+          <template v-if="result.cache_hit_rate !== null && result.cache_hit_rate !== undefined">
+            · 缓存命中 {{ Math.round(result.cache_hit_rate * 100) }}%
+          </template>
+        </el-descriptions-item>
+        <el-descriptions-item label="费用">
+          <span :title="costHint">{{ costText }}</span>
         </el-descriptions-item>
       </el-descriptions>
 
@@ -232,6 +241,15 @@
           <el-descriptions-item label="轮次 / 调用">
             {{ selected.rounds }} / {{ selected.tool_calls }}
           </el-descriptions-item>
+          <el-descriptions-item label="Token / 缓存">
+            输入 {{ formatTokens(selected.prompt_tokens) }} · 输出 {{ formatTokens(selected.completion_tokens) }}
+            <template v-if="selected.cache_hit_rate !== null && selected.cache_hit_rate !== undefined">
+              · 缓存命中 {{ Math.round(selected.cache_hit_rate * 100) }}%
+            </template>
+          </el-descriptions-item>
+          <el-descriptions-item label="费用">
+            <span :title="costHintFor(selected)">{{ costTextFor(selected) }}</span>
+          </el-descriptions-item>
         </el-descriptions>
 
         <div v-if="selected.final_output" class="conclusion mt-4">
@@ -302,7 +320,7 @@ import { runApi } from '../api'
 import { t } from '../i18n/index.js'
 import { runStatusType as statusType } from '../constants/status.js'
 import { renderMarkdown } from '../utils/markdown'
-import { isTerminal, mergeSteps, normaliseRun } from '../utils/runProgress'
+import { formatCost, formatTokens, isTerminal, mergeSteps, normaliseRun } from '../utils/runProgress'
 import { readEventStream, reconnectDelay } from '../utils/sse'
 import TraceDiagram from '../components/TraceDiagram.vue'
 import TraceTimeline from '../components/TraceTimeline.vue'
@@ -323,6 +341,22 @@ const result = ref(null)
 // exist once the run is over.
 const active = ref(null)
 const clockTick = ref(0)
+
+/** Money for a run, or the honest reason there is none. */
+function costTextFor(run) {
+  if (!run) return '—'
+  if (run.usage_complete === false) return '用量未上报'
+  return run.cost ? formatCost(run.cost) : '未定价'
+}
+
+/** What the amount was computed from, on hover. */
+function costHintFor(run) {
+  if (!run || !run.cost) return ''
+  return [run.cost.peak ? '峰值时段' : '低谷时段', run.cost.source].filter(Boolean).join(' · ')
+}
+
+const costText = computed(() => costTextFor(result.value))
+const costHint = computed(() => costHintFor(result.value))
 
 //: One second. A run is bounded at 180 s by default and each poll is a single
 //: indexed row read, so this is cheap; faster would not show anything new,
