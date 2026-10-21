@@ -101,6 +101,16 @@ EXPECTED_ROUTES: dict[str, set[str]] = {
     # Read-only: circuit state and counters, run slots, pool occupancy. No
     # request body, no side effect, and nothing it returns had an endpoint.
     "/api/v1/diagnostics": {"get"},
+    # --- sender mailboxes (4 paths, 6 operations) ---
+    # Deliberate addition, not a modification: nothing above changed. The
+    # mailboxes a send can go out from, which until now existed only as one
+    # SMTP_USER in .env -- readable by nobody and switchable by nobody.
+    # `/effective` is read-only and sends nothing; the write operations are
+    # list-scoped (POST) or id-scoped (PUT/DELETE/activate), never global.
+    "/api/v1/senders": {"get", "post"},
+    "/api/v1/senders/effective": {"get"},
+    "/api/v1/senders/{account_id}": {"put", "delete"},
+    "/api/v1/senders/{account_id}/activate": {"post"},
 }
 
 

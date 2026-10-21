@@ -67,6 +67,15 @@ const routes = [
     component: () => import('../views/Quality.vue'),
     meta: { titleKey: 'quality.title', icon: 'TrendCharts' },
   },
+  {
+    // Operator configuration, not business data: which mailbox a send leaves
+    // from. It sits after the agent group because nothing above it depends
+    // on it, and everything sending depends on it.
+    path: '/senders',
+    name: 'Senders',
+    component: () => import('../views/Senders.vue'),
+    meta: { titleKey: 'senders.title', icon: 'Setting' },
+  },
 ]
 
 const router = createRouter({

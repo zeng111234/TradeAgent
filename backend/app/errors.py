@@ -109,6 +109,9 @@ class ErrorCode(str, Enum):
     SUBJECT_OR_BODY_REQUIRED = "subject_or_body_required"
     INVALID_LIMIT = "invalid_limit"
 
+    # -- sender mailboxes
+    SENDER_NOT_FOUND = "sender_not_found"
+
     # -- agent runs and one-off analyses
     RUN_NOT_FOUND = "run_not_found"
     #: The run exists but cannot be stopped now: it already finished, or it is

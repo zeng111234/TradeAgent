@@ -257,7 +257,7 @@ async def test_two_concurrent_batch_sends_do_not_email_anyone_twice(monkeypatch)
     first_send_started = asyncio.Event()
     release_first = asyncio.Event()
 
-    async def gated_sender(to_email, to_name, subject, body, tracking_id=None):
+    async def gated_sender(to_email, to_name, subject, body, tracking_id=None, sender=None):
         sent.append((to_email, subject))
         if not first_send_started.is_set():
             first_send_started.set()
@@ -313,7 +313,7 @@ async def test_a_batch_send_and_a_single_send_cannot_overlap(monkeypatch):
 
     sent: list[str] = []
 
-    async def slow_sender(to_email, to_name, subject, body, tracking_id=None):
+    async def slow_sender(to_email, to_name, subject, body, tracking_id=None, sender=None):
         await asyncio.sleep(0.05)
         sent.append(to_email)
         return {"success": True, "simulated": True}
@@ -354,7 +354,7 @@ async def test_the_refusal_is_a_409_over_http(monkeypatch):
         ))
         await db.commit()
 
-    async def slow_sender(to_email, to_name, subject, body, tracking_id=None):
+    async def slow_sender(to_email, to_name, subject, body, tracking_id=None, sender=None):
         await asyncio.sleep(0.05)
         return {"success": True, "simulated": True}
 

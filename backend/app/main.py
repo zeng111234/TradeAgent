@@ -26,6 +26,7 @@ from app.routers import (
     customers,
     diagnostics,
     emails,
+    senders,
     tasks,
     usage,
 )
@@ -217,6 +218,9 @@ app.include_router(agent_runs.router, prefix="/api/v1")
 app.include_router(usage.router, prefix="/api/v1")
 # Circuit states, run slots and pool occupancy. Read-only, changes nothing.
 app.include_router(diagnostics.router, prefix="/api/v1")
+# The mailboxes a send can go out from. Separate router because switching
+# sender is an identity decision: the agent's tools never touch these rows.
+app.include_router(senders.router, prefix="/api/v1")
 
 
 @app.get("/")

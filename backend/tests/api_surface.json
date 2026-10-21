@@ -47,6 +47,22 @@
       "422": "validation_error"
     }
   },
+  "DELETE /api/v1/senders/{account_id}": {
+    "parameters": [
+      {
+        "in": "path",
+        "name": "account_id",
+        "required": true,
+        "schema": {
+          "type": "integer"
+        }
+      }
+    ],
+    "responses": {
+      "204": "untyped",
+      "422": "validation_error"
+    }
+  },
   "DELETE /api/v1/tasks/{task_id}": {
     "parameters": [
       {
@@ -2019,6 +2035,87 @@
   "GET /api/v1/scheduler/jobs": {
     "responses": {
       "200": "untyped"
+    }
+  },
+  "GET /api/v1/senders": {
+    "responses": {
+      "200": {
+        "items": {
+          "properties": {
+            "created_at": {
+              "format": "date-time",
+              "type": "string"
+            },
+            "host": {
+              "type": "string"
+            },
+            "id": {
+              "type": "integer"
+            },
+            "is_active": {
+              "type": "boolean"
+            },
+            "label": {
+              "type": "string"
+            },
+            "port": {
+              "type": "integer"
+            },
+            "updated_at": {
+              "format": "date-time",
+              "type": "string"
+            },
+            "use_tls": {
+              "type": "boolean"
+            },
+            "username": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "created_at",
+            "host",
+            "id",
+            "is_active",
+            "label",
+            "port",
+            "updated_at",
+            "use_tls",
+            "username"
+          ],
+          "type": "object"
+        },
+        "type": "array"
+      }
+    }
+  },
+  "GET /api/v1/senders/effective": {
+    "responses": {
+      "200": {
+        "properties": {
+          "active_account_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "effective": {
+            "type": "string"
+          },
+          "env_configured": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "effective",
+          "env_configured"
+        ],
+        "type": "object"
+      }
     }
   },
   "GET /api/v1/tasks": {
@@ -4277,6 +4374,160 @@
       "422": "validation_error"
     }
   },
+  "POST /api/v1/senders": {
+    "request": {
+      "required": true,
+      "schema": {
+        "properties": {
+          "activate": {
+            "type": "boolean"
+          },
+          "host": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "label": {
+            "maxLength": 80,
+            "minLength": 1,
+            "type": "string"
+          },
+          "password": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          },
+          "port": {
+            "maximum": 65535.0,
+            "minimum": 1.0,
+            "type": "integer"
+          },
+          "use_tls": {
+            "type": "boolean"
+          },
+          "username": {
+            "maxLength": 254,
+            "minLength": 3,
+            "type": "string"
+          }
+        },
+        "required": [
+          "label",
+          "password",
+          "username"
+        ],
+        "type": "object"
+      }
+    },
+    "responses": {
+      "201": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "host": {
+            "type": "string"
+          },
+          "id": {
+            "type": "integer"
+          },
+          "is_active": {
+            "type": "boolean"
+          },
+          "label": {
+            "type": "string"
+          },
+          "port": {
+            "type": "integer"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "use_tls": {
+            "type": "boolean"
+          },
+          "username": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "created_at",
+          "host",
+          "id",
+          "is_active",
+          "label",
+          "port",
+          "updated_at",
+          "use_tls",
+          "username"
+        ],
+        "type": "object"
+      },
+      "422": "validation_error"
+    }
+  },
+  "POST /api/v1/senders/{account_id}/activate": {
+    "parameters": [
+      {
+        "in": "path",
+        "name": "account_id",
+        "required": true,
+        "schema": {
+          "type": "integer"
+        }
+      }
+    ],
+    "responses": {
+      "200": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "host": {
+            "type": "string"
+          },
+          "id": {
+            "type": "integer"
+          },
+          "is_active": {
+            "type": "boolean"
+          },
+          "label": {
+            "type": "string"
+          },
+          "port": {
+            "type": "integer"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "use_tls": {
+            "type": "boolean"
+          },
+          "username": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "created_at",
+          "host",
+          "id",
+          "is_active",
+          "label",
+          "port",
+          "updated_at",
+          "use_tls",
+          "username"
+        ],
+        "type": "object"
+      },
+      "422": "validation_error"
+    }
+  },
   "POST /api/v1/tasks": {
     "parameters": [
       {
@@ -5060,6 +5311,144 @@
           "subject",
           "updated_at",
           "use_count"
+        ],
+        "type": "object"
+      },
+      "422": "validation_error"
+    }
+  },
+  "PUT /api/v1/senders/{account_id}": {
+    "parameters": [
+      {
+        "in": "path",
+        "name": "account_id",
+        "required": true,
+        "schema": {
+          "type": "integer"
+        }
+      }
+    ],
+    "request": {
+      "required": true,
+      "schema": {
+        "properties": {
+          "host": {
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "label": {
+            "anyOf": [
+              {
+                "maxLength": 80,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "password": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "port": {
+            "anyOf": [
+              {
+                "maximum": 65535.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "use_tls": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "username": {
+            "anyOf": [
+              {
+                "maxLength": 254,
+                "minLength": 3,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object"
+      }
+    },
+    "responses": {
+      "200": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "host": {
+            "type": "string"
+          },
+          "id": {
+            "type": "integer"
+          },
+          "is_active": {
+            "type": "boolean"
+          },
+          "label": {
+            "type": "string"
+          },
+          "port": {
+            "type": "integer"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "use_tls": {
+            "type": "boolean"
+          },
+          "username": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "created_at",
+          "host",
+          "id",
+          "is_active",
+          "label",
+          "port",
+          "updated_at",
+          "use_tls",
+          "username"
         ],
         "type": "object"
       },

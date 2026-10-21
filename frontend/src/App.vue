@@ -58,6 +58,14 @@
             <span>{{ t('nav.tasks') }}</span>
           </el-menu-item>
         </el-menu-item-group>
+
+        <el-menu-item-group>
+          <template #title><span class="nav-group">{{ t('shell.groupSystem') }}</span></template>
+          <el-menu-item index="/senders">
+            <el-icon><Setting /></el-icon>
+            <span>{{ t('nav.senders') }}</span>
+          </el-menu-item>
+        </el-menu-item-group>
       </el-menu>
 
       <div class="sidebar-footer">

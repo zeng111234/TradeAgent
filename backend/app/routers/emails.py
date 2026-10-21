@@ -47,6 +47,7 @@ from app.services.email_claims import (
     as_replay,
 )
 from app.services.idempotency import clean_key, create_once
+from app.services.smtp_accounts import resolve_active_sender
 from app.utils.email_sender import send_email, send_batch_emails, render_template, generate_tracking_id
 from app.services.ai_service import generate_cold_email
 from app.services.analytics_service import get_dashboard_stats
@@ -365,6 +366,7 @@ async def send_single_email(
         subject=subject,
         body=body,
         tracking_id=tracking_id,
+        sender=await resolve_active_sender(db),
     )
 
     await release(
@@ -566,6 +568,11 @@ async def api_send_pending(
         deadline = time.monotonic() + BATCH_SEND_BUDGET_SECONDS
         stopped_on_time = False
 
+        # Resolved once, before the first message: a switch landing halfway
+        # through a batch would split one batch across two mailboxes, and the
+        # rows would not say which half came from where.
+        batch_sender = await resolve_active_sender(db)
+
         for email_log in pending:
             # Two bounds, not one. The count (`limit`) keeps a single request from
             # being enormous; this clock keeps it from *lasting* arbitrarily long,
@@ -602,6 +609,7 @@ async def api_send_pending(
                 subject=email_log.subject,
                 body=email_log.body,
                 tracking_id=email_log.tracking_id,
+                sender=batch_sender,
             )
 
             await release(
@@ -694,6 +702,7 @@ async def api_send_single_pending(email_id: int, db: AsyncSession = Depends(get_
             subject=email_log.subject,
             body=email_log.body,
             tracking_id=email_log.tracking_id,
+            sender=await resolve_active_sender(db),
         )
 
         await release(

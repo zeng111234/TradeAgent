@@ -108,6 +108,21 @@ export const customerApi = {
 }
 
 // --- Emails ---
+// --- Sender mailboxes (which address a send leaves from) ---
+// The password is write-only: create and update send it, no response returns
+// it. `update` with the field omitted keeps the stored one.
+export const sendersApi = {
+  list: () => api.get('/senders'),
+  // What a send would use right now, without sending anything. The page
+  // leads with this so "which mailbox am I about to send from" is answered
+  // before any button is pressed.
+  effective: () => api.get('/senders/effective'),
+  create: (data) => api.post('/senders', data),
+  update: (id, data) => api.put(`/senders/${id}`, data),
+  activate: (id) => api.post(`/senders/${id}/activate`),
+  remove: (id) => api.delete(`/senders/${id}`),
+}
+
 export const emailApi = {
   getTemplates: (params) => api.get('/emails/templates', { params }),
   getTemplate: (id) => api.get(`/emails/templates/${id}`),

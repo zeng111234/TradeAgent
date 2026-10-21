@@ -82,9 +82,12 @@ async function main() {
     if (!page.url().endsWith('/console')) throw new Error(`"/" should land on /console, got ${page.url()}`)
 
     // 2. Sidebar order: the agent group comes first, console is its first item.
+    // Three groups since sender mailboxes got a home of their own: agent,
+    // data, system. The system group is operator configuration, which is why
+    // it is last -- nothing in the agent or data groups depends on it.
     const groups = await page.locator('.sidebar .el-menu-item-group__title').allInnerTexts()
-    if (groups.length !== 2 || !/AGENT/i.test(groups[0])) {
-      throw new Error(`expected AGENT then data group, got ${JSON.stringify(groups)}`)
+    if (groups.length !== 3 || !/AGENT/i.test(groups[0])) {
+      throw new Error(`expected AGENT, data, system groups, got ${JSON.stringify(groups)}`)
     }
     const items = await page.locator('.sidebar .el-menu-item').allInnerTexts()
     if (!/控制台|Console/.test(items[0])) {
@@ -92,6 +95,9 @@ async function main() {
     }
     if (!/数据看板|Dashboard/.test(items[4])) {
       throw new Error(`dashboard should open the data group, got ${JSON.stringify(items)}`)
+    }
+    if (!/发件邮箱|Sender/.test(items[items.length - 1])) {
+      throw new Error(`senders should close the system group, got ${JSON.stringify(items)}`)
     }
 
     // 3. Language switch re-renders the shell and survives a reload.

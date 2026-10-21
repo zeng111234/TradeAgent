@@ -238,6 +238,13 @@ async def _idempotency_table_settled(conn: AsyncConnection) -> bool:
 # The migrations, oldest first
 # --------------------------------------------------------------------------
 
+async def _smtp_accounts_settled(conn: AsyncConnection) -> bool:
+    """True when the table and its single-active index are both in place."""
+    if not await _table_exists(conn, "smtp_accounts"):
+        return False
+    return await _has_index(conn, "ux_smtp_accounts_single_active")
+
+
 MIGRATIONS: list[Migration] = [
     Migration(
         id="0001_agent_runs_customer_id",
@@ -447,6 +454,41 @@ MIGRATIONS: list[Migration] = [
             "ALTER TABLE agent_runs ADD COLUMN model VARCHAR(80)",
         ],
         guard=lambda conn: _column_settled(conn, "agent_runs", "model"),
+    ),
+    Migration(
+        id="0013_smtp_accounts",
+        description=(
+            "the mailboxes a send can go out from, as rows instead of one "
+            "environment variable. 'Switch to the other address' was a file "
+            "edit and a restart; with two mailboxes in play that is not a "
+            "setting, it is a procedure. The partial unique index is the part "
+            "that matters: two active accounts is not a state the service is "
+            "allowed to produce, so the database refuses it even if the "
+            "service is bypassed"
+        ),
+        statements=[
+            "CREATE TABLE IF NOT EXISTS smtp_accounts ("
+            "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            "  label VARCHAR(80) NOT NULL,"
+            "  host VARCHAR(120) NOT NULL DEFAULT 'smtp.qq.com',"
+            "  port INTEGER NOT NULL DEFAULT 465,"
+            # INTEGER, not BOOLEAN: SQLite has no boolean type, and the values
+            # that matter are the 0/1 that SQLAlchemy's Boolean reads back.
+            "  use_tls INTEGER NOT NULL DEFAULT 1,"
+            "  username VARCHAR(254) NOT NULL,"
+            "  password VARCHAR(200) NOT NULL,"
+            "  is_active INTEGER NOT NULL DEFAULT 0,"
+            "  created_at DATETIME,"
+            "  updated_at DATETIME"
+            ")",
+            # WHERE is_active = 1: the constraint only bites on the one row
+            # that is allowed to be active. Every inactive row shares the
+            # value 0 and a plain unique index on it would allow one mailbox
+            # in total, active or not.
+            "CREATE UNIQUE INDEX IF NOT EXISTS ux_smtp_accounts_single_active "
+            "ON smtp_accounts (is_active) WHERE is_active = 1",
+        ],
+        guard=_smtp_accounts_settled,
     ),
 ]
 

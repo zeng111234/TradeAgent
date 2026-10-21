@@ -203,6 +203,13 @@ read: `list_email_templates` and `render_email_template` before
 `create_email_template`, `list_email_logs` for the pending queue,
 `get_pipeline_stats` and `get_quality_report` for the pages a person opens.
 
+Which mailbox a send leaves from is the same rule from the other side. The
+senders page (`/senders`, migration 0013) lets an operator keep several and
+switch between them, and the agent has no tool that touches those rows —
+switching sender is a decision about identity, and identity is not something
+a tool call gets to change. The send path reads the active account at send
+time, so a switch lands on the next message and not retroactively.
+
 ## The trace is the point
 
 Every round records the model's text, each tool call with its arguments, the

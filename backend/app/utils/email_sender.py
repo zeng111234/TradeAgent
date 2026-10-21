@@ -9,6 +9,7 @@ from jinja2 import Template
 import logging
 
 from app.config import settings
+from app.services.smtp_accounts import ResolvedSender, sender_from_env
 from app.timeouts import SMTP_SEND_SECONDS
 
 logger = logging.getLogger(__name__)
@@ -89,12 +90,21 @@ async def send_email(
     subject: str,
     body: str,
     tracking_id: str | None = None,
+    sender: ResolvedSender | None = None,
 ) -> dict:
     """Send an email via SMTP.
-    
+
+    ``sender`` is the mailbox to send from, resolved by the caller that has a
+    database session (the active account, else the environment). Omitted, the
+    environment is the only source available -- which is where this function
+    read its credentials before switchable accounts existed, and what the
+    no-session callers (scripts, the batch helper) still use.
+
     Returns dict with 'success' bool and optional 'error' message.
     """
-    if not settings.SMTP_USER or not settings.SMTP_PASSWORD:
+    if sender is None:
+        sender = sender_from_env()
+    if sender is None:
         logger.warning("SMTP credentials not configured, simulating email send")
         return {
             "success": True,
@@ -104,7 +114,7 @@ async def send_email(
 
     try:
         msg = MIMEMultipart("alternative")
-        msg["From"] = settings.SMTP_USER
+        msg["From"] = sender.username
         msg["To"] = f"{to_name} <{to_email}>" if to_name else to_email
         msg["Subject"] = subject
 
@@ -121,11 +131,11 @@ async def send_email(
 
         await aiosmtplib.send(
             msg,
-            hostname=settings.SMTP_HOST,
-            port=settings.SMTP_PORT,
-            username=settings.SMTP_USER,
-            password=settings.SMTP_PASSWORD,
-            use_tls=settings.SMTP_USE_TLS,
+            hostname=sender.host,
+            port=sender.port,
+            username=sender.username,
+            password=sender.password,
+            use_tls=sender.use_tls,
             # Stated rather than inherited: aiosmtplib's own default is 60
             # seconds, and this call happens while the process-wide send lock is
             # held. Thirty is enough for a handshake and one message against a

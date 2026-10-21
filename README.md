@@ -199,6 +199,22 @@ python scripts/circuit_probe.py
 单独记作 `unattributed` 并给出 `coverage`，模拟发送与退信计入 `excluded` 而不是分母。
 前端入口是 `/quality`。
 
+## 发件邮箱（可切换）
+
+发件邮箱不再是写死在 `.env` 里的一个 `SMTP_USER`。侧边栏「系统 → 发件邮箱」页可以管理多个
+邮箱，**同一时间只有一个生效**，之后发出的邮件都从当前生效的邮箱离开：
+
+- 新增时勾选「创建后立即启用」即切换；日常切换点列表里的「启用」，即时生效、无需重启
+- 编辑时授权码留空表示不变——换名字不需要把授权码翻出来重贴
+- 密码只写不返：任何接口都不返回已保存的授权码，页面上也只在输入框出现一次
+- 数据库层保证不出现两个生效邮箱（部分唯一索引），服务层的切换与它是双保险
+- 删除当前生效的邮箱**不会**自动顶替另一个：之后的发送回退到 `.env` 配置，未配置则为模拟
+  发送（邮件页会打 `simulated` 标签，不会冒充真实投递）
+- Agent 没有操作这些记录的工具——用哪个邮箱发件是身份决策，不是工具调用能做的事
+
+没有启用任何页面邮箱时，行为与以前完全一致：读取 `.env` 的 `SMTP_*`。
+`GET /api/v1/senders/effective` 随时回答"现在发会从哪个邮箱走"，不真的发任何东西。
+
 ## 环境变量
 
 | 变量 | 必填 | 说明 |
@@ -206,7 +222,7 @@ python scripts/circuit_probe.py
 | `OPENAI_API_KEY` | agent 功能必填 | 没有它 agent 直接拒绝运行，不会伪造结果 |
 | `OPENAI_BASE_URL` | 可选 | 默认 `https://api.xiaomimimo.com/v1`，兼容 DeepSeek / OpenAI |
 | `OPENAI_MODEL` | 可选 | 默认 `mimo-v2.5` |
-| `SMTP_*` / `REPORT_EMAIL` | 可选 | 每日报告邮件；不配置则打印到 stdout |
+| `SMTP_*` / `REPORT_EMAIL` | 可选 | 每日报告邮件；不配置则打印到 stdout。客户邮件优先用「发件邮箱」页里生效的账户，未启用任何账户时才回退到这里的 `SMTP_USER` |
 | `SCAN_KEYWORDS` / `SCAN_COUNTRIES` | 可选 | 每日扫描的关键词与市场 |
 | `SCAN_DRY_RUN` | 可选 | `1` = 不写文件、不发邮件 |
 | `AGENT_SPILL_DIR` | 可选 | 压缩时溢出的完整观察文本存放位置（默认系统临时目录） |

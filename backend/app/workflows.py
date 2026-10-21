@@ -108,8 +108,6 @@ async def send_drafted_emails_workflow(
     selected_leads: list of dicts with company_name, country, website,
                     email, draft_subject, draft_body
     """
-    from app.config import settings
-
     result_summary = {
         "total_selected": len(selected_leads),
         "emails_sent": 0,
@@ -126,7 +124,12 @@ async def send_drafted_emails_workflow(
         from app.models.customer import Customer, CustomerContact, CustomerSource, CustomerStage
         from app.models.email_log import EmailLog, EmailStatus
         from app.services.email_claims import release
+        from app.services.smtp_accounts import resolve_active_sender
         from sqlalchemy import select
+
+        # Resolved once, before the first message: a switch landing halfway
+        # through a run would split it across two mailboxes.
+        workflow_sender = await resolve_active_sender(db)
 
         for lead in selected_leads:
             to_email = lead.get("email", "")
@@ -225,7 +228,7 @@ async def send_drafted_emails_workflow(
                 continue
 
             # Send only now, with the claim on disk.
-            simulated = not (settings.SMTP_USER and settings.SMTP_PASSWORD)
+            simulated = workflow_sender is None
             sent_ok = False
             send_error = None
             if simulated:
@@ -243,6 +246,7 @@ async def send_drafted_emails_workflow(
                         to_name=company_name,
                         subject=subject,
                         body=body,
+                        sender=workflow_sender,
                     )
                     if result.get("success"):
                         result_summary["emails_sent"] += 1

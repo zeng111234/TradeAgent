@@ -143,7 +143,7 @@ async def test_sending_the_draft_ends_the_suspension(db, client, monkeypatch):
     customer = await a_customer(db)
     draft = await a_pending_draft(db, customer)
 
-    async def sender(to_email, to_name, subject, body, tracking_id=None):
+    async def sender(to_email, to_name, subject, body, tracking_id=None, sender=None):
         return {"success": True, "simulated": True}
 
     monkeypatch.setattr(emails_router, "send_email", sender)
@@ -200,7 +200,7 @@ async def test_a_rejected_draft_is_never_sent(monkeypatch, db, client):
 
     sent: list[str] = []
 
-    async def sender(to_email, to_name, subject, body, tracking_id=None):
+    async def sender(to_email, to_name, subject, body, tracking_id=None, sender=None):
         sent.append(to_email)
         return {"success": True, "simulated": True}
 
