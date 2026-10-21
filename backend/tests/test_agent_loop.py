@@ -478,6 +478,58 @@ async def test_run_agent_returns_success_normally(registry):
     assert run.tool_sequence == ["list_customers"]
 
 
+# --- transient provider failures -------------------------------------------
+
+async def test_a_transient_failure_is_retried_before_it_ends_the_run(registry, monkeypatch):
+    """A dropped connection is the cheapest failure to absorb and the loudest if not.
+
+    Measured against DeepSeek from this network: roughly one call in ten ends in
+    ``APIConnectionError``. Without a retry that is a failed run, and the whole
+    round's work is gone for a blip that clears in a second.
+    """
+    from app.llm import LLMTransient
+
+    monkeypatch.setattr(AgentLoop, "TRANSIENT_BACKOFF", (0.0, 0.0))
+    llm = FakeLLM([LLMTransient("connection reset"), final("all good")])
+
+    run = await run_agent("go", llm, registry)
+
+    assert run.status == "succeeded"
+    assert len(llm.calls) == 2
+    assert run.final_output.startswith("all good")
+
+
+async def test_a_burst_of_transient_failures_still_ends_the_run(registry, monkeypatch):
+    from app.llm import LLMTransient
+
+    monkeypatch.setattr(AgentLoop, "TRANSIENT_BACKOFF", (0.0, 0.0))
+    llm = FakeLLM([
+        LLMTransient("first"), LLMTransient("second"), LLMTransient("third"),
+        final("never reached"),
+    ])
+
+    run = await run_agent("go", llm, registry)
+
+    assert run.status == "error"
+    # One attempt plus the two retries the loop allows, then it gives up.
+    assert len(llm.calls) == 3
+    assert "LLMTransient" in run.error
+
+
+async def test_a_failure_after_deltas_is_not_retried(registry):
+    """Re-sending would duplicate text the user has already seen."""
+    from app.llm import LLMTransient
+
+    exc = LLMTransient("socket closed mid-answer")
+    exc.delivered = True
+    llm = FakeLLM([exc, final("would be a second answer")])
+
+    run = await run_agent("go", llm, registry)
+
+    assert run.status == "error"
+    assert len(llm.calls) == 1
+
+
 # --- trace / serialisation -------------------------------------------------
 
 async def test_trace_records_everything_needed_for_replay(registry):

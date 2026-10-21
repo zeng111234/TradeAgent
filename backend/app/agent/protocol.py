@@ -562,8 +562,13 @@ class OpenAICompatibleClient:
             if not received:
                 raise _StreamUnavailable("transport") from exc
             # Output already reached the user. Re-sending would duplicate it and
-            # bill twice; this is a failure, not a retry.
-            self._record_failure(key, exc)
+            # bill twice; this is a failure, not a retry. The marker is what
+            # tells the loop's retry policy not to try again.
+            try:
+                self._record_failure(key, exc)
+            except Exception as translated:  # noqa: BLE001 - re-raised as itself
+                translated.delivered = True
+                raise
         finally:
             # An async iterator abandoned mid-flight holds an HTTP connection.
             # Without this, a cancelled or timed-out round leaks a socket.

@@ -96,7 +96,10 @@ async def test_latency_is_measured_around_the_model_call():
         model = "fake-model"
 
         async def chat(self, messages, tools, *, temperature=0.2, max_tokens=1500):
-            await asyncio.sleep(0.02)
+            # 50ms, not 20: Windows' timer granularity is ~15.6ms, so a sleep
+            # this short can return a hair early and make the assertion below
+            # fail on the clock rather than on the code.
+            await asyncio.sleep(0.05)
             return LLMReply(
                 content=final("Slow but done."),
                 prompt_tokens=5,
@@ -106,7 +109,7 @@ async def test_latency_is_measured_around_the_model_call():
     loop = AgentLoop(SlowLLM(), _registry_with_lookup(), budget=AgentBudget())
     run = await loop.run("take your time")
 
-    assert run.steps[0].latency >= 0.015
+    assert run.steps[0].latency >= 0.03
     assert run.steps[0].as_dict()["latency"] > 0
 
 

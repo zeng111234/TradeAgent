@@ -730,14 +730,7 @@ class AgentLoop:
             # bounded projection of it. Nothing is lost — oversized observations
             # are written to the spill store and stay retrievable by name.
             messages = self._project_for_model(run, round_index)
-            kwargs: dict[str, Any] = {"temperature": 0.2, "max_tokens": 1500}
-            # Capability check, not a Protocol change: every scripted test fake
-            # satisfies ``chat(messages, tools, temperature=, max_tokens=)`` and
-            # none of them implement streaming, so none of them need editing.
-            if self.on_delta is not None and getattr(self.llm, "supports_stream", False):
-                kwargs["on_delta"] = self._delta_sink
-            call = self.llm.chat(messages, schemas, **kwargs)
-            reply = await self._with_cancel(call, timeout)
+            reply = await self._call_model(messages, schemas, round_index, timeout)
 
             # Recorded here, not at the end of the run: a round that ends the run
             # -- a final answer, a budget stop, a stall -- is still a round the
@@ -775,6 +768,84 @@ class AgentLoop:
                 f"LLM call failed in round {round_index} "
                 f"({type(exc).__name__}): {exc}"
             ) from exc
+
+    #: How many times a transient provider failure is retried within one round.
+    #: A dropped connection is the most common provider failure and the least
+    #: meaningful: the run has nothing to show for it, and ending the run turns
+    #: a two-second blip into lost work. Tokens are only paid on success, so a
+    #: retry costs a round trip, not money.
+    TRANSIENT_RETRIES = 2
+    #: Backoff per retry, in seconds. Short: the run has a wall-clock budget,
+    #: and a retry that spends it all on waiting is not a retry.
+    TRANSIENT_BACKOFF = (1.0, 3.0)
+
+    async def _call_model(
+        self, messages: list[Message], schemas: list[dict], round_index: int,
+        timeout: Optional[float],
+    ):
+        """``llm.chat`` with a bounded retry for transient, undelivered failures.
+
+        ``timeout`` is the deadline for the whole round, not for one attempt, so
+        a retry cannot extend the run past the budget it was given. A failure
+        that happened after deltas reached the user is never retried: re-sending
+        would duplicate the answer and bill it twice.
+        """
+        started = time.monotonic()
+        for attempt in range(1, self.TRANSIENT_RETRIES + 2):
+            left = None
+            if timeout is not None:
+                left = timeout - (time.monotonic() - started)
+                if left <= 0:
+                    # Same contract as ``_with_cancel``: no time left means no
+                    # call, not an unbounded one.
+                    raise asyncio.TimeoutError()
+
+            kwargs: dict[str, Any] = {"temperature": 0.2, "max_tokens": 1500}
+            # Capability check, not a Protocol change: every scripted test fake
+            # satisfies ``chat(messages, tools, temperature=, max_tokens=)`` and
+            # none of them implement streaming, so none of them need editing.
+            if self.on_delta is not None and getattr(self.llm, "supports_stream", False):
+                kwargs["on_delta"] = self._delta_sink
+            call = self.llm.chat(messages, schemas, **kwargs)
+
+            try:
+                return await self._with_cancel(call, left)
+            except (AgentCancelled, asyncio.TimeoutError):
+                raise
+            except Exception as exc:  # noqa: BLE001 - retried or re-raised
+                delay = self.TRANSIENT_BACKOFF[
+                    min(attempt - 1, len(self.TRANSIENT_BACKOFF) - 1)
+                ]
+                room = timeout is None or (time.monotonic() - started) + delay < timeout
+                if self._retryable(exc) and attempt <= self.TRANSIENT_RETRIES and room:
+                    logger.warning(
+                        "round %s attempt %s failed transiently (%s); retrying in %.1fs",
+                        round_index, attempt, type(exc).__name__, delay,
+                    )
+                    await self._pause(delay)
+                    continue
+                raise
+
+        raise AssertionError("unreachable: the retry loop always returns or raises")
+
+    @staticmethod
+    def _retryable(exc: Exception) -> bool:
+        from app.llm import LLMRateLimited, LLMTransient
+
+        if getattr(exc, "delivered", False):
+            return False
+        return isinstance(exc, (LLMTransient, LLMRateLimited))
+
+    async def _pause(self, seconds: float) -> None:
+        """Wait between attempts without ignoring a stop request."""
+        if self.cancel is None:
+            await asyncio.sleep(seconds)
+            return
+        try:
+            await asyncio.wait_for(self.cancel.wait(), timeout=seconds)
+        except asyncio.TimeoutError:
+            return
+        raise AgentCancelled("cancelled while waiting to retry")
 
     def _delta_sink(self, kind: str, text: str) -> None:
         """Accumulate the round's text and forward it to the transport.
