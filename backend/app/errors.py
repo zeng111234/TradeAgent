@@ -111,6 +111,12 @@ class ErrorCode(str, Enum):
 
     # -- agent runs and one-off analyses
     RUN_NOT_FOUND = "run_not_found"
+    #: The run exists but cannot be stopped now: it already finished, or it is
+    #: running in another process (live state is in memory).
+    RUN_NOT_CANCELLABLE = "run_not_cancellable"
+    #: A conversation id was supplied that no stored conversation has. Not
+    #: silently created: a typo would become a new thread with no history.
+    CONVERSATION_NOT_FOUND = "conversation_not_found"
     LEADS_FILE_MISSING = "leads_file_missing"
     LLM_NOT_CONFIGURED = "llm_not_configured"
     AGENT_AT_CAPACITY = "agent_at_capacity"

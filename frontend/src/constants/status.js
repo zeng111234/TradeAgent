@@ -86,6 +86,10 @@ const RUN_TYPES = Object.freeze({
   stalled: WARNING,
   running: ACCENT,
   starting: ACCENT,
+  cancelling: ACCENT,
+  // Stopped on purpose is a fact, not a failure. Painting it red would make a
+  // deliberate action look like a defect in the run.
+  cancelled: NEUTRAL,
   error: NEGATIVE,
 })
 

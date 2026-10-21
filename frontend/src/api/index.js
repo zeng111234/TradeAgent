@@ -206,6 +206,14 @@ export const runApi = {
   run: (data) => api.post('/agent/run', { ...data, wait: false }),
   list: (params) => api.get('/agent/runs', { params }),
   get: (runId) => api.get(`/agent/runs/${runId}`),
+  // Cooperative stop: 202 means the request was accepted, not that the run has
+  // already stopped. The terminal `done` frame carries the final status.
+  cancel: (runId) => api.post(`/agent/runs/${runId}/cancel`),
+  // Threads. The list is the console's rail; the detail also carries turns that
+  // are still running, so a refresh can reconnect instead of losing them.
+  conversations: (params) => api.get('/agent/conversations', { params }),
+  conversation: (conversationId) =>
+    api.get(`/agent/conversations/${encodeURIComponent(conversationId)}`),
   // Server-sent events for one run, from a round cursor. Used with `fetch`
   // rather than axios: axios buffers the body, and a stream is the one response
   // that must not be buffered.

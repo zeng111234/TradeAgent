@@ -99,6 +99,7 @@ def build_llm_client(timeout: float = 120.0) -> LLMClient:
         base_url=settings.OPENAI_BASE_URL,
         model=settings.OPENAI_MODEL,
         timeout=timeout,
+        stream=settings.OPENAI_STREAM,
     )
 
 
@@ -135,6 +136,11 @@ async def execute(
     run_id: Optional[str] = None,
     customer_id: Optional[int] = None,
     on_step: Optional[Callable[[Any], None]] = None,
+    on_delta: Optional[Callable[[str, str], None]] = None,
+    on_round: Optional[Callable[[int], None]] = None,
+    cancel=None,
+    history: Optional[list[tuple[str, str]]] = None,
+    conversation_id: Optional[str] = None,
 ) -> AgentResult:
     """Run the agent and return a displayable result.
 
@@ -180,6 +186,11 @@ async def execute(
         run_id=run_id,
         customer_id=customer_id,
         on_step=on_step,
+        on_delta=on_delta,
+        on_round=on_round,
+        cancel=cancel,
+        history=history,
+        conversation_id=conversation_id,
     )
 
     if persist:
@@ -225,13 +236,19 @@ def summarise(result: AgentResult) -> dict[str, Any]:
     delegations = result.delegations or {}
     delegated_calls = delegations.get("tool_calls", 0)
     delegated_tokens = delegations.get("tokens", 0)
-    model = getattr(getattr(result, "llm", None), "model", None) or settings.OPENAI_MODEL
+    # ``run.model`` is what the loop actually called. The previous expression
+    # looked for an ``llm`` attribute on AgentResult, which never existed, so it
+    # always fell back to the configured model -- right by accident until a run
+    # could use something else, and silently wrong after that.
+    model = run.model or settings.OPENAI_MODEL
     usage = Usage(
         prompt_tokens=run.prompt_tokens,
         cached_prompt_tokens=run.cached_prompt_tokens,
         completion_tokens=run.completion_tokens,
     )
-    cost = cost_of(usage, model)
+    # A lower bound is not a bill: when a provider did not report usage, the
+    # cost is unknown, not the price of the rounds that happened to report.
+    cost = cost_of(usage, model) if run.usage_complete else None
     return {
         "run_id": run.run_id,
         "status": run.status,
@@ -253,7 +270,9 @@ def summarise(result: AgentResult) -> dict[str, Any]:
         "tokens_total": run.prompt_tokens + run.completion_tokens + delegated_tokens,
         "cache_hit_rate": usage.cache_hit_rate,
         "model": model,
-        # ``None`` means no price was declared for this model: unpriced, which is
-        # a different statement from free. See app.llm_usage.
+        # ``None`` means either no price was declared for this model or a round
+        # did not report usage: unpriced/unknown, which is a different statement
+        # from free. See app.llm_usage.
         "cost": cost.as_dict() if cost is not None else None,
+        "usage_complete": run.usage_complete,
     }

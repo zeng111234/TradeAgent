@@ -172,6 +172,39 @@ def test_a_legacy_database_gains_a_place_to_remember_an_idempotency_key(scratch)
     )
 
 
+def test_a_legacy_database_gains_a_conversation_reference(scratch):
+    """Old runs were independent; new ones can belong to a thread.
+
+    No backfill: inventing a conversation for a legacy run would fabricate a
+    history the trace cannot support.
+    """
+    import asyncio
+
+    as_legacy_database(scratch)
+    assert "conversation_id" not in columns(scratch, "agent_runs")
+
+    report = asyncio.run(scratch.run(apply_migrations))
+
+    assert "0011_agent_runs_conversation_id" in report["applied"], report
+    assert "conversation_id" in columns(scratch, "agent_runs")
+    assert any("conversation_id" in name for name in indexes(scratch, "agent_runs")), (
+        "the conversation view reads by this column; without the index it scans"
+    )
+
+
+def test_a_legacy_database_learns_which_model_ran(scratch):
+    """A token count with no model name cannot be priced."""
+    import asyncio
+
+    as_legacy_database(scratch)
+    assert "model" not in columns(scratch, "agent_runs")
+
+    report = asyncio.run(scratch.run(apply_migrations))
+
+    assert "0012_agent_runs_model" in report["applied"], report
+    assert "model" in columns(scratch, "agent_runs")
+
+
 def test_legacy_stop_reasons_are_backfilled_with_a_code(scratch):
     """The sentence stays; the code is derived once, from what we actually wrote.
 

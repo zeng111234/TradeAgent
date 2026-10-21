@@ -48,6 +48,10 @@ class Settings(BaseSettings):
     # One completion's request timeout. The SDK default is 600s, which lets a
     # hung provider hold an HTTP request for ten minutes.
     OPENAI_TIMEOUT_SECONDS: float = 120.0
+    #: Stream model output so the console can show it as it is written. On by
+    #: default; turn it off for an endpoint that streams badly, and the run
+    #: falls back to one snapshot per round without losing reasoning capture.
+    OPENAI_STREAM: bool = True
     # What a million tokens cost, per model, as a JSON object:
     #   {"deepseek-chat": {"inputPerMtok": 0.27, "cachedInputPerMtok": 0.07,
     #                      "outputPerMtok": 1.10, "currency": "USD"}}

@@ -47,6 +47,9 @@ from app.models.job_run import ABANDONED, FAILED, RUNNING, SKIPPED, SUCCEEDED, J
 from app.suggestion import UNATTRIBUTED
 
 #: Statuses that mean "the run finished and did not succeed".
+#: ``cancelled`` is intentionally absent: an operator stopping a healthy run is
+#: not a quality failure. It falls into ``runs_other`` and leaves the success
+#: rate's numerator and denominator unchanged.
 RUN_FAILED = ("error", "stalled", "truncated")
 
 #: A mail in one of these states reached the recipient, or at least left this

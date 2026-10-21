@@ -179,6 +179,7 @@ def compact_messages(
     spill: Optional[SpillStore] = None,
     head_chars: int = 700,
     tail_chars: int = 400,
+    protect_head_messages: int = 0,
 ) -> tuple[list, CompactionReport]:
     """Return a bounded view of ``messages`` plus a report of what changed.
 
@@ -213,6 +214,12 @@ def compact_messages(
     protected_head = 0
     while protected_head < len(view) and getattr(view[protected_head], "role", "") == "system":
         protected_head += 1
+    # Plus any caller-declared head: the injected conversation history lives
+    # here. Trimming it to 80+40 characters would leave the model with "the
+    # user asked… the assistant answered…" and no actual content, which is
+    # worse than no history at all -- it looks like context and is not.
+    if protect_head_messages > 0:
+        protected_head = min(len(view), protected_head + protect_head_messages)
     # Plus the most recent exchanges, which the model is reasoning over now.
     protected_tail = max(protected_head, len(view) - keep_recent)
 

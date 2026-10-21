@@ -16,10 +16,60 @@ export const TERMINAL_STATUSES = Object.freeze([
   'truncated',
   'stalled',
   'error',
+  // Stopped on purpose. Terminal, but not a failure: the rounds it finished
+  // are still a valid record and are shown.
+  'cancelled',
 ])
 
 export function isTerminal(status) {
   return TERMINAL_STATUSES.includes(status)
+}
+
+/**
+ * What a finished run should be called, in one place.
+ *
+ * `truncated` is a budget stop, not a failure; a `succeeded` run can still have
+ * refused tool calls because one budget ran out mid-round. Both are "budget",
+ * which reads differently from "failure" and must not borrow its red.
+ */
+export function runOutcome(status, stopCode = '', refusedCalls = 0) {
+  if (status === 'starting' || status === 'running' || status === 'cancelling') return 'running'
+  if (status === 'cancelled') return 'cancelled'
+  if (status === 'error' || status === 'stalled') return 'failure'
+  if (status === 'truncated') return 'budget'
+  if (status === 'succeeded') return refuseCount(refusedCalls) > 0 || stopCode === 'token_budget'
+    ? 'budget'
+    : 'success'
+  return 'success'
+}
+
+function refuseCount(value) {
+  return Number.isFinite(Number(value)) ? Number(value) : 0
+}
+
+/**
+ * Money, or a dash. Never `$0.00` for an unknown price.
+ *
+ * ``cost`` is ``null`` when nobody declared a price for the model or when a
+ * round did not report usage. Both mean unknown, and printing zero would state
+ * the opposite of what the server said.
+ */
+export function formatCost(cost) {
+  if (!cost || typeof cost.amount !== 'number' || !Number.isFinite(cost.amount)) return '—'
+  const amount = cost.amount
+  const digits = amount > 0 && amount < 0.01 ? 4 : amount < 1 ? 3 : 2
+  const symbol = cost.currency === 'USD' ? '$' : cost.currency === 'CNY' ? '¥' : ''
+  const rendered = amount.toFixed(digits)
+  const suffix = cost.estimated ? '~' : ''
+  return symbol ? `${suffix}${symbol}${rendered}` : `${suffix}${rendered} ${cost.currency || ''}`.trim()
+}
+
+/** 12345 -> "12.3k". Used for token counts, where exact digits are noise. */
+export function formatTokens(total) {
+  const n = Number(total) || 0
+  if (n < 1000) return String(n)
+  const k = n / 1000
+  return `${k >= 10 ? Math.round(k) : k.toFixed(1)}k`
 }
 
 /**

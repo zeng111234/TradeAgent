@@ -189,6 +189,30 @@ def test_system_prompt_is_never_trimmed():
     assert view[0].content == "S" * 5000
 
 
+def test_injected_history_survives_compaction():
+    """The head the caller declared is protected, not trimmed to a fragment.
+
+    A history of "the user asked… the assistant answered…" is worse than none:
+    it looks like context and carries nothing. Two extra head messages must stay
+    byte-identical, even when the middle is cut hard.
+    """
+    history = [
+        Message.user("which customers need a follow-up?"),
+        Message.assistant("these three, because their last reply is 12 days old"),
+    ]
+    messages = [Message.system("system prompt"), *history, Message.user("and their emails?")]
+    messages += _history(12, size=4000)[1:]
+
+    view, report = compact_messages(
+        messages, budget_tokens=4_000, keep_recent=2,
+        protect_head_messages=len(history),
+    )
+
+    assert report.did_anything is True
+    assert view[1].content == history[0].content
+    assert view[2].content == history[1].content
+
+
 def test_short_messages_are_never_trimmed():
     """Trimming the model's own reasoning costs more than the tokens it saves."""
     messages = [Message.system("s"), Message.user("g")]

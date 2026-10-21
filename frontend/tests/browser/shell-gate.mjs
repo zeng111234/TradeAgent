@@ -67,6 +67,13 @@ async function main() {
     contentType: 'application/json',
     body: JSON.stringify({ runs: [] }),
   }))
+  // The console now opens on a thread list rather than a run list; without a
+  // stub the request 404s and the gate reads that as a console error.
+  await page.route('**/api/v1/agent/conversations*', (r) => r.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ count: 0, conversations: [] }),
+  }))
 
   try {
     // 1. The console is the front door: "/" redirects there.

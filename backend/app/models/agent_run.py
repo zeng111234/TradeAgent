@@ -57,7 +57,13 @@ class AgentRun(Base):
     idempotency_key = Column(String(120), nullable=True)
 
     goal = Column(Text, nullable=False)
-    # running | succeeded | truncated | error | stalled
+    #: The thread this run belongs to. Added by migration 0011; nullable because
+    #: rows written before threads existed were genuinely independent.
+    conversation_id = Column(String(64), nullable=True, index=True)
+    #: The model that actually produced this run. Added by migration 0012.
+    #: Nullable for the same reason: the old rows have no honest value.
+    model = Column(String(80), nullable=True)
+    # running | succeeded | truncated | error | stalled | cancelled
     status = Column(String(32), nullable=False, default="running")
     #: Machine-readable reason the run stopped.
     #:

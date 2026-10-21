@@ -31,6 +31,12 @@ from .tools import ToolRegistry
 
 logger = logging.getLogger(__name__)
 
+#: Reasoning is kept for the audit trail, never replayed to the model. Eight
+#: thousand characters is roughly 2k tokens of trace per round; without a cap a
+#: reasoning model that thinks for tens of thousands of tokens would turn one
+#: run's JSON column into hundreds of kilobytes, rewritten every round.
+MAX_REASONING_CHARS = 8000
+
 DEFAULT_SYSTEM_PROMPT = """You are an autonomous foreign-trade assistant.
 
 You are given a goal and a set of tools. Work towards the goal by calling
@@ -74,6 +80,44 @@ and make no tool call. Your text reply ends the run."""
 
 class AgentError(Exception):
     """Unrecoverable loop failure (as opposed to a tool failure)."""
+
+
+class AgentCancelled(AgentError):
+    """An operator asked the run to stop.
+
+    A subclass of ``AgentError`` so any caller that only knows about loop
+    failures still handles it; the loop itself catches it earlier and turns it
+    into a ``cancelled`` run with the trace it managed to produce.
+    """
+
+
+class CancelToken:
+    """Cooperative cancellation.
+
+    Deliberately not ``asyncio.Task.cancel()``: that raises ``CancelledError``,
+    which is a ``BaseException`` in Python 3.8+, so the background runner's
+    ``except Exception`` would not see it. The row would stay ``running`` until
+    the stale sweep marked it abandoned, and every completed round would be
+    lost. This token is checked at points where stopping is safe, and the run
+    finishes normally with ``status="cancelled"``.
+    """
+
+    def __init__(self) -> None:
+        self._event = asyncio.Event()
+
+    @property
+    def cancelled(self) -> bool:
+        return self._event.is_set()
+
+    def cancel(self) -> None:
+        self._event.set()
+
+    async def wait(self) -> None:
+        await self._event.wait()
+
+    def raise_if_set(self) -> None:
+        if self._event.is_set():
+            raise AgentCancelled("cancelled by the operator")
 
 
 def _refused(call: ToolCall, observation: str, *, reason: str) -> ToolInvocation:
@@ -150,11 +194,24 @@ class TraceStep:
 
     round: int
     thought: str = ""
+    #: The model's reasoning channel for this round, when the provider exposes
+    #: one. Separate from ``thought``: that is the assistant's visible text,
+    #: which is empty on most tool-calling rounds. Without this field the UI
+    #: showed "no text this round" for a model that was thinking all along.
+    reasoning: str = ""
+    #: True when ``reasoning`` was cut at ``MAX_REASONING_CHARS``. Recorded so
+    #: the UI can say "truncated" instead of silently presenting a prefix as
+    #: the whole thought.
+    reasoning_truncated: bool = False
     tool_calls: list[ToolInvocation] = field(default_factory=list)
     prompt_tokens: int = 0
     completion_tokens: int = 0
     #: Of ``prompt_tokens``, how many the provider served from its prefix cache.
     cached_prompt_tokens: int = 0
+    #: True when the provider returned no usage block for this round. The token
+    #: counts are then zero because nothing was reported, not because nothing
+    #: was spent -- and the run's cost is unknown rather than zero.
+    usage_missing: bool = False
     latency: float = 0.0
     note: str = ""
 
@@ -162,6 +219,8 @@ class TraceStep:
         return {
             "round": self.round,
             "thought": self.thought,
+            "reasoning": self.reasoning,
+            "reasoning_truncated": self.reasoning_truncated,
             "latency": round(self.latency, 3),
             "note": self.note,
             # Per round, because "which round cost the money" is a question the
@@ -169,6 +228,7 @@ class TraceStep:
             "prompt_tokens": self.prompt_tokens,
             "cached_prompt_tokens": self.cached_prompt_tokens,
             "completion_tokens": self.completion_tokens,
+            "usage_missing": self.usage_missing,
             "tool_calls": [
                 {
                     "name": c.name,
@@ -196,11 +256,22 @@ class AgentRun:
     #: edit, a model change, or the data -- and no way to reproduce a run whose
     #: instructions are no longer in the working tree.
     prompt_version: str = ""
+    #: The model this run actually used. Recorded because token counts without a
+    #: model name cannot be priced, and because "which model produced this"
+    #: stops being answerable once the configured model changes.
+    model: str = ""
+    #: False once any round came back without a usage block. Cost is then
+    #: unknown; reporting the sum of the reported rounds as if it were the whole
+    #: run would understate spend without saying so.
+    usage_complete: bool = True
     #: The customer this run is about, when the caller named one. Carried on the
     #: run so it reaches the row, where it can be indexed -- the debug view used
     #: to find runs by searching their trace text instead.
     customer_id: Optional[int] = None
-    status: str = "running"      # running | succeeded | truncated | error | stalled
+    #: The thread this run belongs to. Carried on the run so the row written
+    #: before the work starts is already findable from its conversation.
+    conversation_id: Optional[str] = None
+    status: str = "running"      # running | succeeded | truncated | error | stalled | cancelled
     final_output: str = ""
     stop_reason: str = ""
     #: Stable identifier for why the run stopped. ``stop_reason`` is the
@@ -209,6 +280,9 @@ class AgentRun:
     stop_code: str = ""
     steps: list[TraceStep] = field(default_factory=list)
     messages: list[Message] = field(default_factory=list)
+    #: How many previous turns were injected from the conversation. Recorded so
+    #: a surprising answer can be traced to the context it was given.
+    history_turns: int = 0
     prompt_tokens: int = 0
     completion_tokens: int = 0
     #: Cache-hit share of ``prompt_tokens``, summed over rounds. Recorded because
@@ -250,7 +324,9 @@ class AgentRun:
         return {
             "run_id": self.run_id,
             "goal": self.goal,
+            "conversation_id": self.conversation_id,
             "prompt_version": self.prompt_version,
+            "model": self.model,
             "status": self.status,
             "stop_reason": self.stop_reason,
             "stop_code": self.stop_code,
@@ -264,6 +340,8 @@ class AgentRun:
             "prompt_tokens": self.prompt_tokens,
             "cached_prompt_tokens": self.cached_prompt_tokens,
             "completion_tokens": self.completion_tokens,
+            "usage_complete": self.usage_complete,
+            "history_turns": self.history_turns,
             "elapsed": round(self.elapsed, 3),
             "steps": [s.as_dict() for s in self.steps],
             "compactions": list(self.compactions),
@@ -291,6 +369,9 @@ class AgentLoop:
         system_prompt: str = DEFAULT_SYSTEM_PROMPT,
         on_step: Optional[Callable[["TraceStep", "AgentRun"], None]] = None,
         spill_dir: Optional[Path] = None,
+        on_delta: Optional[Callable[[str, str], None]] = None,
+        on_round: Optional[Callable[[int], None]] = None,
+        cancel: Optional[CancelToken] = None,
     ) -> None:
         self.llm = llm
         self.budget = budget or AgentBudget()
@@ -300,6 +381,19 @@ class AgentLoop:
         # cannot disagree with the prompt it names.
         self.prompt_version = prompt_fingerprint(system_prompt)
         self.on_step = on_step
+        #: Per-round stream hooks. A sub-agent is built without them, which is
+        #: what keeps a child's tokens out of the parent's transcript.
+        self.on_delta = on_delta
+        self.on_round = on_round
+        self.cancel = cancel
+        #: Text seen so far in the round being generated. Kept here, not read
+        #: back from the live bus, so a cancellation can record what the model
+        #: had already written without the loop depending on the transport.
+        self._partial_content = ""
+        self._partial_reasoning = ""
+        #: Number of messages at the head that compaction must not trim --
+        #: the injected conversation history. Set per run.
+        self._protected_history = 0
 
         # The spill store holds the full text of observations trimmed by
         # compaction. Created lazily-ish: only when a directory is available, so
@@ -327,14 +421,18 @@ class AgentLoop:
     async def run(
         self, goal: str, *, context: str = "", run_id: Optional[str] = None,
         customer_id: Optional[int] = None,
+        conversation_id: Optional[str] = None,
+        history: Optional[list[tuple[str, str]]] = None,
     ) -> AgentRun:
         run = AgentRun(
             goal=goal,
             customer_id=customer_id,
+            conversation_id=conversation_id,
             prompt_version=self.prompt_version,
         )
         if run_id is not None:
             run.run_id = run_id
+        run.model = self._model_label()
         started = time.monotonic()
 
         # One clock for the whole task. A sub-agent inherits this absolute
@@ -347,12 +445,31 @@ class AgentLoop:
         run.messages = [Message.system(self.system_prompt)]
         if context:
             run.messages.append(Message.system(context))
+        # Previous question/answer pairs from the same conversation, oldest
+        # first, as real messages rather than a system-prompt blob: the model
+        # then sees a conversation, which is what a follow-up assumes.
+        if history:
+            for previous_goal, previous_answer in history:
+                run.messages.append(Message.user(previous_goal))
+                run.messages.append(Message.assistant(previous_answer))
+            run.history_turns = len(history)
+        #: Kept for compaction: history must survive the trim (see
+        #: ``_project_for_model``), and a count is cheaper than re-inspecting.
+        self._protected_history = len(history or []) * 2
         run.messages.append(Message.user(goal))
 
         schemas = self.registry.schemas()
         idle_rounds = 0
 
         for round_index in range(1, self.budget.max_rounds + 1):
+            if self.cancel is not None and self.cancel.cancelled:
+                # Between rounds is the cheapest safe stop: every completed
+                # round is already in the trace and no tool is mid-flight.
+                return self._finish(
+                    run, started, "cancelled", "cancelled by the operator",
+                    stop_code="cancelled",
+                )
+
             if deadline - time.monotonic() <= 0:
                 return self._finish(
                     run, started, "truncated", "time budget exceeded",
@@ -372,14 +489,61 @@ class AgentLoop:
             # 120-second model timeout could outlive its own budget, and the
             # parent would wait for a child that had already been written off.
             remaining = deadline - time.monotonic()
-            reply = await self._ask(run, schemas, round_index, timeout=remaining)
+            asked_at = time.monotonic()
+            self._partial_content = ""
+            self._partial_reasoning = ""
+            if self.on_round is not None:
+                # Before the model call, so a reader can reset its buffer for
+                # this round instead of appending round N+1 to round N.
+                self.on_round(round_index)
+            try:
+                reply = await self._ask(run, schemas, round_index, timeout=remaining)
+            except AgentCancelled:
+                # The provider call was cut off. What it had written is still
+                # work that was billed for and seen by a human, so it lands in
+                # the trace as a round with a note -- not in ``final_output``,
+                # which must never contain half a sentence presented as an
+                # answer.
+                step = TraceStep(
+                    round=round_index,
+                    thought=self._partial_content,
+                    reasoning=self._partial_reasoning,
+                    latency=time.monotonic() - asked_at,
+                    note="cancelled mid-stream",
+                )
+                run.steps.append(step)
+                if self.on_step is not None:
+                    self.on_step(step, run)
+                return self._finish(
+                    run, started, "cancelled", "cancelled by the operator",
+                    stop_code="cancelled",
+                )
+            # Measured around the model call, not the whole round: tool time is
+            # already recorded per call, and a round latency that included it
+            # would make "which round was slow" unattributable.
+            latency = time.monotonic() - asked_at
+
+            reasoning = getattr(reply, "reasoning", "") or ""
+            reasoning_truncated = len(reasoning) > MAX_REASONING_CHARS
+            if reasoning_truncated:
+                reasoning = reasoning[:MAX_REASONING_CHARS]
+            usage_missing = not getattr(reply, "usage_reported", True)
+
             step = TraceStep(
                 round=round_index,
                 thought=reply.content,
+                reasoning=reasoning,
+                reasoning_truncated=reasoning_truncated,
                 prompt_tokens=reply.prompt_tokens,
                 completion_tokens=reply.completion_tokens,
                 cached_prompt_tokens=getattr(reply, "cached_prompt_tokens", 0) or 0,
+                usage_missing=usage_missing,
+                latency=latency,
             )
+            if usage_missing:
+                # One unreported round is enough: the run total is then a lower
+                # bound, and pricing it would present that bound as the bill.
+                run.usage_complete = False
             run.steps.append(step)
             run.prompt_tokens += reply.prompt_tokens
             run.completion_tokens += reply.completion_tokens
@@ -469,7 +633,15 @@ class AgentLoop:
                 # Re-checked per call, because executing the previous one may
                 # have consumed the rest of the task's time.
                 out_of_time = deadline - time.monotonic() <= 0
-                still_allowed = next_to_execute < len(to_execute) and not out_of_time
+                # A tool already running is never interrupted: it may have
+                # written a draft, and killing it mid-write is worse than
+                # letting it finish. The remaining calls are refused instead.
+                stopped = self.cancel is not None and self.cancel.cancelled
+                still_allowed = (
+                    next_to_execute < len(to_execute)
+                    and not out_of_time
+                    and not stopped
+                )
                 if still_allowed and to_execute[next_to_execute].id == call.id:
                     next_to_execute += 1
                     invocation = await self._execute(call, deadline)
@@ -482,7 +654,14 @@ class AgentLoop:
                     )
                     continue
 
-                if out_of_time:
+                if stopped:
+                    observation = (
+                        "NOT EXECUTED: the run was stopped by the operator, so this "
+                        "call was not made. Anything already executed was not "
+                        "undone; report what you established before the stop."
+                    )
+                    refusal_reason = "cancelled"
+                elif out_of_time:
                     observation = (
                         "NOT EXECUTED: this run's time budget ran out, so the call "
                         "was not made. Nothing was sent and nothing was changed. "
@@ -507,6 +686,12 @@ class AgentLoop:
                 return self._finish(
                     run, started, "truncated", "token budget exhausted",
                     stop_code="token_budget",
+                )
+
+            if self.cancel is not None and self.cancel.cancelled:
+                return self._finish(
+                    run, started, "cancelled", "cancelled by the operator",
+                    stop_code="cancelled", step=step,
                 )
 
             if self.on_step:
@@ -545,27 +730,14 @@ class AgentLoop:
             # bounded projection of it. Nothing is lost — oversized observations
             # are written to the spill store and stay retrievable by name.
             messages = self._project_for_model(run, round_index)
-            call = self.llm.chat(
-                messages,
-                schemas,
-                temperature=0.2,
-                max_tokens=1500,
-            )
-            if timeout is None:
-                reply = await call
-            else:
-                # `wait_for` cancels the in-flight request when the budget runs
-                # out, including the SDK's own retry loop -- so a throttled
-                # provider cannot spend three attempts' worth of time on a run
-                # that has 4 seconds left.
-                #
-                # A non-positive budget means "no time left", not "no limit".
-                # Treating it as unbounded (the first version did) would let a
-                # call that starts a microsecond after the deadline run for the
-                # client's full timeout -- a hole in exactly the budget this
-                # parameter exists to enforce. `wait_for` with a timeout of zero
-                # cancels immediately, which is what the budget says.
-                reply = await asyncio.wait_for(call, timeout=max(0.0, timeout))
+            kwargs: dict[str, Any] = {"temperature": 0.2, "max_tokens": 1500}
+            # Capability check, not a Protocol change: every scripted test fake
+            # satisfies ``chat(messages, tools, temperature=, max_tokens=)`` and
+            # none of them implement streaming, so none of them need editing.
+            if self.on_delta is not None and getattr(self.llm, "supports_stream", False):
+                kwargs["on_delta"] = self._delta_sink
+            call = self.llm.chat(messages, schemas, **kwargs)
+            reply = await self._with_cancel(call, timeout)
 
             # Recorded here, not at the end of the run: a round that ends the run
             # -- a final answer, a budget stop, a stall -- is still a round the
@@ -582,6 +754,10 @@ class AgentLoop:
                 ),
             )
             return reply
+        except AgentCancelled:
+            # Not a failure of the call: the operator's stop must reach the
+            # round loop as itself, or it would be recorded as an error.
+            raise
         except asyncio.TimeoutError as exc:
             raise AgentError(
                 f"the model call in round {round_index} exceeded what was left of "
@@ -600,6 +776,59 @@ class AgentLoop:
                 f"({type(exc).__name__}): {exc}"
             ) from exc
 
+    def _delta_sink(self, kind: str, text: str) -> None:
+        """Accumulate the round's text and forward it to the transport.
+
+        The accumulator exists so a cancellation can record what the model had
+        already written; the forward exists so the console can show it.
+        """
+        if kind == "content":
+            self._partial_content += text
+        elif kind == "reasoning":
+            self._partial_reasoning += text
+        if self.on_delta is not None:
+            self.on_delta(kind, text)
+
+    async def _with_cancel(self, awaitable, timeout: Optional[float]):
+        """Await a model call, bounded by the clock and by a stop request.
+
+        Without a token this is exactly ``wait_for``. With one, the stop is
+        raced against the call: the provider request is cancelled, and the
+        caller gets ``AgentCancelled`` instead of a timeout, because the two
+        mean different things in the trace.
+        """
+        if self.cancel is None:
+            if timeout is None:
+                return await awaitable
+            # A non-positive budget means "no time left", not "no limit".
+            return await asyncio.wait_for(awaitable, timeout=max(0.0, timeout))
+
+        task = asyncio.ensure_future(awaitable)
+        stop = asyncio.ensure_future(self.cancel.wait())
+        try:
+            done, _pending = await asyncio.wait(
+                {task, stop}, timeout=timeout, return_when=asyncio.FIRST_COMPLETED
+            )
+            if task in done:
+                return task.result()
+            if stop in done:
+                task.cancel()
+                try:
+                    await task
+                except BaseException:  # noqa: BLE001 - the stop is the news
+                    pass
+                raise AgentCancelled("cancelled by the operator")
+            # Timed out. ``wait_for`` raises the same exception the caller
+            # already translates, so the budget path keeps one vocabulary.
+            task.cancel()
+            try:
+                await task
+            except BaseException:  # noqa: BLE001 - timeout is reported below
+                pass
+            raise asyncio.TimeoutError()
+        finally:
+            stop.cancel()
+
     def _project_for_model(self, messages_owner, round_index: int) -> list[Message]:
         """Return the message list to send, compacting if it is too large."""
         from .context import compact_messages, estimate_tokens
@@ -615,6 +844,7 @@ class AgentLoop:
             budget_tokens=budget,
             keep_recent=self.budget.keep_recent_messages,
             spill=self.spill,
+            protect_head_messages=self._protected_history,
         )
         if report.did_anything:
             logger.info(
@@ -715,6 +945,11 @@ async def run_agent(
     run_id: Optional[str] = None,
     customer_id: Optional[int] = None,
     on_step: Optional[Callable[["TraceStep", "AgentRun"], None]] = None,
+    on_delta: Optional[Callable[[str, str], None]] = None,
+    on_round: Optional[Callable[[int], None]] = None,
+    cancel: Optional[CancelToken] = None,
+    history: Optional[list[tuple[str, str]]] = None,
+    conversation_id: Optional[str] = None,
 ) -> AgentRun:
     """Convenience wrapper. ``AgentError`` is converted into a failed run.
 
@@ -728,12 +963,23 @@ async def run_agent(
     through it rather than going silent until the end.
     """
     loop = AgentLoop(llm, registry, budget=budget, system_prompt=system_prompt,
-                     spill_dir=spill_dir, on_step=on_step)
+                     spill_dir=spill_dir, on_step=on_step,
+                     on_delta=on_delta, on_round=on_round, cancel=cancel)
     try:
-        return await loop.run(goal, context=context, run_id=run_id, customer_id=customer_id)
+        return await loop.run(goal, context=context, run_id=run_id,
+                              customer_id=customer_id, history=history,
+                              conversation_id=conversation_id)
+    except AgentCancelled as exc:
+        # Only reachable if a stop lands outside the loop's checkpoints. The
+        # normal path finishes inside ``run`` with its steps intact.
+        return AgentRun(goal=goal, run_id=run_id or uuid.uuid4().hex,
+                        status="cancelled", stop_code="cancelled",
+                        stop_reason=str(exc) or "cancelled by the operator",
+                        prompt_version=loop.prompt_version, model=loop._model_label())
     except AgentError as exc:
         run = AgentRun(goal=goal, run_id=run_id or uuid.uuid4().hex,
                        status="error", stop_code="error",
                        stop_reason=str(exc), error=str(exc),
-                       prompt_version=loop.prompt_version)
+                       prompt_version=loop.prompt_version,
+                       model=loop._model_label())
         return run

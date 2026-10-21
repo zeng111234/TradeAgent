@@ -206,6 +206,41 @@ came back. Note also that scraped page text flows into these labels, so the
 renderer treats observations as untrusted input and there are tests for newline
 injection.
 
+## Live output, stopping, and threads
+
+Three things a chat window needs that a per-round trace cannot provide alone.
+
+**Live output.** The loop writes one trace step per round, so between rounds the
+database has nothing new. `app/agent/live.py` buffers the provider's deltas in
+process; `/events` drains them on a 100 ms tick while continuing to send the
+authoritative round snapshots once a second. The division is deliberate: a
+`delta` is best effort and carries **no SSE `id`**, because `id` is the resume
+cursor and a partial round must not move it. A reconnect gets one `live` frame
+with the round's full text, then deltas — a dropped delta costs a repaint, never
+a wrong transcript. When the run is not local (another worker, or after a
+restart) the endpoint sends snapshots only, and the UI degrades to per-round
+updates.
+
+**Stopping.** `POST /runs/{id}/cancel` sets a `CancelToken`; the loop checks it
+between rounds, between tool calls, and races it against the in-flight model
+call. It is not `Task.cancel()`: `CancelledError` is a `BaseException`, so the
+background runner's `except Exception` would miss it, leaving the row `running`
+until the stale sweep and discarding every completed round. A cancelled run is
+terminal, keeps its steps, leaves `final_output` empty (half a sentence is not
+an answer), and refuses the remaining calls with `reason=cancelled`. A tool
+already running is allowed to finish: "stop" is not "undo".
+
+**Threads.** `agent_conversations` names a thread; `agent_runs.conversation_id`
+joins it. A follow-up is given the last three answered turns as real
+user/assistant messages — not a system blob — and compaction protects them by
+count, because trimming history to 80-character fragments looks like context
+and carries none. Only answered runs are remembered; an errored turn has
+nothing worth carrying forward.
+
+All three are in-process by design. `_in_flight`, the usage ledger and the live
+buffer already assume one uvicorn worker; a multi-worker deployment degrades to
+"snapshots, no deltas, cancel returns `not_local`" rather than corrupting data.
+
 ## Acceptance: two goals, two paths
 
 The load-bearing claim is that the loop does not know which tools suit which
@@ -221,11 +256,10 @@ goal a user might type.
 
 ## What is deliberately not done
 
-- **No async job queue.** `POST /agent/run` is synchronous and holds the
-  connection for up to the wall-clock budget. Fine for an operator or the CLI.
-  A production deployment would queue and poll; the storage already exists, so
-  that is additive rather than a redesign.
-- **No streaming.** The trace is returned whole.
+- **No durable job queue.** `POST /agent/run` starts an in-process background
+  task (or, with `wait=true`, holds the connection). A restart cannot resume
+  one; `mark_stale_runs` records that honestly instead of leaving a promise.
+  A queue would be additive — the row and its id already exist before the work.
 - **No multi-agent debate.** Several roles arguing would be a different feature.
   Nothing here prevents adding it, and the rubric-plus-evidence split in
   `classify_prospect` is the shape it would take.

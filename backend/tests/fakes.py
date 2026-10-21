@@ -83,12 +83,16 @@ class FakeLLM:
         ]
         return LLMReply(
             content=entry.get("content", ""),
+            # Scriptable for the same reason as the cache split: the trace's
+            # honesty about thinking is a claim a test has to be able to state.
+            reasoning=entry.get("reasoning", ""),
             tool_calls=tool_calls,
             prompt_tokens=entry.get("prompt_tokens", self.default_tokens),
             completion_tokens=entry.get("completion_tokens", self.default_tokens),
             # Scriptable, because the cache-hit split is what a run's cost is
             # computed from and a fake that cannot express it cannot test it.
             cached_prompt_tokens=entry.get("cached_prompt_tokens", 0),
+            usage_reported=entry.get("usage_reported", True),
             finish_reason=entry.get("finish_reason"),
         )
 

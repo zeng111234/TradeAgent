@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import uuid
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -10,12 +11,15 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.loop import AgentRun as AgentRunResult
+from app.models.agent_conversation import AgentConversation
 from app.models.agent_run import AgentRun
 
 logger = logging.getLogger(__name__)
 
 #: Statuses that mean the run is over. Anything else is still a promise.
-TERMINAL_STATUSES = ("succeeded", "truncated", "error", "stalled")
+#: ``cancelled`` is terminal but not a failure: the operator stopped a run that
+#: was working, and the rounds it completed are still a valid record.
+TERMINAL_STATUSES = ("succeeded", "truncated", "error", "stalled", "cancelled")
 
 
 async def save_run(
@@ -44,9 +48,13 @@ async def save_run(
     )
     row.goal = run.goal
     # Set, never cleared: progress writes re-save the run repeatedly, and a later
-    # save must not drop the customer the caller named.
+    # save must not drop the customer, thread or model the caller named.
     if getattr(run, "customer_id", None) is not None:
         row.customer_id = run.customer_id
+    if getattr(run, "conversation_id", None):
+        row.conversation_id = run.conversation_id
+    if getattr(run, "model", ""):
+        row.model = run.model
     row.status = run.status
     # Set, never cleared, for the same reason as ``customer_id``: a progress
     # write after the terminal one must not erase the code the finish wrote.
@@ -100,6 +108,8 @@ async def start_run(
     row = AgentRun(
         run_id=run.run_id, goal=run.goal, status="running",
         customer_id=getattr(run, "customer_id", None),
+        conversation_id=getattr(run, "conversation_id", None),
+        model=getattr(run, "model", "") or None,
         prompt_version=getattr(run, "prompt_version", "") or None,
         idempotency_key=idempotency_key,
     )
@@ -177,3 +187,136 @@ def trace_of(row: AgentRun) -> list[dict]:
         logger.warning("agent run %s has an unreadable trace", row.run_id)
         return []
     return value if isinstance(value, list) else []
+
+
+# --- conversations ---------------------------------------------------------
+
+
+async def create_conversation(
+    db: AsyncSession,
+    *,
+    title: str,
+    customer_id: Optional[int] = None,
+    conversation_id: Optional[str] = None,
+) -> AgentConversation:
+    """Open a thread. Its title is the first goal, not a model call."""
+    conversation = AgentConversation(
+        conversation_id=conversation_id or uuid.uuid4().hex,
+        title=(title or "").strip()[:120] or "Untitled",
+        customer_id=customer_id,
+    )
+    db.add(conversation)
+    await db.commit()
+    await db.refresh(conversation)
+    return conversation
+
+
+async def get_conversation(
+    db: AsyncSession, conversation_id: str
+) -> Optional[AgentConversation]:
+    return (
+        await db.execute(
+            select(AgentConversation).where(
+                AgentConversation.conversation_id == conversation_id
+            )
+        )
+    ).scalar_one_or_none()
+
+
+async def list_conversations(
+    db: AsyncSession, *, limit: int = 20, offset: int = 0
+) -> list[AgentConversation]:
+    stmt = (
+        select(AgentConversation)
+        # ``id`` breaks the tie: two threads created in the same microsecond
+        # would otherwise come back in an order SQLite is free to change.
+        .order_by(AgentConversation.updated_at.desc(), AgentConversation.id.desc())
+        .limit(max(1, min(limit, 100)))
+        .offset(max(0, offset))
+    )
+    return list((await db.execute(stmt)).scalars().all())
+
+
+async def conversation_stats(
+    db: AsyncSession, conversation_ids: list[str]
+) -> dict[str, dict]:
+    """Run count, last status and token total, for a page of threads.
+
+    One query for the page rather than three per thread: the listing is the
+    first screen of the console and an N+1 there is paid on every visit.
+    """
+    if not conversation_ids:
+        return {}
+
+    rows = (
+        await db.execute(
+            select(
+                AgentRun.conversation_id,
+                AgentRun.status,
+                AgentRun.goal,
+                AgentRun.prompt_tokens,
+                AgentRun.completion_tokens,
+            )
+            .where(AgentRun.conversation_id.in_(conversation_ids))
+            .order_by(AgentRun.created_at.asc(), AgentRun.id.asc())
+        )
+    ).all()
+
+    stats: dict[str, dict] = {}
+    for conversation_id, status, goal, prompt, completion in rows:
+        entry = stats.setdefault(
+            conversation_id,
+            {"run_count": 0, "last_status": None, "last_goal": "", "total_tokens": 0},
+        )
+        entry["run_count"] += 1
+        entry["last_status"] = status
+        entry["last_goal"] = goal
+        entry["total_tokens"] += (prompt or 0) + (completion or 0)
+    return stats
+
+
+async def conversation_runs(
+    db: AsyncSession, conversation_id: str, *, limit: int = 50
+) -> list[AgentRun]:
+    stmt = (
+        select(AgentRun)
+        .where(AgentRun.conversation_id == conversation_id)
+        .order_by(AgentRun.created_at.asc(), AgentRun.id.asc())
+        .limit(max(1, min(limit, 200)))
+    )
+    return list((await db.execute(stmt)).scalars().all())
+
+
+async def recent_turns(
+    db: AsyncSession, conversation_id: str, *, max_turns: int = 3
+) -> list[tuple[str, str]]:
+    """The most recent question/answer pairs a follow-up may rely on.
+
+    Only runs that produced a conclusion: an errored or stopped run has nothing
+    to be remembered by, and feeding its empty answer back would teach the model
+    that the previous turn ended in silence.
+    """
+    stmt = (
+        select(AgentRun.goal, AgentRun.final_output)
+        .where(
+            AgentRun.conversation_id == conversation_id,
+            AgentRun.final_output.is_not(None),
+            AgentRun.status.in_(("succeeded", "truncated")),
+        )
+        .order_by(AgentRun.created_at.desc(), AgentRun.id.desc())
+        .limit(max(1, max_turns))
+    )
+    rows = (await db.execute(stmt)).all()
+    return [
+        (goal, output)
+        for goal, output in reversed(rows)
+        if (output or "").strip()
+    ]
+
+
+async def touch_conversation(db: AsyncSession, conversation_id: str) -> None:
+    """Move a thread to the top of the list after a new turn."""
+    conversation = await get_conversation(db, conversation_id)
+    if conversation is not None:
+        conversation.updated_at = datetime.utcnow()
+        await db.commit()

@@ -206,6 +206,20 @@ async def _suggestion_provenance_settled(conn: AsyncConnection) -> bool:
     return kind and attempt and index
 
 
+async def _conversation_settled(conn: AsyncConnection) -> bool:
+    """Column and index, for the same reason as the stop code.
+
+    The index is what makes "this thread's turns" a lookup instead of a scan of
+    the runs table; the column alone would work and be slow enough that nobody
+    would open the conversation view twice.
+    """
+    column = await _column_settled(conn, "agent_runs", "conversation_id")
+    index = await _indexes_settled(
+        conn, "agent_runs", ["ix_agent_runs_conversation_id"]
+    )
+    return column and index
+
+
 async def _idempotency_table_settled(conn: AsyncConnection) -> bool:
     """The table and its unique index, because either alone is useless.
 
@@ -403,6 +417,36 @@ MIGRATIONS: list[Migration] = [
             "ON email_logs (suggestion_kind)",
         ],
         guard=_suggestion_provenance_settled,
+    ),
+    Migration(
+        id="0011_agent_runs_conversation_id",
+        description=(
+            "give a run a conversation to belong to, so a follow-up question can "
+            "carry its thread's recent turns instead of starting from zero. The "
+            "column is nullable and not backfilled: runs written before this "
+            "existed were genuinely independent, and inventing a thread for them "
+            "would fabricate history the trace cannot support"
+        ),
+        statements=[
+            "ALTER TABLE agent_runs ADD COLUMN conversation_id VARCHAR(64)",
+            "CREATE INDEX IF NOT EXISTS ix_agent_runs_conversation_id "
+            "ON agent_runs (conversation_id)",
+        ],
+        guard=_conversation_settled,
+    ),
+    Migration(
+        id="0012_agent_runs_model",
+        description=(
+            "record which model produced a run. Token counts without a model "
+            "name cannot be priced, and 'which model was this' stops being "
+            "answerable the moment the configured model changes. Nullable and "
+            "not backfilled: the model a row used is not the model configured "
+            "today, and filling it in would be a guess presented as a fact"
+        ),
+        statements=[
+            "ALTER TABLE agent_runs ADD COLUMN model VARCHAR(80)",
+        ],
+        guard=lambda conn: _column_settled(conn, "agent_runs", "model"),
     ),
 ]
 

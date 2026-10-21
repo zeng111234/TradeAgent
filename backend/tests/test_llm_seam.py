@@ -348,7 +348,10 @@ def test_the_runtime_seam_names_a_content_shape_change(monkeypatch):
                     return SimpleNamespace(choices=[SimpleNamespace(
                         finish_reason="stop",
                         message=SimpleNamespace(
-                            content=[{"type": "text", "text": "hello"}],
+                            # A list of parts this runtime *can* read is handled
+                            # now (see the next test). An image part is the shape
+                            # it still cannot, and that is what must be named.
+                            content=[{"type": "image_url", "image_url": {"url": "x"}}],
                             tool_calls=None,
                         ),
                     )])
@@ -360,6 +363,48 @@ def test_the_runtime_seam_names_a_content_shape_change(monkeypatch):
 
     assert "list" in str(caught.value)
     assert "shape may have changed" in str(caught.value)
+
+
+def test_the_runtime_seam_reads_text_and_thinking_parts(monkeypatch):
+    """A list-shaped content is no longer a dead end.
+
+    Anthropic-compatible gateways send ``[{"type": "text"}, {"type":
+    "thinking"}]`` instead of a string. Rejecting the list threw away the
+    thinking block along with the answer; the adapter splits both halves now,
+    and an absent usage block is reported as *unreported* rather than zero.
+    """
+    import asyncio
+    from types import SimpleNamespace
+
+    from app.agent.protocol import OpenAICompatibleClient
+
+    client = OpenAICompatibleClient(
+        api_key="test-key", base_url="https://example.test/v1", model="test-model",
+    )
+
+    class PartsReply:
+        class chat:
+            class completions:
+                @staticmethod
+                async def create(**_kwargs):
+                    return SimpleNamespace(choices=[SimpleNamespace(
+                        finish_reason="stop",
+                        message=SimpleNamespace(
+                            content=[
+                                {"type": "thinking", "thinking": "look first"},
+                                {"type": "text", "text": "the answer"},
+                            ],
+                            tool_calls=None,
+                        ),
+                    )])
+
+    monkeypatch.setattr(client, "_ensure_client", lambda: PartsReply)
+
+    reply = asyncio.run(client.chat([], []))
+
+    assert reply.content == "the answer"
+    assert reply.reasoning == "look first"
+    assert reply.usage_reported is False
 
 
 def test_a_run_records_a_translated_reason():

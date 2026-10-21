@@ -14,7 +14,9 @@ from __future__ import annotations
 # 55 paths / 67 operations, and ``test_route_count_unchanged`` is what keeps
 # that number honest: the declared table and the live app must agree exactly.
 # The operational quality report (GET /analytics/quality) brings it to
-# 57 paths / 69 operations.
+# 57 paths / 69 operations. Conversations and the cooperative stop bring it to
+# 60 paths / 72 operations: all three are additive, and none of them changes an
+# existing response field.
 EXPECTED_ROUTES: dict[str, set[str]] = {
     "/": {"get"},
     "/health": {"get"},
@@ -42,8 +44,11 @@ EXPECTED_ROUTES: dict[str, set[str]] = {
     "/api/v1/agent/run": {"post"},
     "/api/v1/agent/runs": {"get"},
     "/api/v1/agent/runs/{run_id}": {"get"},
+    "/api/v1/agent/runs/{run_id}/cancel": {"post"},
     "/api/v1/agent/runs/{run_id}/events": {"get"},
     "/api/v1/agent/runs/{run_id}/trace.html": {"get"},
+    "/api/v1/agent/conversations": {"get"},
+    "/api/v1/agent/conversations/{conversation_id}": {"get"},
     # --- analytics router (6) ---
     "/api/v1/analytics/countries": {"get"},
     "/api/v1/analytics/dashboard": {"get"},

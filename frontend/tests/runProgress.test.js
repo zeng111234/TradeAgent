@@ -9,6 +9,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import { isTerminal, mergeSteps, normaliseRun } from '../src/utils/runProgress.js'
+import { formatCost, formatTokens, runOutcome } from '../src/utils/runProgress.js'
 
 const step = (round, calls = []) => ({
   round,
@@ -112,4 +113,33 @@ test('a snapshot without steps is tolerated', () => {
 
   assert.deepEqual(normalised.steps, [])
   assert.deepEqual(normalised.tool_sequence, [])
+})
+
+test('cancelled is terminal, and a stop is not a failure', () => {
+  assert.equal(isTerminal('cancelled'), true)
+  assert.equal(runOutcome('cancelled'), 'cancelled')
+  assert.equal(runOutcome('error'), 'failure')
+  assert.equal(runOutcome('stalled'), 'failure')
+})
+
+test('a budget stop is not a failure, even when the run "succeeded"', () => {
+  assert.equal(runOutcome('truncated'), 'budget')
+  assert.equal(runOutcome('succeeded', 'token_budget'), 'budget')
+  assert.equal(runOutcome('succeeded', 'final_answer', 2), 'budget')
+  assert.equal(runOutcome('succeeded', 'final_answer', 0), 'success')
+})
+
+test('an unknown price is a dash, never $0.00', () => {
+  assert.equal(formatCost(null), '—')
+  assert.equal(formatCost(undefined), '—')
+  assert.equal(formatCost({ amount: 0.0017, currency: 'USD' }), '$0.0017')
+  assert.equal(formatCost({ amount: 0.5, currency: 'USD' }), '$0.500')
+  assert.equal(formatCost({ amount: 0.5, currency: 'CNY', estimated: true }), '~¥0.500')
+})
+
+test('token totals compact without pretending to be exact', () => {
+  assert.equal(formatTokens(0), '0')
+  assert.equal(formatTokens(999), '999')
+  assert.equal(formatTokens(1234), '1.2k')
+  assert.equal(formatTokens(12400), '12k')
 })

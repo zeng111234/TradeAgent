@@ -165,6 +165,7 @@
             class="history-filter" @change="loadRuns">
             <el-option label="succeeded" value="succeeded" />
             <el-option label="truncated" value="truncated" />
+            <el-option label="cancelled" value="cancelled" />
             <el-option label="stalled" value="stalled" />
             <el-option label="error" value="error" />
           </el-select>
@@ -294,6 +295,7 @@
 
 <script setup>
 import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 
 import { runApi } from '../api'
@@ -349,6 +351,7 @@ const runs = ref([])
 const statusFilter = ref('')
 const selected = ref(null)
 const drawerOpen = ref(false)
+const route = useRoute()
 
 function traceUrl(runId) {
   return runApi.traceUrl(runId)
@@ -665,9 +668,13 @@ function openTracePage(row) {
   window.open(traceUrl(row.run_id), '_blank', 'noopener')
 }
 
-onMounted(() => {
+onMounted(async () => {
   loadCapabilities()
-  loadRuns()
+  await loadRuns()
+  // `/runs?run=<id>` is how the console links a turn to its trace. Opening the
+  // drawer directly keeps the reader in the list they came from.
+  const focus = typeof route.query.run === 'string' ? route.query.run : ''
+  if (focus) await openRun({ run_id: focus })
 })
 
 // Leaving the page must stop the polling. A `setTimeout` chain holds a closure

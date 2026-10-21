@@ -41,9 +41,23 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.errors import ApiError, ErrorCode
-from app.agent.loop import AgentBudget
+from app.agent import live as live_bus
+from app.agent.loop import AgentBudget, CancelToken
 from app.agent.render import derive_stats, render_html, render_mermaid_sequence
-from app.agent.repository import TERMINAL_STATUSES, get_run, list_runs, trace_of
+from app.agent.repository import (
+    TERMINAL_STATUSES,
+    conversation_runs,
+    conversation_stats,
+    create_conversation,
+    get_conversation,
+    get_run,
+    list_conversations,
+    list_runs,
+    recent_turns,
+    touch_conversation,
+    trace_of,
+)
+from app.llm_usage import Usage, cost_of
 from app.agent.service import (
     DEFAULT_BUDGET,
     AgentUnavailable,
@@ -70,6 +84,11 @@ router = APIRouter(prefix="/agent", tags=["AI Agent"])
 MAX_CONCURRENT_RUNS = 3
 
 _in_flight: set[str] = set()
+
+#: Stop tokens for runs started by this process. A run started before a restart,
+#: or by another worker, has no entry here -- and saying "not cancellable" is
+#: more honest than accepting a stop nothing will observe.
+_run_tokens: dict[str, CancelToken] = {}
 
 
 def _refuse_when_full() -> ApiError:
@@ -103,6 +122,15 @@ class AgentRunRequest(BaseModel):
     # it can be indexed -- without it, finding a customer's runs means reading
     # every trace and looking for their id in the text.
     customer_id: Optional[int] = Field(None, description="The customer this run is about")
+    conversation_id: Optional[str] = Field(
+        None,
+        min_length=8,
+        max_length=64,
+        description=(
+            "Thread to continue. Omit to start a new one on the background path; "
+            "an unknown id is a 404 rather than a silently new conversation."
+        ),
+    )
     context: str = Field("", description="Optional background for this run")
     max_rounds: Optional[int] = Field(None, ge=1, le=30)
     max_tool_calls: Optional[int] = Field(None, ge=1, le=60)
@@ -130,6 +158,7 @@ class AgentRunStarted(BaseModel):
     trace_url: str
     max_seconds: float
     replayed: bool = False
+    conversation_id: Optional[str] = None
 
 
 class AgentRunSummary(BaseModel):
@@ -235,6 +264,7 @@ def _replay(row, *, goal: str, max_seconds: float) -> AgentRunStarted:
         trace_url=f"/api/v1/agent/runs/{row.run_id}/trace.html",
         max_seconds=max_seconds,
         replayed=True,
+        conversation_id=row.conversation_id,
     )
 
 
@@ -428,6 +458,12 @@ async def api_agent_run(
         raise _refuse_when_full()
     _in_flight.add(gate_key)
 
+    # A synchronous run only continues a thread the caller named; it does not
+    # open one, because nothing in the response needs a thread to be found
+    # later and the console never uses this path.
+    conversation_id, new_conversation = await _resolve_conversation(data, create=False)
+    history = await _history_for(conversation_id)
+
     # A keyed synchronous run reserves its key before the model call, or two
     # concurrent retries both start and the caller pays twice. The row *is* the
     # reservation; execute() updates it at the end (save_run is idempotent on
@@ -445,6 +481,7 @@ async def api_agent_run(
                     AgentRunResult(
                         goal=data.goal, run_id=wait_run_id,
                         customer_id=data.customer_id,
+                        conversation_id=conversation_id,
                     ),
                     idempotency_key=key,
                 )
@@ -463,6 +500,7 @@ async def api_agent_run(
         result = await execute(
             data.goal, context=data.context, budget=budget,
             customer_id=data.customer_id, run_id=wait_run_id,
+            history=history, conversation_id=conversation_id,
         )
     except AgentUnavailable as exc:            # pragma: no cover - guarded above
         if wait_run_id:
@@ -485,7 +523,55 @@ async def api_agent_run(
     payload["steps"] = result.run.as_dict()["steps"]
     payload["mermaid_sequence"] = result.mermaid_sequence
     payload["mermaid_flowchart"] = result.mermaid_flowchart
+    payload["conversation_id"] = conversation_id
     return payload
+
+
+#: How many previous turns a follow-up is given. Small on purpose: each turn is
+#: sent as real messages on every round, so this is a per-call cost, not a
+#: one-off. Three is enough for "and that customer?" without turning a chat into
+#: an essay contest.
+HISTORY_TURNS = 3
+
+
+async def _resolve_conversation(
+    data: AgentRunRequest, *, create: bool
+) -> tuple[Optional[str], bool]:
+    """Return ``(conversation_id, is_new)``, validating a supplied id.
+
+    A supplied id that does not exist is never silently turned into a new
+    thread: a typo would look like "the agent forgot everything", which is the
+    hardest kind of bug to notice from the outside.
+    """
+    if data.conversation_id:
+        async with async_session() as db:
+            conversation = await get_conversation(db, data.conversation_id)
+        if conversation is None:
+            raise ApiError(
+                status_code=404,
+                code=ErrorCode.CONVERSATION_NOT_FOUND,
+                detail=f"no conversation with id {data.conversation_id}",
+                details={"conversation_id": data.conversation_id},
+            )
+        return conversation.conversation_id, False
+
+    if not create:
+        return None, False
+
+    # The id is generated, but the row is written only after the run row lands:
+    # a retried Idempotency-Key would otherwise leave an empty thread behind,
+    # visible in the rail with nothing in it.
+    return uuid.uuid4().hex, True
+
+
+async def _history_for(
+    conversation_id: Optional[str],
+) -> Optional[list[tuple[str, str]]]:
+    if not conversation_id:
+        return None
+    async with async_session() as db:
+        turns = await recent_turns(db, conversation_id, max_turns=HISTORY_TURNS)
+    return turns or None
 
 
 async def _start_in_background(
@@ -502,6 +588,10 @@ async def _start_in_background(
     from app.agent.repository import save_run, start_run
 
     run_id = uuid.uuid4().hex
+    # Resolved before the row is written, so the row is findable from its thread
+    # from the first moment -- a running run that is missing from the
+    # conversation view looks like it was never started.
+    conversation_id, new_conversation = await _resolve_conversation(data, create=True)
 
     # The row goes in first. Without it a poller gets 404 for the whole run,
     # which is exactly how "queue it and poll" failed to be true before.
@@ -513,6 +603,7 @@ async def _start_in_background(
                 db,
                 AgentRunResult(
                     goal=data.goal, run_id=run_id, customer_id=data.customer_id,
+                    conversation_id=conversation_id,
                 ),
                 idempotency_key=idempotency_key,
             )
@@ -530,7 +621,28 @@ async def _start_in_background(
                 existing, goal=data.goal, max_seconds=budget.max_seconds
             )
 
+    # Only now, once a run row exists, is the thread worth creating. Doing it
+    # before meant a replayed Idempotency-Key (or a 409 on key reuse) left an
+    # empty conversation in the rail that no run would ever fill.
+    if new_conversation:
+        async with async_session() as db:
+            await create_conversation(
+                db, title=data.goal, customer_id=data.customer_id,
+                conversation_id=conversation_id,
+            )
+    history = await _history_for(conversation_id)
+
     _in_flight.add(run_id)
+
+    # Deltas are buffered before the first model call so a connection opened a
+    # millisecond after the POST already has a channel to drain.
+    live_bus.open_run(run_id)
+    on_delta = live_bus.sink(run_id)
+    on_round = lambda index: live_bus.begin_round(run_id, index)  # noqa: E731
+    # Registered before the task starts: a stop arriving a millisecond later
+    # must find a token, not a 404.
+    cancel = CancelToken()
+    _run_tokens[run_id] = cancel
 
     def _on_step(step, run) -> None:
         """Write progress while the run is still going.
@@ -550,6 +662,8 @@ async def _start_in_background(
                 data.goal, context=data.context, budget=budget,
                 run_id=run_id, persist=False, on_step=_on_step,
                 customer_id=data.customer_id,
+                on_delta=on_delta, on_round=on_round, cancel=cancel,
+                history=history, conversation_id=conversation_id,
             )
             async with async_session() as db:
                 await save_run(db, result.run)
@@ -568,6 +682,17 @@ async def _start_in_background(
                 logger.exception("could not record the failure of run %s", run_id)
         finally:
             _in_flight.discard(run_id)
+            _run_tokens.pop(run_id, None)
+            live_bus.close_run(run_id)
+            if conversation_id:
+                try:
+                    async with async_session() as db:
+                        await touch_conversation(db, conversation_id)
+                except Exception:  # noqa: BLE001 - ordering is not worth a failure
+                    logger.debug(
+                        "could not touch conversation %s", conversation_id,
+                        exc_info=True,
+                    )
 
     # Held in a module-level set as well as the task, because a task that is not
     # referenced can be garbage collected mid-flight.
@@ -582,6 +707,7 @@ async def _start_in_background(
         poll=f"/api/v1/agent/runs/{run_id}",
         trace_url=f"/api/v1/agent/runs/{run_id}/trace.html",
         max_seconds=budget.max_seconds,
+        conversation_id=conversation_id,
     )
 
 
@@ -635,6 +761,8 @@ async def api_agent_runs(limit: int = 20, status: Optional[str] = None,
             {
                 "run_id": row.run_id,
                 "goal": row.goal,
+                "conversation_id": getattr(row, "conversation_id", None),
+                "model": getattr(row, "model", None),
                 "prompt_version": getattr(row, "prompt_version", None),
                 "status": row.status,
                 "stop_code": row.stop_code,
@@ -664,9 +792,27 @@ def _snapshot(row, *, with_diagram: bool = True) -> dict[str, Any]:
     three minutes while the client is only rendering the timeline.
     """
     trace = trace_of(row)
+    # A run whose provider omitted usage has a lower bound, not a bill. The
+    # difference is visible in the trace, so the price is withheld rather than
+    # computed from the rounds that happened to report.
+    usage = Usage(
+        prompt_tokens=row.prompt_tokens or 0,
+        cached_prompt_tokens=getattr(row, "cached_prompt_tokens", 0) or 0,
+        completion_tokens=row.completion_tokens or 0,
+    )
+    usage_complete = not any(step.get("usage_missing") for step in trace)
+    model = getattr(row, "model", None)
+    cost = cost_of(usage, model) if (model and usage_complete) else None
     payload = {
         "run_id": row.run_id,
         "goal": row.goal,
+        "conversation_id": getattr(row, "conversation_id", None),
+        #: The model that actually ran, and its price when a table is declared.
+        #: ``None`` cost means unpriced or unreported -- never "free".
+        "model": model,
+        "cost": cost.as_dict() if cost is not None else None,
+        "cache_hit_rate": usage.cache_hit_rate,
+        "usage_complete": usage_complete,
         # Which instructions produced this run. Null for rows written before the
         # column existed -- null is the honest answer, not a guessed version.
         "prompt_version": getattr(row, "prompt_version", None),
@@ -677,6 +823,15 @@ def _snapshot(row, *, with_diagram: bool = True) -> dict[str, Any]:
         "final_output": row.final_output,
         "rounds": row.rounds,
         "tool_calls": row.tool_calls,
+        # Derived from the trace rather than stored: a refused call did no work,
+        # so it must not inflate the count, and the trace already knows which
+        # ones were refused and why.
+        "refused_calls": sum(
+            1
+            for step in trace
+            for call in (step.get("tool_calls") or [])
+            if call.get("refused_reason")
+        ),
         "prompt_tokens": row.prompt_tokens,
         "cached_prompt_tokens": getattr(row, "cached_prompt_tokens", 0) or 0,
         "completion_tokens": row.completion_tokens,
@@ -705,9 +860,131 @@ async def api_agent_run_detail(run_id: str, db: AsyncSession = Depends(get_db)):
     return _snapshot(row)
 
 
-#: How often the stream looks for new progress. The loop writes once per round,
-#: so a shorter interval would re-read the same row and send nothing.
+@router.post("/runs/{run_id}/cancel", status_code=202)
+async def api_cancel_agent_run(run_id: str):
+    """Ask a running agent to stop.
+
+    Cooperative, and deliberately so. The loop notices at the next safe point:
+    between rounds, between tool calls, or by cancelling the in-flight model
+    request. A tool that has already started is allowed to finish -- it may have
+    written a draft, and killing it mid-write is worse than letting it complete.
+
+    "Stop" is not "undo". Anything already executed stays executed; the trace
+    records the remaining calls as refused with ``reason=cancelled``.
+    """
+    token = _run_tokens.get(run_id)
+    if token is not None:
+        # Idempotent: a second click finds the token already set and gets the
+        # same answer, rather than an error about a state the client cannot see.
+        token.cancel()
+        return {"run_id": run_id, "accepted": True, "status": "cancelling"}
+
+    async with async_session() as session:
+        row = await get_run(session, run_id)
+
+    if row is None:
+        raise ApiError(
+            status_code=404,
+            code=ErrorCode.RUN_NOT_FOUND,
+            detail=f"no run with id {run_id}",
+        )
+
+    if row.status in TERMINAL_STATUSES:
+        raise ApiError(
+            status_code=409,
+            code=ErrorCode.RUN_NOT_CANCELLABLE,
+            detail=(
+                f"run {run_id} already finished with status '{row.status}', so "
+                "there is nothing to stop"
+            ),
+            details={"run_id": run_id, "reason": "finished", "status": row.status},
+        )
+
+    raise ApiError(
+        status_code=409,
+        code=ErrorCode.RUN_NOT_CANCELLABLE,
+        detail=(
+            "this run is not running in this process, so there is nothing to "
+            "stop. It may have been started by another worker or before a "
+            "restart. Its row will be settled by the stale-run sweep."
+        ),
+        details={"run_id": run_id, "reason": "not_local", "status": row.status},
+    )
+
+
+@router.get("/conversations")
+async def api_agent_conversations(
+    limit: int = 20, offset: int = 0, db: AsyncSession = Depends(get_db)
+):
+    """Threads, newest first. The console's history rail.
+
+    ``run_count``/``last_status``/``total_tokens`` are aggregated in one query
+    for the whole page rather than three per thread -- this is the first screen
+    of the console and an N+1 is paid on every visit.
+    """
+    rows = await list_conversations(db, limit=limit, offset=offset)
+    stats = await conversation_stats(db, [row.conversation_id for row in rows])
+
+    conversations = []
+    for row in rows:
+        entry = stats.get(row.conversation_id, {})
+        conversations.append({
+            "conversation_id": row.conversation_id,
+            "title": row.title,
+            "customer_id": row.customer_id,
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+            "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+            "run_count": entry.get("run_count", 0),
+            "last_status": entry.get("last_status"),
+            "last_goal": entry.get("last_goal", ""),
+            "total_tokens": entry.get("total_tokens", 0),
+        })
+    return {"count": len(conversations), "conversations": conversations}
+
+
+@router.get("/conversations/{conversation_id}")
+async def api_agent_conversation(
+    conversation_id: str,
+    limit: int = 50,
+    db: AsyncSession = Depends(get_db),
+):
+    """One thread with its turns, oldest first.
+
+    A turn still ``running`` is included on purpose: the console reconnects to
+    its stream after a refresh instead of showing a thread that appears to have
+    lost its last question.
+    """
+    conversation = await get_conversation(db, conversation_id)
+    if conversation is None:
+        raise ApiError(
+            status_code=404,
+            code=ErrorCode.CONVERSATION_NOT_FOUND,
+            detail=f"no conversation with id {conversation_id}",
+            details={"conversation_id": conversation_id},
+        )
+
+    rows = await conversation_runs(db, conversation_id, limit=limit)
+    return {
+        "conversation_id": conversation.conversation_id,
+        "title": conversation.title,
+        "customer_id": conversation.customer_id,
+        "created_at": (
+            conversation.created_at.isoformat() if conversation.created_at else None
+        ),
+        "updated_at": (
+            conversation.updated_at.isoformat() if conversation.updated_at else None
+        ),
+        "turns": [_snapshot(row, with_diagram=False) for row in rows],
+    }
+
+
+#: How often the stream looks for new **persisted** progress. The loop writes
+#: once per round, so a shorter interval would re-read the same row and send
+#: nothing. Live deltas are drained on a much shorter tick, from memory.
 STREAM_TICK_SECONDS = 1.0
+#: How often the live buffer is drained. Short enough to feel like typing,
+#: long enough that a 20-token burst is one frame batch rather than twenty.
+STREAM_LIVE_TICK_SECONDS = 0.1
 #: A comment line every this often. A proxy closes a connection it believes is
 #: idle after 30-60 s, and a run waiting on a slow model looks exactly like an
 #: idle connection. The comment is ignored by every EventSource/fetch parser,
@@ -772,6 +1049,9 @@ async def api_agent_run_events(run_id: str, request: Request, after: int = 0):
         deadline = started + budget_seconds + STREAM_GRACE_SECONDS
         last_beat = started
         first_tick = True
+        last_db_read = 0.0
+        live_round = None
+        cursor = 0
 
         while True:
             if await request.is_disconnected():
@@ -779,34 +1059,55 @@ async def api_agent_run_events(run_id: str, request: Request, after: int = 0):
                 # stream whose tab was closed.
                 return
 
-            # A short-lived session per tick, never one held for the stream. A
-            # stream lives for minutes; the pool has fifteen connections and
-            # every other endpoint shares them.
-            async with async_session() as session:
-                fresh = await get_run(session, run_id)
+            # 1. The live channel. Cheap, in memory, and the only thing that
+            #    moves *between* rounds -- a round takes seconds and the row is
+            #    written only when it ends, so without this the console has
+            #    nothing to show while the model is writing.
+            state = live_bus.state(run_id)
+            if state is not None and state["round"] > 0:
+                if state["round"] != live_round:
+                    live_round = state["round"]
+                    # Authoritative text for the new round; also the repair for
+                    # a reader that fell behind the ring buffer.
+                    cursor = state["seq"]
+                    yield _sse("live", state)
+                else:
+                    for delta in live_bus.since(run_id, cursor):
+                        cursor = delta["seq"]
+                        yield _sse("delta", delta)
 
-            if fresh is None:
-                yield _sse(
-                    "error",
-                    {"code": "run_not_found", "run_id": run_id},
-                    last_sent + 1,
-                )
-                return
+            # 2. Persisted state, which is the authority for round counts, the
+            #    terminal status and the answer. Read at most once a second: a
+            #    stream lives for minutes and the pool is shared.
+            now = time.monotonic()
+            if first_tick or now - last_db_read >= STREAM_TICK_SECONDS:
+                last_db_read = now
+                # A short-lived session per tick, never one held for the stream.
+                async with async_session() as session:
+                    fresh = await get_run(session, run_id)
 
-            rounds = fresh.rounds or 0
-            terminal = fresh.status in TERMINAL_STATUSES
-
-            # Send when the round moved, and always send the terminal state: a
-            # reconnecting client has `last_sent == rounds` and still needs the
-            # final answer. The first tick always sends, so a client with a
-            # stale or ahead-of-the-server cursor is resynchronised at once.
-            if first_tick or rounds > last_sent or terminal:
-                first_tick = False
-                last_sent = rounds
-                snapshot = _snapshot(fresh, with_diagram=False)
-                yield _sse("done" if terminal else "snapshot", snapshot, last_sent)
-                if terminal:
+                if fresh is None:
+                    yield _sse(
+                        "error",
+                        {"code": "run_not_found", "run_id": run_id},
+                        last_sent + 1,
+                    )
                     return
+
+                rounds = fresh.rounds or 0
+                terminal = fresh.status in TERMINAL_STATUSES
+
+                # Send when the round moved, and always send the terminal state:
+                # a reconnecting client has `last_sent == rounds` and still needs
+                # the final answer. The first tick always sends, so a client with
+                # a stale or ahead-of-the-server cursor is resynchronised at once.
+                if first_tick or rounds > last_sent or terminal:
+                    first_tick = False
+                    last_sent = rounds
+                    snapshot = _snapshot(fresh, with_diagram=False)
+                    yield _sse("done" if terminal else "snapshot", snapshot, last_sent)
+                    if terminal:
+                        return
 
             now = time.monotonic()
             if now - last_beat >= STREAM_HEARTBEAT_SECONDS:
@@ -826,7 +1127,7 @@ async def api_agent_run_events(run_id: str, request: Request, after: int = 0):
                     last_sent,
                 )
                 return
-            await asyncio.sleep(STREAM_TICK_SECONDS)
+            await asyncio.sleep(STREAM_LIVE_TICK_SECONDS)
 
     return StreamingResponse(
         generate(),
