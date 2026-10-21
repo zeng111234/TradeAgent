@@ -128,7 +128,13 @@ def extract_page_text(html: str) -> tuple[str, str]:
     # ``body`` also stops the title being counted twice.
     root = soup.body or soup
     page_text = root.get_text(separator="\n", strip=True)[:PAGE_TEXT_LIMIT]
-    title = (soup.title.string or "").strip() if soup.title else ""
+    # ``get_text``, not ``.string``: ``.string`` is None whenever the title has
+    # more than one child, and a None title used to reach the prompt and
+    # ``company_name``. ``get_text`` cannot be None, and it survives the two
+    # parsers disagreeing about ``<title>`` -- it is an RCDATA element, so a
+    # strict parser hands back nested markup as literal text while an older one
+    # parses it as tags.
+    title = soup.title.get_text(strip=True) if soup.title else ""
     return page_text, title
 
 

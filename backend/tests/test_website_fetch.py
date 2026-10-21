@@ -85,7 +85,24 @@ def test_a_page_without_a_title_reports_an_empty_one():
     # ``soup.title.string`` is None for a title with child tags; ``None`` used to
     # leak into the prompt and into ``company_name``.
     assert extract_page_text("<p>hello</p>") == ("hello", "")
-    assert extract_page_text("<title><b>Acme</b></title><p>hi</p>") == ("hi", "Acme")
+    assert extract_page_text("<title>Acme</title><p>hi</p>") == ("hi", "Acme")
+
+
+def test_a_title_of_markup_never_leaks_none_or_the_wrapper():
+    """What the two parsers disagree on, and what must hold either way.
+
+    ``<title>`` is an RCDATA element, so a strict parser (lxml 5.x) treats the
+    nested markup as literal text and returns "<b>Acme</b>", while lxml 4.x
+    parses it as a tag and returns "Acme". Asserting one of them makes the
+    suite green on whichever machine it was written on and red everywhere
+    else -- which is how CI failed while local stayed green. Assert the part
+    that is the actual contract: no None (the original bug) and no wrapper.
+    """
+    page_text, title = extract_page_text("<title><b>Acme</b></title><p>hi</p>")
+
+    assert page_text == "hi"
+    assert "Acme" in title
+    assert "<title>" not in title
 
 
 @pytest.mark.asyncio

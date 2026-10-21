@@ -52,6 +52,20 @@ async function main() {
   page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()) })
   page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
 
+  // Registered first so the specific stubs below win: Playwright lets the
+  // route registered last take precedence, and a catch-all added at the end
+  // would swallow them.
+  //
+  // Without it, every request this gate does not care about falls through to
+  // vite's proxy, and with no backend on :8000 the proxy answers 500 -- which
+  // the console-error check at the bottom reads as a failure. Local runs
+  // always had a backend listening, which is why only CI ever saw this.
+  await page.route('**/api/v1/**', (r) => r.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: '{}',
+  }))
+
   await page.route('**/api/v1/agent/capabilities', (r) => r.fulfill({
     status: 200,
     contentType: 'application/json',
