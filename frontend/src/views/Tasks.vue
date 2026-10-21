@@ -46,19 +46,21 @@
             </span>
           </template>
         </el-table-column>
-        <el-table-column prop="task_type" label="Type" width="100">
+        <el-table-column prop="task_type" label="Type" width="110">
           <template #default="{ row }">
-            <el-tag size="small">{{ row.task_type }}</el-tag>
+            <!-- task_type is a category, not a status: quiet tag, label from the
+                 map (the data carries both `follow_up` and `FOLLOW_UP`). -->
+            <el-tag size="small" type="info">{{ taskTypeLabel(row.task_type) }}</el-tag>
           </template>
         </el-table-column>
         <el-table-column prop="priority" label="Priority" width="100">
           <template #default="{ row }">
-            <el-tag :type="priorityType(row.priority)" size="small">{{ row.priority }}</el-tag>
+            <el-tag :type="priorityType(row.priority)" size="small">{{ priorityLabel(row.priority) }}</el-tag>
           </template>
         </el-table-column>
         <el-table-column prop="status" label="Status" width="110">
           <template #default="{ row }">
-            <el-tag :type="statusType(row.status)" size="small">{{ row.status }}</el-tag>
+            <el-tag :type="statusType(row.status)" size="small">{{ taskStatusLabel(row.status) }}</el-tag>
           </template>
         </el-table-column>
         <el-table-column label="Due Date" width="160">
@@ -130,7 +132,7 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { taskApi } from '../api'
-import { priorityType, taskStatusType as statusType } from '../constants/status.js'
+import { priorityLabel, priorityType, taskStatusLabel, taskStatusType as statusType, taskTypeLabel } from '../constants/status.js'
 import { failureDetail, patchRow, reconcile, removeRow } from '../utils/optimistic'
 
 const tasks = ref([])
@@ -162,7 +164,10 @@ const form = reactive({
   customer_id: null,
 })
 
-const formatDate = (d) => d ? new Date(d).toLocaleString() : ''
+// Minute precision: a due date does not have seconds, and "08:20:00" is noise.
+const formatDate = (d) => d
+  ? new Date(d).toLocaleString([], { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+  : ''
 const isOverdue = (row) => row.due_date && row.status === 'pending' && new Date(row.due_date) < new Date()
 
 const loadTasks = async () => {

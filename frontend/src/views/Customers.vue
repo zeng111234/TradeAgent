@@ -63,7 +63,7 @@
             <el-tag :type="stageTagType(row.stage)" size="small">{{ stageLabel(row.stage) }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="source" label="Source" width="80">
+        <el-table-column prop="source" label="Source" width="100">
           <template #default="{ row }">
             <span class="text-muted">{{ row.source }}</span>
           </template>

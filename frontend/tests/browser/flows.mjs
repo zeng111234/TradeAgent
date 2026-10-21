@@ -154,7 +154,9 @@ async function tasksRollback(page) {
 
   await page.getByRole('button', { name: 'Complete' }).first().click()
   // Optimistic: the badge changes before the request has been answered.
-  await until(page, async () => (await page.locator('body').innerText()).includes('completed'), {
+  // Case-insensitive: the status *label* is humanised ("Completed"), and this
+  // flow cares about the state, not how the badge is spelled.
+  await until(page, async () => (await page.locator('body').innerText()).toLowerCase().includes('completed'), {
     timeout: 500,
     what: 'the optimistic status',
   })
@@ -163,7 +165,7 @@ async function tasksRollback(page) {
   await until(
     page,
     async () => {
-      const text = await page.locator('body').innerText()
+      const text = (await page.locator('body').innerText()).toLowerCase()
       return text.includes('pending') && !text.includes('completed')
     },
     { what: 'the rolled-back status' }

@@ -87,6 +87,14 @@ const EMAIL_TYPES = Object.freeze({
 
 export const emailStatusType = (status) => EMAIL_TYPES[status] || NEUTRAL
 
+/** Display form of email.status ("pending" -> "Pending"), same cut as tasks. */
+const EMAIL_STATUS_LABELS = Object.freeze({
+  pending: 'Pending', sent: 'Sent', delivered: 'Delivered', opened: 'Opened',
+  replied: 'Replied', failed: 'Failed', bounced: 'Bounced', rejected: 'Rejected',
+})
+
+export const emailStatusLabel = (s) => label(EMAIL_STATUS_LABELS, s)
+
 /** task.status */
 const TASK_TYPES = Object.freeze({
   pending: WARNING,
@@ -142,10 +150,54 @@ const NOTE_TYPES = Object.freeze({
   email: ACCENT,
   call: POSITIVE,
   meeting: WARNING,
-  quotation: NEGATIVE,
+  // Was NEGATIVE -- a quotation is a pricing note, not a red alert. None of
+  // these categories is a risk, and a red tag on the timeline reads as one.
+  quotation: NEUTRAL,
 })
 
 export const noteTypeColor = (type) => NOTE_TYPES[type] || NEUTRAL
+
+/** Human labels for enum-ish fields. The raw value is the API contract; this
+ *  is the display form. Data drifts (we store both `follow_up` and `FOLLOW_UP`),
+ *  so lookups lowercase the key first. */
+const label = (map, key) => map[String(key || '').toLowerCase()] || String(key || '')
+
+const NOTE_LABELS = Object.freeze({
+  general: 'General', email: 'Email', call: 'Call',
+  meeting: 'Meeting', quotation: 'Quotation',
+})
+
+export const noteTypeLabel = (t) => label(NOTE_LABELS, t)
+
+/** task.task_type -- a category, so the tag is quiet and the word carries it. */
+const TASK_TYPE_LABELS = Object.freeze({
+  follow_up: 'Follow Up', call: 'Call', email: 'Email',
+  meeting: 'Meeting', quotation: 'Quotation', sample: 'Sample',
+})
+
+export const taskTypeLabel = (t) => label(TASK_TYPE_LABELS, t)
+
+/** task.status / task.priority display forms (the API stores lowercase). */
+const TASK_STATUS_LABELS = Object.freeze({
+  pending: 'Pending', in_progress: 'In Progress',
+  completed: 'Completed', cancelled: 'Cancelled',
+})
+
+export const taskStatusLabel = (s) => label(TASK_STATUS_LABELS, s)
+
+const PRIORITY_LABELS = Object.freeze({
+  urgent: 'Urgent', high: 'High', medium: 'Medium', low: 'Low',
+})
+
+export const priorityLabel = (p) => label(PRIORITY_LABELS, p)
+
+/** Email template category. Mirrors the option labels in Templates.vue. */
+const TEMPLATE_CATEGORY_LABELS = Object.freeze({
+  cold_outreach: 'Cold Outreach', follow_up: 'Follow Up',
+  quotation: 'Quotation', holiday: 'Holiday',
+})
+
+export const templateCategoryLabel = (c) => label(TEMPLATE_CATEGORY_LABELS, c)
 
 /** Agent-page classifiers. These label *content*, so they stay compact. */
 const INTENT_TYPES = Object.freeze({

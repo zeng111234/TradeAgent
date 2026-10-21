@@ -414,6 +414,22 @@ code, pre, kbd, samp {
   color: var(--negative);
 }
 
+/* Rendered HTML body in a review box (pending email drafts). The body is what
+ * the recipient receives -- show it as HTML, not as source tags. */
+.mail-preview {
+  background: var(--bg-card);
+  padding: var(--space-3);
+  border-radius: var(--radius-xs);
+  border: 1px solid var(--border-subtle);
+  word-break: break-word;
+}
+.mail-preview p {
+  margin: 0 0 var(--space-2);
+}
+.mail-preview p:last-child {
+  margin-bottom: 0;
+}
+
 .text-quiet {
   color: var(--text-3);
 }
@@ -450,6 +466,8 @@ code, pre, kbd, samp {
 .score-high { color: var(--accent); font-weight: 600; }
 .score-mid { color: var(--warning); font-weight: 600; }
 .score-low { color: var(--text-3); font-weight: 600; }
+/* Larger cut of the same bands, for the detail page's headline score. */
+.score-text { font-size: var(--fs-metric-sm); }
 
 .clickable {
   cursor: pointer;

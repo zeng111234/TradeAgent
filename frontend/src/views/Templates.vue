@@ -39,7 +39,7 @@
             <div style="display: flex; justify-content: space-between; align-items: center">
               <span style="font-weight: 600; font-size: 14px">{{ tmpl.name }}</span>
               <div>
-                <el-tag v-if="tmpl.category" size="small" style="margin-right: 4px">{{ tmpl.category }}</el-tag>
+                <el-tag v-if="tmpl.category" size="small" style="margin-right: 4px">{{ templateCategoryLabel(tmpl.category) }}</el-tag>
                 <el-tag v-if="tmpl.is_ai_generated" type="success" size="small">AI</el-tag>
               </div>
             </div>
@@ -109,6 +109,7 @@
 import { ref, reactive, watch, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { emailApi } from '../api'
+import { templateCategoryLabel } from '../constants/status.js'
 
 const templates = ref([])
 const dialogVisible = ref(false)

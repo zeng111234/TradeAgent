@@ -27,7 +27,9 @@
       </el-col>
       <el-col :span="6">
         <div class="stat-card">
-          <div class="stat-value" style="color: var(--negative)">{{ emailStats.total_failed }}</div>
+          <!-- Zero failures is good news: only go red when there is something to
+               look at (same rule as Dashboard's overdue count). -->
+          <div class="stat-value" :class="{ 'text-negative': emailStats.total_failed > 0 }">{{ emailStats.total_failed }}</div>
           <div class="stat-label">Failed</div>
         </div>
       </el-col>
@@ -39,7 +41,7 @@
         <div style="display: flex; justify-content: space-between; align-items: center">
           <div>
             <span style="font-weight: 600">Pending Draft Review</span>
-            <el-tag v-if="pendingEmails.length" type="warning" size="small" style="margin-left: 8px">{{ pendingEmails.length }} drafts</el-tag>
+            <el-tag v-if="pendingEmails.length" type="warning" size="small" style="margin-left: 8px">{{ pendingEmails.length }} {{ pendingEmails.length === 1 ? 'draft' : 'drafts' }}</el-tag>
           </div>
           <div>
             <el-button size="small" @click="loadData" :loading="false">
@@ -66,12 +68,15 @@
           </div>
         </div>
         <div style="margin-bottom: 8px">
-          <strong>Subject:</strong>
+          <strong>Subject:</strong>&nbsp;
           <span v-if="editingId !== email.id">{{ email.subject }}</span>
           <el-input v-else v-model="editSubject" size="small" style="width: 80%; margin-left: 4px" />
         </div>
         <div style="margin-bottom: 12px; color: var(--text-2); font-size: 13px; line-height: 1.6">
-          <div v-if="editingId !== email.id" style="white-space: pre-wrap; background: var(--bg-card); padding: 12px; border-radius: 4px; border: 1px solid var(--border-subtle)">{{ email.body }}</div>
+          <!-- The body is HTML (it is what the recipient gets); rendering it as
+               text showed the raw <p> tags. Same rendering as the AI result
+               panel below. -->
+          <div v-if="editingId !== email.id" class="mail-preview" v-html="email.body"></div>
           <el-input v-else v-model="editBody" type="textarea" :rows="5" />
         </div>
         <div style="display: flex; gap: 8px">
@@ -82,10 +87,10 @@
             <el-button size="small" @click="startEdit(email)">
               <el-icon><Edit /></el-icon> Edit
             </el-button>
-            <el-button type="danger" size="small" @click="handleRejectPending(email)" plain>
+            <el-button size="small" @click="handleRejectPending(email)" plain>
               <el-icon><CircleClose /></el-icon> Reject
             </el-button>
-            <el-button size="small" @click="handleDeletePending(email)" plain>
+            <el-button type="danger" size="small" @click="handleDeletePending(email)" plain>
               <el-icon><Delete /></el-icon> Delete
             </el-button>
           </template>
@@ -206,7 +211,7 @@
             <span style="font-weight: 600">Recent Email Logs</span>
           </template>
           <el-table :data="emailLogs" stripe>
-            <el-table-column prop="to_email" label="To" min-width="150" />
+            <el-table-column prop="to_email" label="To" min-width="150" show-overflow-tooltip />
             <el-table-column prop="subject" label="Subject" min-width="200" show-overflow-tooltip />
             <el-table-column prop="status" label="Status" width="120">
               <template #default="{ row }">
@@ -221,7 +226,7 @@
                 >
                   <el-tag type="warning" size="small" effect="plain">simulated</el-tag>
                 </el-tooltip>
-                <el-tag v-else :type="statusType(row.status)" size="small">{{ row.status }}</el-tag>
+                <el-tag v-else :type="statusType(row.status)" size="small">{{ emailStatusLabel(row.status) }}</el-tag>
               </template>
             </el-table-column>
             <!-- The reason, not just the verdict. A row tagged "failed" with no
@@ -264,7 +269,7 @@
 import { ref, reactive, onMounted } from 'vue'
 import { ElMessage, ElMessageBox, ElNotification } from 'element-plus'
 import { emailApi } from '../api'
-import { emailStatusType as statusType } from '../constants/status.js'
+import { emailStatusLabel, emailStatusType as statusType } from '../constants/status.js'
 import { failureDetail, removeRow } from '../utils/optimistic'
 
 const sending = ref(false)
@@ -309,7 +314,10 @@ const aiForm = reactive({
   language: 'en',
 })
 
-const formatDate = (d) => d ? new Date(d).toLocaleString() : ''
+// Minute precision: seconds in a log row are noise (same cut as Tasks.vue).
+const formatDate = (d) => d
+  ? new Date(d).toLocaleString([], { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+  : ''
 
 const loadData = async () => {
   try {

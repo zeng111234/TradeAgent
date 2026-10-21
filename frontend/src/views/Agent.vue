@@ -5,7 +5,7 @@
       <p>AI-powered tools for smarter foreign trade decisions</p>
     </div>
 
-    <el-tabs v-model="activeTab" type="border-card" class="mb-5">
+    <el-tabs v-model="activeTab" type="border-card" class="agent-tabs mb-5">
 
       <!-- Tab 0: Daily Intelligence -->
       <el-tab-pane label="Daily Intelligence" name="daily">
@@ -963,6 +963,17 @@ const urgencyLabel = (u) => (u === 'not_assessed' ? 'not assessed' : u)
 </script>
 
 <style scoped>
+/* Ten tabs across a 1440px shell: at EP's default padding the header scrolls
+ * and the last pane (PI Generator) is behind a chevron. Measured: the items
+ * need 1245px and the shell gives 1154px at 13px/10px -- compact type and
+ * padding so the full row is visible at the primary design width. */
+.agent-tabs :deep(.el-tabs__item) {
+  padding: 0 8px;
+  font-size: var(--fs-caption);
+}
+.agent-tabs :deep(.el-tabs__content) {
+  padding: 16px;
+}
 /* ================================================================ cards ==
  * The same "one customer, one card" box is repeated by the daily feed, the
  * churn feed, the scanned-lead list, the holiday/batch mail lists and the

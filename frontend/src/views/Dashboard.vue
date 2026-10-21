@@ -125,8 +125,8 @@
           </template>
           <div v-for="job in schedulerJobs" :key="job.id" class="job-row">
             <div class="job-name">{{ job.name }}</div>
-            <div class="hint">{{ job.trigger }}</div>
-            <div class="hint text-positive">Next: {{ job.next_run }}</div>
+            <div class="hint">{{ humanTrigger(job.trigger) }}</div>
+            <div class="hint text-positive">Next: {{ humanNextRun(job.next_run) }}</div>
           </div>
           <el-empty v-if="!schedulerJobs.length" description="No scheduled jobs" />
         </el-card>
@@ -347,6 +347,11 @@ const initCharts = async () => {
     charts.push(funnelChart)
     try {
       const pipeline = await analyticsApi.pipeline()
+      // Width is proportional to count, so `max` must be the *largest stage* --
+      // it used to be `pipeline.total` (the sum), which shrank every band to
+      // 1/n and turned the funnel into a thin ribbon. Stages with no rows are
+      // dropped: a zero-width band still paints its label in mid-air.
+      const stages = pipeline.stages.filter(s => s.count > 0)
       funnelChart.setOption({
         tooltip: { trigger: 'item', formatter: '{b}: {c} ({d}%)' },
         // One hue, eight lightness steps: eight unrelated hues is the rainbow
@@ -359,13 +364,13 @@ const initCharts = async () => {
           bottom: 20,
           width: '80%',
           min: 0,
-          max: pipeline.total || 100,
+          max: Math.max(...stages.map(s => s.count), 1),
           minSize: '0%',
           maxSize: '100%',
           sort: 'descending',
           gap: 2,
           label: { show: true, position: 'inside', formatter: '{b}\n{c}' },
-          data: pipeline.stages.map(s => ({ name: s.stage, value: s.count })),
+          data: stages.map(s => ({ name: s.stage, value: s.count })),
         }],
       })
     } catch (e) {
@@ -405,7 +410,9 @@ const initCharts = async () => {
       const sources = await analyticsApi.sources()
       sourceChart.setOption({
         tooltip: { trigger: 'item', formatter: '{b}: {c} ({d}%)' },
-        color: accentSeries,
+        // Five slices taken from spread-out steps of the ramp: adjacent steps
+        // of a single hue are hard to tell apart in a ring.
+        color: [accentSeries[0], accentSeries[2], accentSeries[4], accentSeries[6], accentSeries[7]],
         legend: { orient: 'vertical', left: 'left', top: 'center' },
         series: [{
           type: 'pie',
@@ -461,6 +468,28 @@ const fullScanLoading = ref(false)
 const scanAndSendLoading = ref(false)
 const dailyReport = ref(null)
 const schedulerJobs = ref([])
+
+/* The scheduler hands back its own repr -- `cron[hour='1,7', minute='7']` and
+ * `2026-10-21 07:08:38.557990+00:00`. Neither is a thing to read; convert to
+ * "Daily at 01:07, 07:07" and "10-21 15:08" (local). Unknown shapes fall back
+ * to the raw string rather than lying. */
+const humanTrigger = (raw) => {
+  const hour = /hour=['"]?([\d,]+)['"]?/.exec(raw || '')?.[1]
+  const minute = /minute=['"]?([\d,]+)['"]?/.exec(raw || '')?.[1]
+  if (!hour || !minute) return raw || ''
+  const pad = (n) => String(n).padStart(2, '0')
+  const times = hour.split(',').map((h) => `${pad(h)}:${pad(minute.split(',')[0])}`)
+  return `Daily at ${times.join(', ')}`
+}
+
+const humanNextRun = (raw) => {
+  if (!raw) return '—'
+  const iso = String(raw).replace(' ', 'T').replace(/(\.\d{3})\d+/, '$1')
+  const d = new Date(iso)
+  return Number.isNaN(d.getTime())
+    ? raw
+    : d.toLocaleString([], { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+}
 
 // Import Leads
 const previewLoading = ref(false)

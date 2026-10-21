@@ -31,7 +31,8 @@
             <el-descriptions-item label="Industry">{{ customer.industry || '-' }}</el-descriptions-item>
             <el-descriptions-item label="Products" :span="2">{{ customer.products || '-' }}</el-descriptions-item>
             <el-descriptions-item label="Score">
-              <span :style="{ color: customer.score >= 70 ? 'var(--positive)' : 'var(--warning)', fontWeight: 700, fontSize: '18px' }">
+              <!-- Same bands as the gauge beside it (scoreColor / scoreClass). -->
+              <span class="num score-text" :class="scoreClass(customer.score)">
                 {{ customer.score }}
               </span>
             </el-descriptions-item>
@@ -52,11 +53,11 @@
             </div>
           </template>
           <el-table :data="customer.contacts || []" stripe>
-            <el-table-column prop="name" label="Name" />
-            <el-table-column prop="title" label="Title" />
-            <el-table-column prop="email" label="Email" />
-            <el-table-column prop="phone" label="Phone" />
-            <el-table-column prop="whatsapp" label="WhatsApp" />
+            <el-table-column prop="name" label="Name" min-width="120" show-overflow-tooltip />
+            <el-table-column prop="title" label="Title" min-width="110" show-overflow-tooltip />
+            <el-table-column prop="email" label="Email" min-width="180" show-overflow-tooltip />
+            <el-table-column prop="phone" label="Phone" min-width="120" show-overflow-tooltip />
+            <el-table-column prop="whatsapp" label="WhatsApp" min-width="110" show-overflow-tooltip />
             <el-table-column label="Primary" width="80" align="center">
               <template #default="{ row }">
                 <el-tag v-if="row.is_primary" type="success" size="small">Yes</el-tag>
@@ -84,7 +85,7 @@
               :type="noteTypeColor(note.note_type)"
             >
               <el-card shadow="never" body-style="padding: 12px">
-                <el-tag size="small" :type="noteTypeColor(note.note_type)" style="margin-bottom: 4px">{{ note.note_type }}</el-tag>
+                <el-tag size="small" :type="noteTypeColor(note.note_type)" style="margin-bottom: 4px">{{ noteTypeLabel(note.note_type) }}</el-tag>
                 <p style="margin: 0; color: var(--text-2)">{{ note.content }}</p>
               </el-card>
             </el-timeline-item>
@@ -219,7 +220,7 @@ import { ref, reactive, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { customerApi } from '../api'
-import { noteTypeColor, scoreColor, stageLabel, stageTagType } from '../constants/status.js'
+import { noteTypeColor, noteTypeLabel, scoreClass, scoreColor, stageLabel, stageTagType } from '../constants/status.js'
 
 const route = useRoute()
 const loading = ref(false)
