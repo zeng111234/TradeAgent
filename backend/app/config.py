@@ -63,6 +63,18 @@ class Settings(BaseSettings):
     # CORS
     CORS_ORIGINS: list[str] = ["http://localhost:5173", "http://localhost:3000"]
 
+    #: A shared password for a public deployment. Empty by default, and empty
+    #: means no gate at all: a local tool has no strangers, and a gate nobody
+    #: asked for is a gate people turn off badly. Set it and every request
+    #: except the login page needs its cookie -- see ``app.access``.
+    APP_PASSWORD: str = ""
+
+    #: Where the built frontend lives, relative to this directory. The app was
+    #: API-only before the SPA was served from it, so an absent build is a
+    #: supported state rather than a misconfiguration: with no index.html here
+    #: the API answers exactly as it always did.
+    WEBROOT: str = "webroot"
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"

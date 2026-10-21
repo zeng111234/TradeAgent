@@ -17,10 +17,25 @@ from __future__ import annotations
 # 57 paths / 69 operations. Conversations and the cooperative stop bring it to
 # 60 paths / 72 operations: all three are additive, and none of them changes an
 # existing response field.
+# The single-link deployment brings it to 65 paths / 77 operations: the SPA
+# fallback, the access gate (sign in / out) and /api/v1/info, which is the
+# greeting "/" used to return before the app owned the root. All additive --
+# no route above changed shape, and no response field was renamed.
 EXPECTED_ROUTES: dict[str, set[str]] = {
     "/": {"get"},
     "/health": {"get"},
     "/ready": {"get"},
+    # --- the built frontend, served by this app (1) ---
+    # The catch-all SPA fallback. Registered last so every /api/v1/** route
+    # above wins, and it refuses API-shaped paths with a JSON 404 rather than
+    # answering an unknown endpoint with HTML.
+    "/{full_path}": {"get"},
+    # --- access gate (2 paths, 3 operations) ---
+    # A shared password for a public deployment: one link means anyone can
+    # spend the token budget and send from the configured mailbox. Additive,
+    # and inert unless APP_PASSWORD is set.
+    "/login": {"get", "post"},
+    "/logout": {"post"},
     # --- agent router (15 operations) ---
     "/api/v1/agent/analyze-email": {"post"},
     "/api/v1/agent/analyze-inquiry": {"post"},
@@ -111,6 +126,10 @@ EXPECTED_ROUTES: dict[str, set[str]] = {
     "/api/v1/senders/effective": {"get"},
     "/api/v1/senders/{account_id}": {"put", "delete"},
     "/api/v1/senders/{account_id}/activate": {"post"},
+    # --- deployment info (1) ---
+    # What "/" used to say, moved: a single-link deployment serves the app at
+    # the root, and the greeting is still worth reading somewhere.
+    "/api/v1/info": {"get"},
 }
 
 
@@ -192,11 +211,24 @@ def test_root_and_health_contract():
         assert r.status_code == 200
         assert r.json() == {"status": "ok"}
 
-        r = c.get("/")
+        # name/version moved to /api/v1/info: a single-link deployment serves
+        # the app at "/", and a client that reads those keys has to read them
+        # somewhere. Checked there, unconditionally.
+        r = c.get("/api/v1/info")
         assert r.status_code == 200
         body = r.json()
-        # The frontend reads name/version; keep those keys.
         assert "name" in body and "version" in body
+
+        # "/" is whichever is honest for this checkout: the app when a build
+        # was shipped, the greeting when it was not. Asserting only one would
+        # make this test fail on every machine that has not run the build, or
+        # on every machine that has -- depending on which we picked.
+        r = c.get("/")
+        assert r.status_code == 200
+        if "text/html" in r.headers.get("content-type", ""):
+            assert "<!doctype html>" in r.text.lower()
+        else:
+            assert "name" in r.json() and "version" in r.json()
 
 
 def test_unknown_route_is_404_not_500():

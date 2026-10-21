@@ -2,13 +2,17 @@
 import asyncio
 import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import sqlalchemy
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from app import access
 from app.config import settings
 from app.database import init_db
 from app.errors import (
@@ -101,6 +105,11 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# The access gate, added before the request-id middleware so the id stays
+# outermost: a request this refuses still gets an id, which is the whole point
+# of the id. Inert unless APP_PASSWORD is set -- see app/access.py.
+app.add_middleware(access.AccessGate)
+
 # CORS
 app.add_middleware(
     CORSMiddleware,
@@ -109,6 +118,29 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def _strip_trailing_slash(request: Request, call_next):
+    """Send "/api/v1/customers/" to "/api/v1/customers", as before.
+
+    Starlette already did this, but only while nothing matched the longer
+    path -- and once the SPA fallback exists it matches everything, so the
+    redirect stopped happening and every caller using a trailing slash started
+    getting 404 (or 405 on POST). Leaving it broken would have been a silent
+    change to endpoints that never moved, so the redirect is stated here
+    instead of being inherited from a match order that no longer holds.
+
+    Method and query are preserved: a 307 keeps the body and the verb, which
+    is what makes a retried POST safe rather than lost.
+    """
+    path = request.url.path
+    if path != "/" and path.endswith("/"):
+        target = path.rstrip("/") or "/"
+        if request.url.query:
+            target = f"{target}?{request.url.query}"
+        return RedirectResponse(url=target, status_code=307)
+    return await call_next(request)
 
 
 @app.middleware("http")
@@ -221,17 +253,43 @@ app.include_router(diagnostics.router, prefix="/api/v1")
 # The mailboxes a send can go out from. Separate router because switching
 # sender is an identity decision: the agent's tools never touch these rows.
 app.include_router(senders.router, prefix="/api/v1")
+# Sign-in for the shared-password gate. No prefix: it is the front door, not
+# part of the API, and it must answer before anything else is reachable.
+app.include_router(access.router)
 
 
-@app.get("/")
-async def root():
-    """Root endpoint."""
+def _app_info() -> dict:
     return {
         "name": settings.APP_NAME,
         "version": settings.APP_VERSION,
         "docs": "/docs",
         "message": "TradeAgent - AI Foreign Trade Customer Acquisition Assistant",
     }
+
+
+@app.get("/api/v1/info")
+async def info():
+    """What this deployment is.
+
+    Moved here from ``/`` because a single-link deployment serves the app at
+    the root, and the greeting that used to live there is worth keeping
+    somewhere a client can read it.
+    """
+    return _app_info()
+
+
+@app.get("/")
+async def root():
+    """The app, when a build was shipped; the greeting when it was not.
+
+    Both are honest answers to the same request. Before ``webroot`` existed
+    this returned the greeting as JSON, and it still does on a checkout with
+    no built frontend -- which is every test run and every API-only install.
+    """
+    index = _spa_index()
+    if index is None:
+        return _app_info()
+    return FileResponse(index)
 
 
 @app.get("/health")
@@ -442,3 +500,61 @@ async def _insert_demo_data():
 
         await db.commit()
         logger.info("Demo data inserted successfully!")
+
+# --------------------------------------------------------------------------
+# The built frontend, when one was shipped
+# --------------------------------------------------------------------------
+# Everything below is conditional on the build being present. An API-only
+# checkout -- every test run, every "just the backend" install -- behaves
+# exactly as it did before this section existed, including what "/" answers.
+
+def _webroot() -> Path:
+    """Directory holding the built frontend.
+
+    Relative to this file, not to the process: a published app is started from
+    wherever the sandbox puts it, and a path that only works from one
+    directory is a bug that shows up as a 404 on the one machine nobody
+    tested. ``parent.parent`` because this file lives in ``app/`` and the
+    build lands beside it, in the package root.
+    """
+    return Path(__file__).resolve().parent.parent / settings.WEBROOT
+
+
+def _spa_index() -> Path | None:
+    """The app's entry document, or None when no build was shipped."""
+    index = _webroot() / "index.html"
+    return index if index.is_file() else None
+
+
+_ASSETS = _webroot() / "assets"
+if _ASSETS.is_dir():
+    app.mount("/assets", StaticFiles(directory=str(_ASSETS)), name="assets")
+
+
+@app.get("/{full_path:path}")
+async def spa_fallback(full_path: str):
+    """Answer every path the API did not claim with the app itself.
+
+    Registered last on purpose: Starlette matches routes in registration
+    order, so the routers above keep every ``/api/v1/**`` path and this only
+    sees what is left. That is what makes a client-side route work on a cold
+    load or a refresh -- ``/customers/3`` has to reach the app, not a 404
+    from a server that has never heard of it.
+
+    An API-shaped path that nothing claimed is still a 404 with a body that
+    says so: answering an unknown endpoint with HTML is how a caller ends up
+    parsing a login page as JSON.
+    """
+    api_shaped = (
+        full_path.startswith("api/")
+        or full_path.startswith("openapi")
+        or full_path in {"docs", "docs/oauth2-redirect", "redoc"}
+    )
+    index = _spa_index()
+    if api_shaped or index is None:
+        raise ApiError(
+            status_code=404,
+            code=ErrorCode.NOT_FOUND,
+            detail=f"no such route: /{full_path}",
+        )
+    return FileResponse(index)

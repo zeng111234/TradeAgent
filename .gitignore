@@ -56,6 +56,12 @@ frontend/tests/browser/*.png
 # Node
 node_modules/
 frontend/dist/
+# The build the backend serves (npm run build:deploy). Generated, and large.
+backend/webroot/
+# Publish marker: binds this directory to the app behind its share link.
+# Machine-local state, not part of the project -- but keep it on disk, or the
+# next publish from here gets a different link.
+*.genie
 
 # IDE
 .vscode/

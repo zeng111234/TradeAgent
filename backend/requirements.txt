@@ -4,7 +4,13 @@ uvicorn[standard]==0.24.0
 python-multipart==0.0.6
 
 # Database
-sqlalchemy==2.0.23
+# 2.0.23 is not interchangeable with 2.0.41 for this app: on 2.0.23 the
+# aiosqlite dialect hands SQLite a NullPool, which rejects the pool sizing
+# arguments app/database.py passes -- so the app could not even be imported
+# on a fresh install from this file, while a machine that happened to have a
+# newer SQLAlchemy started fine. The pin is now the version the suite runs
+# against, which is what a pin is for.
+sqlalchemy==2.0.41
 aiosqlite==0.19.0
 
 # Email

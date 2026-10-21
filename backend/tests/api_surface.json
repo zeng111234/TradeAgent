@@ -2027,6 +2027,11 @@
       "422": "validation_error"
     }
   },
+  "GET /api/v1/info": {
+    "responses": {
+      "200": "untyped"
+    }
+  },
   "GET /api/v1/scheduler/history": {
     "responses": {
       "200": "untyped"
@@ -2442,9 +2447,41 @@
       "200": "untyped"
     }
   },
+  "GET /login": {
+    "parameters": [
+      {
+        "in": "query",
+        "name": "next",
+        "required": false,
+        "schema": {
+          "type": "string"
+        }
+      }
+    ],
+    "responses": {
+      "200": "untyped",
+      "422": "validation_error"
+    }
+  },
   "GET /ready": {
     "responses": {
       "200": "untyped"
+    }
+  },
+  "GET /{full_path}": {
+    "parameters": [
+      {
+        "in": "path",
+        "name": "full_path",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      }
+    ],
+    "responses": {
+      "200": "untyped",
+      "422": "validation_error"
     }
   },
   "POST /api/v1/agent/analyze-email": {
@@ -4680,6 +4717,21 @@
         "type": "object"
       },
       "422": "validation_error"
+    }
+  },
+  "POST /login": {
+    "request": {
+      "required": false,
+      "schema": "untyped"
+    },
+    "responses": {
+      "200": "untyped",
+      "422": "validation_error"
+    }
+  },
+  "POST /logout": {
+    "responses": {
+      "200": "untyped"
     }
   },
   "PUT /api/v1/customers/{customer_id}": {

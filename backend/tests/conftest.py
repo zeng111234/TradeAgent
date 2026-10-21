@@ -41,6 +41,11 @@ os.environ["OPENAI_API_KEY"] = ""       # force deterministic fallbacks
 os.environ["DEBUG"] = "false"           # silence SQLAlchemy echo
 os.environ["SMTP_USER"] = ""
 os.environ["SMTP_PASSWORD"] = ""
+# A developer who is running the published build locally has APP_PASSWORD set
+# in .env, and pydantic reads .env -- without this every test would be met by
+# the gate's 401 instead of the endpoint it is testing. Set before import for
+# the same reason the rest of this block is: environment beats .env.
+os.environ["APP_PASSWORD"] = ""
 os.environ.pop("REPORT_EMAIL", None)
 
 import pytest  # noqa: E402
