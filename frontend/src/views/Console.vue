@@ -1008,7 +1008,10 @@ onUnmounted(stopTimers)
     position: fixed;
     top: 52px;
     bottom: 0;
-    left: 0;
+    /* Start where the sidebar ends. At left: 0 the drawer slid out underneath
+       it -- the app's sidebar is sticky with a higher z-index -- so 220 of its
+       272 pixels were hidden and only a sliver of clipped text showed. */
+    left: var(--sidebar-width);
     width: 272px;
     z-index: 40;
     padding: var(--space-3);
@@ -1024,7 +1027,9 @@ onUnmounted(stopTimers)
   .rail-backdrop {
     display: block;
     position: fixed;
-    inset: 52px 0 0;
+    /* The sidebar stays usable: it is global navigation, not part of the
+       drawer, and dimming it made the whole left edge look like a black bar. */
+    inset: 52px 0 0 var(--sidebar-width);
     z-index: 39;
     background: rgba(0, 0, 0, 0.18);
   }

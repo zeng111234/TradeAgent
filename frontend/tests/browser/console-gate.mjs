@@ -300,9 +300,38 @@ async function main() {
     const actions = await page.locator('.turn').first().locator('.result-actions button').count()
     if (actions !== 3) throw new Error(`expected copy/rerun/export, got ${actions} actions`)
 
+    // Below 1280 the thread list is a slide-over. It used to slide out at
+    // left: 0, i.e. underneath the sticky sidebar (z-index 100), so 220 of its
+    // 272 pixels were covered: the list looked like a black strip and its rows
+    // could not be clicked. Resize the same page -- the routes stay installed.
+    await page.setViewportSize({ width: 1000, height: 800 })
+    await page.reload({ waitUntil: 'networkidle' })
+    await page.locator('.rail-toggle').click()
+    await page.waitForTimeout(300)
+    const drawer = await page.evaluate(() => {
+      const rail = document.querySelector('.thread-rail')
+      const sidebar = document.querySelector('.sidebar')
+      const item = document.querySelector('.rail-item')
+      if (!rail || !sidebar || !item) return null
+      const r = item.getBoundingClientRect()
+      const hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2)
+      return {
+        railX: Math.round(rail.getBoundingClientRect().x),
+        sidebarRight: Math.round(sidebar.getBoundingClientRect().right),
+        itemClickable: Boolean(hit && hit.closest('.rail-item')),
+      }
+    })
+    if (!drawer) throw new Error('thread drawer did not render at 1000px')
+    if (drawer.railX < drawer.sidebarRight - 1) {
+      throw new Error(`drawer starts under the sidebar: ${JSON.stringify(drawer)}`)
+    }
+    if (!drawer.itemClickable) {
+      throw new Error(`drawer rows are covered: ${JSON.stringify(drawer)}`)
+    }
+
     if (errors.length) throw new Error(`page errors: ${errors.slice(0, 3).join(' | ')}`)
 
-    console.log('PASS console-gate: stop+cancel, live text, cancelled note, reasoning, tokens, unpriced cost')
+    console.log('PASS console-gate: stop+cancel, live text, cancelled note, reasoning, tokens, unpriced cost, drawer clears sidebar')
     return 0
   } catch (e) {
     console.log(`FAIL console-gate: ${e.message}`)
