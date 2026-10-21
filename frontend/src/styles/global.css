@@ -386,17 +386,36 @@ code, pre, kbd, samp {
 .mt-2 { margin-top: var(--space-2); }
 .mt-3 { margin-top: var(--space-3); }
 .mt-4 { margin-top: var(--space-4); }
+.mt-5 { margin-top: var(--space-5); }
 .mt-6 { margin-top: var(--space-6); }
 .mb-1 { margin-bottom: var(--space-1); }
 .mb-2 { margin-bottom: var(--space-2); }
 .mb-3 { margin-bottom: var(--space-3); }
 .mb-4 { margin-bottom: var(--space-4); }
+.mb-5 { margin-bottom: var(--space-5); }
 .mb-6 { margin-bottom: var(--space-6); }
+.ml-1 { margin-left: var(--space-1); }
 .ml-2 { margin-left: var(--space-2); }
 .ml-3 { margin-left: var(--space-3); }
 
+.text-accent {
+  color: var(--accent);
+}
+
 .text-positive {
   color: var(--positive);
+}
+
+.text-warning {
+  color: var(--warning);
+}
+
+.text-negative {
+  color: var(--negative);
+}
+
+.text-quiet {
+  color: var(--text-3);
 }
 
 .hint-block {
@@ -584,16 +603,3 @@ code, pre, kbd, samp {
   font-size: var(--fs-sm);
   color: var(--text-3);
 }
-
-/* ================================================ 6. spacing helpers ===== */
-/* Deliberately few: they replace a one-off `style="margin-top:16px"` on a
- * single element, not a utility-class framework. */
-
-.mt-2 { margin-top: var(--space-2); }
-.mt-3 { margin-top: var(--space-3); }
-.mt-4 { margin-top: var(--space-4); }
-.mt-6 { margin-top: var(--space-6); }
-.mb-2 { margin-bottom: var(--space-2); }
-.mb-3 { margin-bottom: var(--space-3); }
-.mb-4 { margin-bottom: var(--space-4); }
-.mb-6 { margin-bottom: var(--space-6); }

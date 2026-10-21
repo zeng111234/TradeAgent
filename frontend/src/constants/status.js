@@ -23,7 +23,7 @@
  * tag type, so scoreColor resolves through theme.js instead. Low score is
  * neutral, not red -- "not relevant" is not "wrong".
  */
-import { accent, positive, warning, negative, neutral, border } from './theme.js'
+import { accent, positive, warning, negative, neutral } from './theme.js'
 
 const ACCENT = 'primary'
 const POSITIVE = 'success'
@@ -127,6 +127,15 @@ export const scoreTagType = (score) =>
 /** Same bands as a class name, for cells that colour text without a tag. */
 export const scoreClass = (score) => `score-${scoreBand(score)}`
 
+/**
+ * Card-edge form of the score bands (the left edge of a scanned-lead card).
+ * High keeps green -- a strong match reads as good news -- but the thresholds
+ * follow scoreBand's 70/40; this page used to cut at 70/50, so a 45 picked up
+ * an edge colour here and a different one in the progress bar beside it.
+ */
+export const scoreEdgeClass = (score) =>
+  ({ high: 'edge-positive', mid: 'edge-warning', low: '' })[scoreBand(score)]
+
 /** Customer note types -- a category, so: quiet by default, loud only for risk. */
 const NOTE_TYPES = Object.freeze({
   general: NEUTRAL,
@@ -167,6 +176,18 @@ const URGENCY_TYPES = Object.freeze({
 
 export const urgencyColor = (u) => URGENCY_TYPES[u] || NEUTRAL
 
+/**
+ * Daily follow-up priority -- "how loudly does this customer need me today".
+ * Not task PRIORITY_TYPES (there `high` is only a warning): a follow-up the
+ * agent flags as high is the red one. Both the tag and the card edge read it.
+ */
+const FOLLOWUP_TYPES = Object.freeze({ high: NEGATIVE, medium: WARNING })
+
+export const followupType = (p) => FOLLOWUP_TYPES[p] || NEUTRAL
+
+export const followupEdgeClass = (p) =>
+  ({ high: 'edge-negative', medium: 'edge-warning' })[p] || ''
+
 /** Churn risk level: how close a customer is to leaving. */
 const RISK_TYPES = Object.freeze({
   critical: NEGATIVE,
@@ -176,6 +197,6 @@ const RISK_TYPES = Object.freeze({
 
 export const riskTagType = (level) => RISK_TYPES[level] || NEUTRAL
 
-/** Hex form for the card's left edge -- same bands as the tag. */
-export const riskColor = (level) =>
-  ({ critical: negative, high: warning, medium: neutral })[level] || border
+/** Card-edge form -- same bands as the tag. */
+export const riskEdgeClass = (level) =>
+  ({ critical: 'edge-negative', high: 'edge-warning', medium: 'edge-neutral' })[level] || ''
