@@ -167,6 +167,7 @@ export default {
     failed: '运行中断',
     metaRounds: '{n} 轮',
     metaCalls: '{n} 次工具调用',
+    traceToggle: '思考与调用 · {n}',
     metaElapsed: '{n}s',
     openTrace: '完整轨迹',
     openRun: '运行详情',

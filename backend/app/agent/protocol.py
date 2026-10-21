@@ -182,12 +182,27 @@ class LLMClient(Protocol):
 
 
 class _StreamUnavailable(Exception):
-    """Streaming was refused before a single delta was delivered.
+    """Streaming produced nothing usable before a single delta was delivered.
 
-    Internal signal, not an error for the caller: it means "retry this request
+    Internal signal, not an error for the caller: it means "answer this round
     without ``stream=True``". Raised only while nothing has been shown to a
     user, so the retry cannot duplicate output or bill a second answer.
+
+    ``kind`` matters because the three causes call for different policies:
+
+    * ``capability`` -- the endpoint answered 4xx to a streaming request. It
+      will answer the same way next round, so stop asking for the run.
+    * ``transport`` -- a dropped connection, a timeout, a 429, a 5xx. Weather.
+      Disabling streaming for the rest of the run because one socket closed is
+      how a long run silently loses its typewriter.
+    * ``empty`` -- accepted, then closed without a chunk. Usually a buffering
+      gateway; possibly a hiccup. Tolerated once, then treated as capability.
     """
+
+    def __init__(self, kind: str = "transport") -> None:
+        super().__init__(kind)
+        self.kind = kind
+        self.permanent = kind == "capability"
 
 
 def _rejects_stream_options(exc: Exception) -> bool:
@@ -200,6 +215,23 @@ def _rejects_stream_options(exc: Exception) -> bool:
     """
     text = str(exc).lower()
     return "stream_options" in text or "include_usage" in text
+
+
+def _stream_refusal_kind(exc: Exception) -> str:
+    """Classify a failed streaming request: capability or weather.
+
+    Only an HTTP client error that is not a timeout, a conflict or throttling
+    says something durable about the endpoint. Everything else -- connection
+    reset, DNS, proxy, 5xx -- says something about this moment, and the next
+    round deserves its own attempt.
+    """
+    status = getattr(exc, "status_code", None)
+    if status is None:
+        response = getattr(exc, "response", None)
+        status = getattr(response, "status_code", None)
+    if isinstance(status, int) and 400 <= status < 500 and status not in (408, 409, 429):
+        return "capability"
+    return "transport"
 
 
 class OpenAICompatibleClient:
@@ -223,6 +255,9 @@ class OpenAICompatibleClient:
         #: Cleared when a provider rejects ``stream_options``; kept per client
         #: instance because a run creates one client.
         self._include_usage = True
+        #: Consecutive accepted-but-empty streams. One is a hiccup, two is a
+        #: gateway that does not really stream.
+        self._empty_streams = 0
         self._api_key = api_key
         self._base_url = base_url
         self._timeout = timeout
@@ -270,15 +305,39 @@ class OpenAICompatibleClient:
         if on_delta is not None and self.supports_stream:
             try:
                 return await self._chat_stream(client, kwargs, on_delta, key)
-            except _StreamUnavailable:
+            except _StreamUnavailable as exc:
                 # Nothing reached a user, so a non-streaming retry cannot
-                # duplicate output. Remember the refusal for the run's other
-                # rounds instead of paying for it again.
-                self.supports_stream = False
-                logger.warning(
-                    "provider %s refused streaming; continuing without it",
-                    self._base_url,
-                )
+                # duplicate output. How long streaming stays off depends on
+                # whose fault the failure was; see _StreamUnavailable.
+                cause = type(exc.__cause__).__name__ if exc.__cause__ else "no chunk"
+                if exc.permanent:
+                    self.supports_stream = False
+                    logger.warning(
+                        "provider %s does not stream (%s); answering without "
+                        "deltas for the rest of this run",
+                        self._base_url, cause,
+                    )
+                elif exc.kind == "empty":
+                    self._empty_streams += 1
+                    if self._empty_streams >= 2:
+                        self.supports_stream = False
+                        logger.warning(
+                            "provider %s closed two streams with no chunks (%s); "
+                            "answering without deltas for the rest of this run",
+                            self._base_url, cause,
+                        )
+                    else:
+                        logger.warning(
+                            "provider %s streamed no chunks before closing (%s); "
+                            "answering this round without deltas",
+                            self._base_url, cause,
+                        )
+                else:
+                    logger.warning(
+                        "streaming failed before the first chunk (%s); answering "
+                        "this round without deltas, next round will retry",
+                        cause,
+                    )
 
         return await self._chat_once(client, kwargs, key)
 
@@ -435,9 +494,9 @@ class OpenAICompatibleClient:
                 try:
                     stream = await client.chat.completions.create(**stream_kwargs)
                 except Exception as retry:  # noqa: BLE001 - reported by caller
-                    raise _StreamUnavailable() from retry
+                    raise _StreamUnavailable(_stream_refusal_kind(retry)) from retry
             else:
-                raise _StreamUnavailable() from exc
+                raise _StreamUnavailable(_stream_refusal_kind(exc)) from exc
 
         content: list[str] = []
         reasoning: list[str] = []
@@ -450,6 +509,7 @@ class OpenAICompatibleClient:
             async for chunk in stream:
                 if not received:
                     received = True
+                    self._empty_streams = 0
                     # Only now is the provider demonstrably serving. Recording
                     # success when ``create()`` returned would mark the breaker
                     # healthy before a single byte crossed the wire.
@@ -500,7 +560,7 @@ class OpenAICompatibleClient:
                         finish_reason = choice.finish_reason
         except Exception as exc:  # noqa: BLE001 - translated, not swallowed
             if not received:
-                raise _StreamUnavailable() from exc
+                raise _StreamUnavailable("transport") from exc
             # Output already reached the user. Re-sending would duplicate it and
             # bill twice; this is a failure, not a retry.
             self._record_failure(key, exc)
@@ -517,7 +577,7 @@ class OpenAICompatibleClient:
         if not received:
             # An accepted request that produced no chunk at all. Nothing was
             # delivered, so the non-streaming retry is safe.
-            raise _StreamUnavailable()
+            raise _StreamUnavailable("empty")
 
         reply = LLMReply(
             content="".join(content).strip(),

@@ -163,6 +163,7 @@ export default {
     failed: 'Run interrupted',
     metaRounds: '{n} rounds',
     metaCalls: '{n} tool calls',
+    traceToggle: 'Reasoning & calls · {n}',
     metaElapsed: '{n}s',
     openTrace: 'Full trace',
     openRun: 'Run detail',

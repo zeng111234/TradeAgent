@@ -133,7 +133,7 @@
               <div v-if="turn.steps.length" class="trace-block">
                 <button type="button" class="trace-toggle" @click="turn.showTrace = !turn.showTrace">
                   <el-icon><ArrowRight /></el-icon>
-                  {{ t('console.metaCalls', { n: turn.calls }) }}
+                  {{ t('console.traceToggle', { n: turn.calls }) }}
                   <span class="trace-hint">{{ turn.showTrace ? '−' : '+' }}</span>
                 </button>
                 <TraceTimeline v-if="turn.showTrace" :steps="turn.steps" />

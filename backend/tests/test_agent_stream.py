@@ -160,24 +160,96 @@ def test_stream_options_is_dropped_rather_than_giving_up_streaming():
     assert client._include_usage is False
 
 
-def test_a_stream_that_fails_before_the_first_chunk_falls_back_once():
+def test_a_stream_that_fails_before_the_first_chunk_falls_back_for_that_round_only():
+    """One dropped socket is weather, not a verdict on the endpoint.
+
+    The first version treated any pre-first-chunk failure as "this provider
+    cannot stream" and disabled the feature for the rest of the run. A real
+    DeepSeek run hit a transient connection error on round 1 and spent round 2
+    -- the round that actually answered -- with no deltas at all.
+    """
     def factory(_kwargs, nth):
         if nth == 1:
             return FakeStream([make_chunk(content="never seen")], fail_at=0)
+        if nth == 2:
+            return SimpleNamespace(
+                choices=[SimpleNamespace(
+                    finish_reason="stop",
+                    message=SimpleNamespace(content="from the non-streaming retry", tool_calls=None),
+                )],
+                usage=None,
+            )
+        return FakeStream([make_chunk(content="streamed again"), usage_chunk()])
+
+    client, calls = make_client(factory)
+    deltas: list[str] = []
+
+    first = asyncio.run(client.chat([], [], on_delta=lambda _k, text: deltas.append(text)))
+
+    assert first.content == "from the non-streaming retry"
+    assert client.supports_stream is True, (
+        "a transport failure must not disable streaming for the whole run"
+    )
+    assert len(calls.calls) == 2
+
+    second = asyncio.run(client.chat([], [], on_delta=lambda _k, text: deltas.append(text)))
+
+    assert second.content == "streamed again"
+    assert deltas == ["streamed again"]
+    assert calls.calls[-1]["stream"] is True
+
+
+def test_a_provider_that_rejects_streaming_is_not_asked_again():
+    """A 4xx about the request shape is a durable answer about the endpoint."""
+
+    class BadRequest(Exception):
+        status_code = 400
+
+    def factory(kwargs, _nth):
+        if kwargs.get("stream"):
+            raise BadRequest("this endpoint does not support stream=true")
         return SimpleNamespace(
             choices=[SimpleNamespace(
                 finish_reason="stop",
-                message=SimpleNamespace(content="from the non-streaming retry", tool_calls=None),
+                message=SimpleNamespace(content="plain answer", tool_calls=None),
             )],
             usage=None,
         )
 
     client, calls = make_client(factory)
-    reply = asyncio.run(client.chat([], [], on_delta=lambda *_: None))
 
-    assert reply.content == "from the non-streaming retry"
+    asyncio.run(client.chat([], [], on_delta=lambda *_: None))
     assert client.supports_stream is False
-    assert len(calls.calls) == 2
+
+    # The second round goes straight to the non-streaming path: no second
+    # doomed attempt, which is the whole reason to remember the refusal.
+    asyncio.run(client.chat([], [], on_delta=lambda *_: None))
+    attempts = [call for call in calls.calls if call.get("stream")]
+    assert len(attempts) == 1, "the rejected stream was attempted again"
+    assert len(calls.calls) == 3
+
+
+def test_two_empty_streams_disable_streaming_for_the_run():
+    """Accepted-then-closed is tolerated once, then treated as capability."""
+
+    def factory(kwargs, _nth):
+        if kwargs.get("stream"):
+            return FakeStream([])
+        return SimpleNamespace(
+            choices=[SimpleNamespace(
+                finish_reason="stop",
+                message=SimpleNamespace(content="answer without deltas", tool_calls=None),
+            )],
+            usage=None,
+        )
+
+    client, _calls = make_client(factory)
+
+    asyncio.run(client.chat([], [], on_delta=lambda *_: None))
+    assert client.supports_stream is True, "one empty stream is a hiccup"
+
+    asyncio.run(client.chat([], [], on_delta=lambda *_: None))
+    assert client.supports_stream is False
 
 
 def test_a_stream_that_fails_after_output_is_not_retried():
