@@ -38,6 +38,7 @@ const OUT = join(HERE, '..', '..', '..', 'artifacts', 'ui')
 const WIDTHS = [1280, 1440, 1920]
 const HEIGHT = 900
 const PAGES = [
+  { path: '/console', name: 'console' },
   { path: '/dashboard', name: 'dashboard' },
   { path: '/customers', name: 'customers' },
   { path: '/runs', name: 'runs' },
@@ -48,6 +49,7 @@ const PAGES = [
 //: them -- Element Plus components are on every page -- and a page that fails
 //: to render is not a layout defect, it is a blank screen.
 const ALL_VIEWS = [
+  '/console',
   '/dashboard',
   '/customers',
   '/customers/{id}',
@@ -159,11 +161,15 @@ async function checkShell(browser, base) {
       const items = [...document.querySelectorAll('.sidebar .el-menu-item')]
       const last = items[items.length - 1]
       const menu = document.querySelector('.sidebar .el-menu')
+      const scrolls = menu ? menu.scrollHeight > menu.clientHeight + 1 : false
+      // When the menu scrolls, the last item is legitimately below the fold;
+      // the question is whether the footer overlaps the menu *box*.
+      const boundary = scrolls ? menu : last
       return {
-        gap: el && last
-          ? Math.round(el.getBoundingClientRect().top - last.getBoundingClientRect().bottom)
+        gap: el && boundary
+          ? Math.round(el.getBoundingClientRect().top - boundary.getBoundingClientRect().bottom)
           : null,
-        menuScrolls: menu ? menu.scrollHeight > menu.clientHeight + 1 : null,
+        menuScrolls: scrolls,
         footerVisible: el ? el.getBoundingClientRect().bottom <= window.innerHeight + 1 : null,
       }
     })

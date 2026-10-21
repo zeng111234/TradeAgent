@@ -1,23 +1,22 @@
 <template>
   <div>
     <div class="page-header">
-      <h2>运行质量</h2>
+      <h2>{{ t('quality.title') }}</h2>
       <p>
-        回答的是"这周比上周好还是差"，不是"跑完了没有"。
-        没有样本的比例显示 <code>—</code> 而不是 <code>0%</code> —— 两者是不同的结论。
+        {{ t('quality.subtitlePart1') }} <code>—</code> {{ t('quality.subtitlePart2') }} <code>0%</code> {{ t('quality.subtitlePart3') }}
       </p>
     </div>
 
     <div class="toolbar">
       <el-radio-group v-model="days" :disabled="loading" @change="load">
-        <el-radio-button :label="7">7 天</el-radio-button>
-        <el-radio-button :label="14">14 天</el-radio-button>
-        <el-radio-button :label="30">30 天</el-radio-button>
-        <el-radio-button :label="90">90 天</el-radio-button>
+        <el-radio-button :label="7">{{ t('quality.daysShort', { n: 7 }) }}</el-radio-button>
+        <el-radio-button :label="14">{{ t('quality.daysShort', { n: 14 }) }}</el-radio-button>
+        <el-radio-button :label="30">{{ t('quality.daysShort', { n: 30 }) }}</el-radio-button>
+        <el-radio-button :label="90">{{ t('quality.daysShort', { n: 90 }) }}</el-radio-button>
       </el-radio-group>
-      <el-button :loading="loading" @click="load">刷新</el-button>
+      <el-button :loading="loading" @click="load">{{ t('quality.refresh') }}</el-button>
       <span v-if="report" class="window-label">
-        {{ report.window.since }} → {{ report.window.until }}（UTC）
+        {{ report.window.since }} → {{ report.window.until }}{{ t('quality.utc') }}
       </span>
     </div>
 
@@ -245,6 +244,7 @@
 
 <script setup>
 import { onMounted, ref } from 'vue'
+import { t } from '../i18n/index.js'
 import { analyticsApi } from '../api'
 import { runStatusType as statusType } from '../constants/status.js'
 import {

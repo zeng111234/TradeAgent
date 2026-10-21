@@ -1,14 +1,14 @@
 <template>
   <div>
     <div class="page-header">
-      <h2>AI Agent</h2>
-      <p>AI-powered tools for smarter foreign trade decisions</p>
+      <h2>{{ t('agent.title') }}</h2>
+      <p>{{ t('agent.subtitle') }}</p>
     </div>
 
     <el-tabs v-model="activeTab" type="border-card" class="agent-tabs mb-5">
 
       <!-- Tab 0: Daily Intelligence -->
-      <el-tab-pane label="Daily Intelligence" name="daily">
+      <el-tab-pane :label="t('agent.tabs.daily')" name="daily">
         <el-row :gutter="20">
           <el-col :span="24">
             <el-card shadow="never">
@@ -56,7 +56,7 @@
       </el-tab-pane>
 
       <!-- Tab 1: Lead Scanner -->
-      <el-tab-pane label="Lead Scanner" name="leads">
+      <el-tab-pane :label="t('agent.tabs.leads')" name="leads">
         <el-row :gutter="20">
           <el-col :span="8">
             <el-card shadow="never">
@@ -129,7 +129,7 @@
       </el-tab-pane>
 
       <!-- Tab 2: Inquiry Analysis -->
-      <el-tab-pane label="Inquiry Analysis" name="inquiry">
+      <el-tab-pane :label="t('agent.tabs.inquiry')" name="inquiry">
         <el-row :gutter="20">
           <el-col :span="10">
             <el-card shadow="never">
@@ -235,7 +235,7 @@
       </el-tab-pane>
 
       <!-- Tab 2: Churn Alerts -->
-      <el-tab-pane label="Churn Alerts" name="churn">
+      <el-tab-pane :label="t('agent.tabs.churn')" name="churn">
         <el-card shadow="never">
           <template #header>
             <div class="card-header-row">
@@ -295,7 +295,7 @@
       </el-tab-pane>
 
       <!-- Tab 3: Holiday Emails -->
-      <el-tab-pane label="Holiday Emails" name="holiday">
+      <el-tab-pane :label="t('agent.tabs.holiday')" name="holiday">
         <el-row :gutter="20">
           <el-col :span="10">
             <el-card shadow="never">
@@ -353,7 +353,7 @@
       </el-tab-pane>
 
       <!-- Tab 4: Website Analysis -->
-      <el-tab-pane label="Website Lead Analysis" name="website">
+      <el-tab-pane :label="t('agent.tabs.website')" name="website">
         <el-row :gutter="20">
           <el-col :span="10">
             <el-card shadow="never">
@@ -428,7 +428,7 @@
       </el-tab-pane>
 
       <!-- Tab 5: Email Reply Analysis -->
-      <el-tab-pane label="Email Reply Analysis" name="email">
+      <el-tab-pane :label="t('agent.tabs.email')" name="email">
         <el-row :gutter="20">
           <el-col :span="10">
             <el-card shadow="never">
@@ -505,7 +505,7 @@
       </el-tab-pane>
 
       <!-- Tab 6: Batch Email Generator -->
-      <el-tab-pane label="Batch Email Generator" name="batch">
+      <el-tab-pane :label="t('agent.tabs.batch')" name="batch">
         <el-row :gutter="20">
           <el-col :span="10">
             <el-card shadow="never">
@@ -551,7 +551,7 @@
       </el-tab-pane>
 
       <!-- Tab 7: Negotiation Copilot -->
-      <el-tab-pane label="Negotiation Copilot" name="negotiation">
+      <el-tab-pane :label="t('agent.tabs.negotiation')" name="negotiation">
         <el-row :gutter="20">
           <el-col :span="10">
             <el-card shadow="never">
@@ -631,7 +631,7 @@
       </el-tab-pane>
 
       <!-- Tab 8: PI Generator -->
-      <el-tab-pane label="PI Generator" name="pi">
+      <el-tab-pane :label="t('agent.tabs.pi')" name="pi">
         <el-row :gutter="20">
           <el-col :span="10">
             <el-card shadow="never">
@@ -727,6 +727,7 @@
 import { ref, reactive, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { agentApi, emailApi } from '../api'
+import { t } from '../i18n/index.js'
 import {
   followupEdgeClass,
   followupType,

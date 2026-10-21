@@ -1,7 +1,7 @@
 <template>
   <div>
     <div class="page-header">
-      <h2>Agent 运行轨迹</h2>
+      <h2>{{ t('runs.title') }}</h2>
       <p>
         给 agent 一个目标，它自己决定调用哪些工具。
         下面每一条都是真实执行过的路径 —— 不是手画的流程图。
@@ -29,10 +29,10 @@
          sit below a wall of boundary documentation. -->
     <el-card shadow="never" class="mb-4">
       <template #header>
-        <span class="card-title">运行</span>
+        <span class="card-title">{{ t('runs.newRun') }}</span>
       </template>
       <el-form label-position="top">
-        <el-form-item label="目标（用自然语言描述，不要描述步骤）">
+        <el-form-item :label="t('runs.goal')">
           <el-input
             v-model="goal"
             type="textarea"
@@ -41,7 +41,7 @@
             :disabled="running"
           />
         </el-form-item>
-        <el-form-item label="补充背景（可选）">
+        <el-form-item :label="t('runs.context')">
           <el-input
             v-model="context"
             type="textarea"
@@ -52,21 +52,21 @@
         </el-form-item>
         <el-row :gutter="12">
           <el-col :span="6">
-            <el-form-item label="最多轮次">
+            <el-form-item :label="t('runs.maxRounds')">
               <el-input-number v-model="maxRounds" :min="1" :max="30" :disabled="running" />
             </el-form-item>
           </el-col>
           <el-col :span="6">
-            <el-form-item label="最多工具调用">
+            <el-form-item :label="t('runs.maxToolCalls')">
               <el-input-number v-model="maxToolCalls" :min="1" :max="60" :disabled="running" />
             </el-form-item>
           </el-col>
           <el-col :span="12" class="form-actions">
             <el-button type="primary" :loading="running" :disabled="!goal.trim() || !capabilities.configured"
               @click="startRun">
-              <el-icon><VideoPlay /></el-icon> 运行 agent
+              <el-icon><VideoPlay /></el-icon> {{ t('runs.runAgent') }}
             </el-button>
-            <el-button :disabled="running" @click="loadRuns">刷新历史</el-button>
+            <el-button :disabled="running" @click="loadRuns">{{ t('runs.refreshHistory') }}</el-button>
             <span v-if="running" class="hint ml-3">
               后台运行，进度每秒刷新（上限 {{ maxSeconds }} 秒）
             </span>
@@ -81,7 +81,7 @@
     <el-card v-if="active" shadow="never" class="mb-4">
       <template #header>
         <div class="card-header-row">
-          <span class="card-title">正在运行</span>
+          <span class="card-title">{{ t('runs.running') }}</span>
           <div>
             <el-tag :type="statusType(active.status)" size="small" effect="plain">{{ active.status }}</el-tag>
             <span class="hint ml-2">
@@ -120,7 +120,7 @@
     <el-card v-if="result" shadow="never" class="mb-4">
       <template #header>
         <div class="card-header-row">
-          <span class="card-title">本次运行</span>
+          <span class="card-title">{{ t('runs.thisRun') }}</span>
           <div>
             <el-tag :type="statusType(result.status)" size="small">{{ result.status }}</el-tag>
             <span class="hint ml-2">{{ result.stop_reason }}</span>
@@ -160,7 +160,7 @@
     <el-card shadow="never">
       <template #header>
         <div class="card-header-row">
-          <span class="card-title">历史运行（{{ runs.length }}）</span>
+          <span class="card-title">{{ t('runs.history', { n: runs.length }) }}</span>
           <el-select v-model="statusFilter" size="small" clearable placeholder="全部状态"
             class="history-filter" @change="loadRuns">
             <el-option label="succeeded" value="succeeded" />
@@ -175,7 +175,7 @@
         <el-table-column prop="run_id" label="run id" width="100">
           <template #default="{ row }"><code>{{ row.run_id.slice(0, 8) }}</code></template>
         </el-table-column>
-        <el-table-column prop="status" label="状态" width="96">
+        <el-table-column prop="status" :label="t('runs.colStatus')" width="96">
           <template #default="{ row }">
             <el-tag :type="statusType(row.status)" size="small">{{ row.status }}</el-tag>
           </template>
@@ -184,7 +184,7 @@
              but not lines: the first two tools, a +N, and the whole sequence on
              hover. Truncating it to an ellipsis hid the point; moving it into
              the expansion row would fight the row click that opens the drawer. -->
-        <el-table-column label="工具路径" width="220">
+        <el-table-column :label="t('runs.colPath')" width="220">
           <template #default="{ row }">
             <el-tooltip v-if="row.tool_sequence && row.tool_sequence.length" placement="top">
               <template #content>
@@ -198,25 +198,25 @@
             <span v-else class="text-muted">—</span>
           </template>
         </el-table-column>
-        <el-table-column prop="rounds" label="轮次" width="56" align="center" />
-        <el-table-column prop="tool_calls" label="调用" width="56" align="center" />
-        <el-table-column label="目标" min-width="230">
+        <el-table-column prop="rounds" :label="t('runs.colRounds')" width="56" align="center" />
+        <el-table-column prop="tool_calls" :label="t('runs.colCalls')" width="56" align="center" />
+        <el-table-column :label="t('runs.colGoal')" min-width="230">
           <template #default="{ row }">
             <span class="goal-cell">{{ row.goal }}</span>
           </template>
         </el-table-column>
         <!-- An explicit action, because the diagram is the whole point of this
              page and a row click is not a visible affordance. -->
-        <el-table-column label="操作" width="146" align="right">
+        <el-table-column :label="t('runs.colActions')" width="146" align="right">
           <template #default="{ row }">
             <el-button size="small" type="primary" link @click.stop="openRun(row)">
               查看轨迹
             </el-button>
-            <el-button size="small" link @click.stop="openTracePage(row)">新窗口</el-button>
+            <el-button size="small" link @click.stop="openTracePage(row)">{{ t('runs.newWindow') }}</el-button>
           </template>
         </el-table-column>
       </el-table>
-      <el-empty v-else description="还没有运行记录" />
+      <el-empty v-else :description="t('runs.empty')" />
     </el-card>
 
     <!-- Selected historical run -->
@@ -297,6 +297,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 
 import { runApi } from '../api'
+import { t } from '../i18n/index.js'
 import { runStatusType as statusType } from '../constants/status.js'
 import { renderMarkdown } from '../utils/markdown'
 import { isTerminal, mergeSteps, normaliseRun } from '../utils/runProgress'

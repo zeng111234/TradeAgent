@@ -1,63 +1,71 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import { t } from '../i18n/index.js'
 
 const routes = [
   {
+    // The agent is the front door now. The dashboard is a supporting page.
     path: '/',
-    redirect: '/dashboard',
+    redirect: '/console',
+  },
+  {
+    path: '/console',
+    name: 'Console',
+    component: () => import('../views/Console.vue'),
+    meta: { titleKey: 'console.title', icon: 'ChatDotRound' },
   },
   {
     path: '/dashboard',
     name: 'Dashboard',
     component: () => import('../views/Dashboard.vue'),
-    meta: { title: '数据看板', icon: 'DataBoard' },
+    meta: { titleKey: 'dashboard.title', icon: 'DataBoard' },
   },
   {
     path: '/customers',
     name: 'Customers',
     component: () => import('../views/Customers.vue'),
-    meta: { title: '客户管理', icon: 'User' },
+    meta: { titleKey: 'customers.title', icon: 'User' },
   },
   {
     path: '/customers/:id',
     name: 'CustomerDetail',
     component: () => import('../views/CustomerDetail.vue'),
-    meta: { title: '客户详情', hidden: true },
+    meta: { titleKey: 'customerDetail.title', hidden: true },
   },
   {
     path: '/emails',
     name: 'Emails',
     component: () => import('../views/Emails.vue'),
-    meta: { title: '邮件营销', icon: 'Message' },
+    meta: { titleKey: 'emails.title', icon: 'Message' },
   },
   {
     path: '/templates',
     name: 'Templates',
     component: () => import('../views/Templates.vue'),
-    meta: { title: '邮件模板', icon: 'Document' },
+    meta: { titleKey: 'templates.title', icon: 'Document' },
   },
   {
     path: '/tasks',
     name: 'Tasks',
     component: () => import('../views/Tasks.vue'),
-    meta: { title: '待办事项', icon: 'Calendar' },
+    meta: { titleKey: 'tasks.title', icon: 'Calendar' },
   },
   {
     path: '/agent',
     name: 'Agent',
     component: () => import('../views/Agent.vue'),
-    meta: { title: 'AI Agent', icon: 'MagicStick' },
+    meta: { titleKey: 'agent.title', icon: 'MagicStick' },
   },
   {
     path: '/runs',
     name: 'Runs',
     component: () => import('../views/Runs.vue'),
-    meta: { title: '运行轨迹', icon: 'Guide' },
+    meta: { titleKey: 'runs.title', icon: 'Guide' },
   },
   {
     path: '/quality',
     name: 'Quality',
     component: () => import('../views/Quality.vue'),
-    meta: { title: '运行质量', icon: 'TrendCharts' },
+    meta: { titleKey: 'quality.title', icon: 'TrendCharts' },
   },
 ]
 
@@ -67,7 +75,8 @@ const router = createRouter({
 })
 
 router.beforeEach((to, from, next) => {
-  document.title = `${to.meta.title || 'TradeAgent'} - TradeAgent`
+  const label = to.meta.titleKey ? t(to.meta.titleKey) : 'TradeAgent'
+  document.title = `${label} - TradeAgent`
   next()
 })
 

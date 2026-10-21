@@ -1,15 +1,15 @@
 <template>
   <div>
     <div class="page-header">
-      <h2>待办事项</h2>
-      <p>Manage follow-up tasks and reminders</p>
+      <h2>{{ t('tasks.title') }}</h2>
+      <p>{{ t('tasks.subtitle') }}</p>
     </div>
 
     <!-- Toolbar -->
     <el-card shadow="never" style="margin-bottom: 16px">
       <el-row :gutter="16" align="middle">
         <el-col :span="6">
-          <el-select v-model="filterStatus" placeholder="Status" clearable>
+          <el-select v-model="filterStatus" :placeholder="t('tasks.filterStatus')" clearable>
             <el-option label="Pending" value="pending" />
             <el-option label="In Progress" value="in_progress" />
             <el-option label="Completed" value="completed" />
@@ -17,7 +17,7 @@
           </el-select>
         </el-col>
         <el-col :span="6">
-          <el-select v-model="filterPriority" placeholder="Priority" clearable>
+          <el-select v-model="filterPriority" :placeholder="t('tasks.filterPriority')" clearable>
             <el-option label="Urgent" value="urgent" />
             <el-option label="High" value="high" />
             <el-option label="Medium" value="medium" />
@@ -27,10 +27,10 @@
         <el-col :span="12" style="text-align: right">
           <el-button @click="toggleOverdue">
             <el-icon><Warning /></el-icon>
-            {{ overdueOnly ? 'Show all tasks' : 'Overdue (' + overdueCount + ')' }}
+            {{ overdueOnly ? t('tasks.showAll') : t('tasks.overdue', { n: overdueCount }) }}
           </el-button>
           <el-button type="primary" @click="showDialog()">
-            <el-icon><Plus /></el-icon> New Task
+            <el-icon><Plus /></el-icon> {{ t('tasks.newTask') }}
           </el-button>
         </el-col>
       </el-row>
@@ -39,42 +39,42 @@
     <!-- Task List -->
     <el-card shadow="never">
       <el-table :data="visibleTasks" stripe v-loading="loading">
-        <el-table-column prop="title" label="Task" min-width="250">
+        <el-table-column prop="title" :label="t('tasks.colTask')" min-width="250">
           <template #default="{ row }">
             <span :style="{ textDecoration: row.status === 'completed' ? 'line-through' : 'none', color: row.status === 'completed' ? 'var(--text-disabled)' : 'var(--text-1)' }">
               {{ row.title }}
             </span>
           </template>
         </el-table-column>
-        <el-table-column prop="task_type" label="Type" width="110">
+        <el-table-column prop="task_type" :label="t('tasks.colType')" width="110">
           <template #default="{ row }">
             <!-- task_type is a category, not a status: quiet tag, label from the
                  map (the data carries both `follow_up` and `FOLLOW_UP`). -->
             <el-tag size="small" type="info">{{ taskTypeLabel(row.task_type) }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="priority" label="Priority" width="100">
+        <el-table-column prop="priority" :label="t('tasks.colPriority')" width="100">
           <template #default="{ row }">
             <el-tag :type="priorityType(row.priority)" size="small">{{ priorityLabel(row.priority) }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="status" label="Status" width="110">
+        <el-table-column prop="status" :label="t('tasks.colStatus')" width="110">
           <template #default="{ row }">
             <el-tag :type="statusType(row.status)" size="small">{{ taskStatusLabel(row.status) }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="Due Date" width="160">
+        <el-table-column :label="t('tasks.colDue')" width="160">
           <template #default="{ row }">
             <span :style="{ color: isOverdue(row) ? 'var(--negative)' : 'var(--text-2)' }">
               {{ row.due_date ? formatDate(row.due_date) : '-' }}
             </span>
           </template>
         </el-table-column>
-        <el-table-column label="Actions" width="200" fixed="right">
+        <el-table-column :label="t('tasks.colActions')" width="200" fixed="right">
           <template #default="{ row }">
-            <el-button v-if="row.status === 'pending'" size="small" link @click="completeTask(row)">Complete</el-button>
-            <el-button size="small" type="primary" link @click="showDialog(row)">Edit</el-button>
-            <el-button size="small" type="danger" link @click="handleDelete(row)">Delete</el-button>
+            <el-button v-if="row.status === 'pending'" size="small" link @click="completeTask(row)">{{ t('tasks.complete') }}</el-button>
+            <el-button size="small" type="primary" link @click="showDialog(row)">{{ t('common.edit') }}</el-button>
+            <el-button size="small" type="danger" link @click="handleDelete(row)">{{ t('common.delete') }}</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -133,6 +133,7 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { taskApi } from '../api'
 import { priorityLabel, priorityType, taskStatusLabel, taskStatusType as statusType, taskTypeLabel } from '../constants/status.js'
+import { t } from '../i18n/index.js'
 import { failureDetail, patchRow, reconcile, removeRow } from '../utils/optimistic'
 
 const tasks = ref([])

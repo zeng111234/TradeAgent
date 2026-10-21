@@ -57,7 +57,7 @@ async function main() {
     const actions = await page.locator('.page-header__actions button').allInnerTexts()
     if (actions.length !== 3) throw new Error(`expected 3 page actions, got ${JSON.stringify(actions)}`)
     const primary = await page.locator('.page-header__actions .el-button--primary').allInnerTexts()
-    if (primary.length !== 1 || !primary[0].includes('Full Scan')) {
+    if (primary.length !== 1 || !/Full Scan|全量扫描/.test(primary[0])) {
       throw new Error(`expected exactly one primary (Full Scan), got ${JSON.stringify(primary)}`)
     }
 
@@ -75,18 +75,20 @@ async function main() {
     const boxes = page.locator('.el-table__row .el-checkbox:not(.is-disabled)')
     const boxCount = await boxes.count()
     if (boxCount < 3) throw new Error(`expected selectable checkboxes, got ${boxCount}`)
-    const label = () => page.locator('button', { hasText: 'Send Selected' }).first().innerText()
+    const label = () => page.locator('button', { hasText: /Send Selected|发送所选/ }).first().innerText()
+    // zh renders the count in full-width parentheses, en in ASCII ones.
+    const hasCount = (text, n) => new RegExp(`[(（]${n}[)）]`).test(text)
     // Scan auto-selects every eligible lead (has email, not already in CRM),
     // so the count starts at the eligible total and a click *removes* one.
     await page.waitForTimeout(150)
     const initial = await label()
-    if (!initial.includes(`(${boxCount})`)) {
+    if (!hasCount(initial, boxCount)) {
       throw new Error(`auto-select should start at ${boxCount} eligible: ${initial}`)
     }
     await boxes.nth(0).click()
     await page.waitForTimeout(150)
     const sendLabel = await label()
-    if (!sendLabel.includes(`(${boxCount - 1})`)) {
+    if (!hasCount(sendLabel, boxCount - 1)) {
       throw new Error(`clicking a selected box should deselect it: ${sendLabel}`)
     }
 
@@ -97,7 +99,7 @@ async function main() {
     if (!popover) throw new Error('draft popover did not open on hover')
 
     // 5. preview table: merged Draft cell keeps Ready + preview, Company keeps the site link
-    await page.getByRole('button', { name: /Preview/ }).click()
+    await page.getByRole('button', { name: /Preview|预览/ }).click()
     await page.waitForTimeout(800)
     const importRows = await page.locator('.el-table__row').count()
     const siteLinks = await page.locator('.cell-stack .cell-link').count()

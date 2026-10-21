@@ -152,11 +152,14 @@ async function tasksRollback(page) {
     what: 'the task row',
   })
 
-  await page.getByRole('button', { name: 'Complete' }).first().click()
+  // Label follows the UI language; the flow cares about the action.
+  await page.getByRole('button', { name: /Complete|完成/ }).first().click()
   // Optimistic: the badge changes before the request has been answered.
-  // Case-insensitive: the status *label* is humanised ("Completed"), and this
-  // flow cares about the state, not how the badge is spelled.
-  await until(page, async () => (await page.locator('body').innerText()).toLowerCase().includes('completed'), {
+  // The status *label* follows the UI language ("Completed" / "已完成"), so the
+  // flow matches either: it cares about the state, not the spelling.
+  const done = (text) => /completed|已完成/i.test(text)
+  const pending = (text) => /pending|待处理/i.test(text)
+  await until(page, async () => done(await page.locator('body').innerText()), {
     timeout: 500,
     what: 'the optimistic status',
   })
@@ -165,8 +168,8 @@ async function tasksRollback(page) {
   await until(
     page,
     async () => {
-      const text = (await page.locator('body').innerText()).toLowerCase()
-      return text.includes('pending') && !text.includes('completed')
+      const text = await page.locator('body').innerText()
+      return pending(text) && !done(text)
     },
     { what: 'the rolled-back status' }
   )

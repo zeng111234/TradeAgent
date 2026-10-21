@@ -2,7 +2,7 @@
   <div v-loading="loading">
     <div class="page-header">
       <el-button @click="$router.push('/customers')" style="margin-bottom: 12px">
-        <el-icon><ArrowLeft /></el-icon> Back to Customers
+        <el-icon><ArrowLeft /></el-icon> {{ t('customerDetail.back') }}
       </el-button>
       <h2>{{ customer.company_name }}</h2>
       <p>{{ customer.country }} {{ customer.city ? '- ' + customer.city : '' }} | {{ customer.industry || 'N/A' }}</p>
@@ -15,30 +15,30 @@
         <el-card shadow="never" style="margin-bottom: 16px">
           <template #header>
             <div style="display: flex; justify-content: space-between; align-items: center">
-              <span style="font-weight: 600">Customer Information</span>
+              <span style="font-weight: 600">{{ t('customerDetail.info') }}</span>
               <el-tag :type="stageTagType(customer.stage)">{{ stageLabel(customer.stage) }}</el-tag>
             </div>
           </template>
           <el-descriptions :column="2" border>
-            <el-descriptions-item label="Company">{{ customer.company_name }}</el-descriptions-item>
-            <el-descriptions-item label="Chinese Name">{{ customer.company_name_cn || '-' }}</el-descriptions-item>
-            <el-descriptions-item label="Country">{{ customer.country || '-' }}</el-descriptions-item>
-            <el-descriptions-item label="City">{{ customer.city || '-' }}</el-descriptions-item>
-            <el-descriptions-item label="Website">
+            <el-descriptions-item :label="t('common.company')">{{ customer.company_name }}</el-descriptions-item>
+            <el-descriptions-item :label="t('customerDetail.companyCn')">{{ customer.company_name_cn || '-' }}</el-descriptions-item>
+            <el-descriptions-item :label="t('common.country')">{{ customer.country || '-' }}</el-descriptions-item>
+            <el-descriptions-item :label="t('customerDetail.city')">{{ customer.city || '-' }}</el-descriptions-item>
+            <el-descriptions-item :label="t('dashboard.colWebsite')">
               <a v-if="customer.website" :href="customer.website" target="_blank" style="color: var(--accent)">{{ customer.website }}</a>
               <span v-else>-</span>
             </el-descriptions-item>
-            <el-descriptions-item label="Industry">{{ customer.industry || '-' }}</el-descriptions-item>
-            <el-descriptions-item label="Products" :span="2">{{ customer.products || '-' }}</el-descriptions-item>
-            <el-descriptions-item label="Score">
+            <el-descriptions-item :label="t('common.industry')">{{ customer.industry || '-' }}</el-descriptions-item>
+            <el-descriptions-item :label="t('customerDetail.products')" :span="2">{{ customer.products || '-' }}</el-descriptions-item>
+            <el-descriptions-item :label="t('common.score')">
               <!-- Same bands as the gauge beside it (scoreColor / scoreClass). -->
               <span class="num score-text" :class="scoreClass(customer.score)">
                 {{ customer.score }}
               </span>
             </el-descriptions-item>
-            <el-descriptions-item label="Source">{{ customer.source }}</el-descriptions-item>
-            <el-descriptions-item label="Tags">{{ customer.tags || '-' }}</el-descriptions-item>
-            <el-descriptions-item label="Annual Import">{{ customer.annual_import_value || '-' }}</el-descriptions-item>
+            <el-descriptions-item :label="t('common.source')">{{ customer.source }}</el-descriptions-item>
+            <el-descriptions-item :label="t('customerDetail.tags')">{{ customer.tags || '-' }}</el-descriptions-item>
+            <el-descriptions-item :label="t('customerDetail.annualImport')">{{ customer.annual_import_value || '-' }}</el-descriptions-item>
           </el-descriptions>
         </el-card>
 
@@ -46,21 +46,21 @@
         <el-card shadow="never" style="margin-bottom: 16px">
           <template #header>
             <div style="display: flex; justify-content: space-between; align-items: center">
-              <span style="font-weight: 600">Contacts</span>
+              <span style="font-weight: 600">{{ t('customerDetail.contacts') }}</span>
               <el-button size="small" type="primary" @click="showContactDialog = true">
-                <el-icon><Plus /></el-icon> Add Contact
+                <el-icon><Plus /></el-icon> {{ t('customerDetail.addContact') }}
               </el-button>
             </div>
           </template>
           <el-table :data="customer.contacts || []" stripe>
-            <el-table-column prop="name" label="Name" min-width="120" show-overflow-tooltip />
-            <el-table-column prop="title" label="Title" min-width="110" show-overflow-tooltip />
-            <el-table-column prop="email" label="Email" min-width="180" show-overflow-tooltip />
-            <el-table-column prop="phone" label="Phone" min-width="120" show-overflow-tooltip />
-            <el-table-column prop="whatsapp" label="WhatsApp" min-width="110" show-overflow-tooltip />
-            <el-table-column label="Primary" width="80" align="center">
+            <el-table-column prop="name" :label="t('customerDetail.colName')" min-width="120" show-overflow-tooltip />
+            <el-table-column prop="title" :label="t('customerDetail.colTitle')" min-width="110" show-overflow-tooltip />
+            <el-table-column prop="email" :label="t('customerDetail.colEmail')" min-width="180" show-overflow-tooltip />
+            <el-table-column prop="phone" :label="t('customerDetail.colPhone')" min-width="120" show-overflow-tooltip />
+            <el-table-column prop="whatsapp" :label="t('customerDetail.colWhatsapp')" min-width="110" show-overflow-tooltip />
+            <el-table-column :label="t('customerDetail.colPrimary')" width="80" align="center">
               <template #default="{ row }">
-                <el-tag v-if="row.is_primary" type="success" size="small">Yes</el-tag>
+                <el-tag v-if="row.is_primary" type="success" size="small">{{ t('common.yes') }}</el-tag>
               </template>
             </el-table-column>
           </el-table>
@@ -70,9 +70,9 @@
         <el-card shadow="never">
           <template #header>
             <div style="display: flex; justify-content: space-between; align-items: center">
-              <span style="font-weight: 600">Communication Timeline</span>
+              <span style="font-weight: 600">{{ t('customerDetail.timeline') }}</span>
               <el-button size="small" type="primary" @click="showNoteDialog = true">
-                <el-icon><Plus /></el-icon> Add Note
+                <el-icon><Plus /></el-icon> {{ t('customerDetail.addNote') }}
               </el-button>
             </div>
           </template>
@@ -90,7 +90,7 @@
               </el-card>
             </el-timeline-item>
           </el-timeline>
-          <el-empty v-else description="No notes yet" />
+          <el-empty v-else :description="t('customerDetail.noNotes')" />
         </el-card>
       </el-col>
 
@@ -98,16 +98,16 @@
       <el-col :span="8">
         <!-- Stage Update -->
         <el-card shadow="never" style="margin-bottom: 16px">
-          <template #header><span style="font-weight: 600">Update Stage</span></template>
+          <template #header><span style="font-weight: 600">{{ t('customerDetail.updateStage') }}</span></template>
           <el-select v-model="customer.stage" style="width: 100%; margin-bottom: 12px" @change="updateStage">
-            <el-option label="New" value="new" />
-            <el-option label="Contacted" value="contacted" />
-            <el-option label="Interested" value="interested" />
-            <el-option label="Quoting" value="quoting" />
-            <el-option label="Sample" value="sample" />
-            <el-option label="Ordering" value="ordering" />
-            <el-option label="Completed" value="completed" />
-            <el-option label="Lost" value="lost" />
+            <el-option :label="t('status.stage.new')" value="new" />
+            <el-option :label="t('status.stage.contacted')" value="contacted" />
+            <el-option :label="t('status.stage.interested')" value="interested" />
+            <el-option :label="t('status.stage.quoting')" value="quoting" />
+            <el-option :label="t('status.stage.sample')" value="sample" />
+            <el-option :label="t('status.stage.ordering')" value="ordering" />
+            <el-option :label="t('status.stage.completed')" value="completed" />
+            <el-option :label="t('status.stage.lost')" value="lost" />
           </el-select>
         </el-card>
 
@@ -115,7 +115,7 @@
         <el-card shadow="never" style="margin-bottom: 16px">
           <template #header>
             <div style="display: flex; justify-content: space-between; align-items: center">
-              <span style="font-weight: 600">AI Follow-up Guide</span>
+              <span style="font-weight: 600">{{ t('customerDetail.aiAdvice') }}</span>
               <el-button size="small" type="primary" @click="getFollowUpAdvice" :loading="followUpLoading">
                 <el-icon><MagicStick /></el-icon>
               </el-button>
@@ -125,42 +125,42 @@
             <el-alert :title="followUpAdvice.urgency" :type="followUpAdvice.urgency_type" :closable="false" show-icon style="margin-bottom: 12px" />
             <p style="margin: 0 0 8px; font-size: 13px; color: var(--text-1)">{{ followUpAdvice.advice }}</p>
             <div v-if="followUpAdvice.next_steps && followUpAdvice.next_steps.length">
-              <p style="margin: 0 0 4px; font-size: 12px; color: var(--text-3); font-weight: 600">Next Steps:</p>
+              <p style="margin: 0 0 4px; font-size: 12px; color: var(--text-3); font-weight: 600">{{ t('customerDetail.nextSteps') }}:</p>
               <ul style="margin: 0; padding-left: 16px">
                 <li v-for="s in followUpAdvice.next_steps" :key="s" style="font-size: 12px; color: var(--text-2); margin-bottom: 2px">{{ s }}</li>
               </ul>
             </div>
             <el-button v-if="followUpAdvice.draft_email" size="small" style="margin-top: 8px" @click="showFollowUpDraft = !showFollowUpDraft">
-              {{ showFollowUpDraft ? 'Hide' : 'Show' }} Draft Email
+              {{ showFollowUpDraft ? t('customerDetail.hideDraft') : t('customerDetail.showDraft') }}
             </el-button>
             <div v-if="showFollowUpDraft && followUpAdvice.draft_email" style="background: var(--bg-subtle); padding: 12px; border-radius: 6px; margin-top: 8px">
               <div v-html="followUpAdvice.draft_email" style="font-size: 13px; color: var(--text-1)"></div>
-              <el-button size="small" type="primary" style="margin-top: 8px" @click="sendFollowUpDraft">Send This Email</el-button>
+              <el-button size="small" type="primary" style="margin-top: 8px" @click="sendFollowUpDraft">{{ t('customerDetail.sendThisEmail') }}</el-button>
             </div>
           </div>
-          <el-empty v-else description="Click the magic wand for AI follow-up advice" :image-size="40" />
+          <el-empty v-else :description="t('customerDetail.adviceEmpty')" :image-size="40" />
         </el-card>
 
         <!-- Quick Email -->
         <el-card shadow="never" style="margin-bottom: 16px">
-          <template #header><span style="font-weight: 600">Quick Actions</span></template>
+          <template #header><span style="font-weight: 600">{{ t('customerDetail.quickActions') }}</span></template>
           <el-button type="primary" style="width: 100%; margin-bottom: 8px" @click="$router.push('/emails')">
-            <el-icon><Message /></el-icon> Send Email
+            <el-icon><Message /></el-icon> {{ t('customerDetail.sendEmail') }}
           </el-button>
           <el-button style="width: 100%; margin-bottom: 8px" @click="$router.push('/tasks')">
-            <el-icon><Calendar /></el-icon> Create Task
+            <el-icon><Calendar /></el-icon> {{ t('customerDetail.createTask') }}
           </el-button>
           <el-button style="width: 100%; margin-bottom: 8px" @click="$router.push('/agent')">
-            <el-icon><MagicStick /></el-icon> AI Agent
+            <el-icon><MagicStick /></el-icon> {{ t('customerDetail.aiAgent') }}
           </el-button>
         </el-card>
 
         <!-- AI Score -->
         <el-card shadow="never">
-          <template #header><span style="font-weight: 600">AI Match Score</span></template>
+          <template #header><span style="font-weight: 600">{{ t('customerDetail.aiScore') }}</span></template>
           <div style="text-align: center; padding: 20px 0">
             <el-progress type="dashboard" :percentage="customer.score" :color="scoreColor" :width="120" />
-            <p style="margin-top: 12px; color: var(--text-3); font-size: 13px">Product match score</p>
+            <p style="margin-top: 12px; color: var(--text-3); font-size: 13px">{{ t('customerDetail.aiScoreHint') }}</p>
           </div>
         </el-card>
       </el-col>
@@ -169,10 +169,10 @@
     <!-- Add Contact Dialog -->
     <el-dialog v-model="showContactDialog" title="Add Contact" width="500px">
       <el-form :model="contactForm" label-width="100px">
-        <el-form-item label="Name" required>
+        <el-form-item :label="t('customerDetail.colName')" required>
           <el-input v-model="contactForm.name" />
         </el-form-item>
-        <el-form-item label="Title">
+        <el-form-item :label="t('customerDetail.colTitle')">
           <el-input v-model="contactForm.title" />
         </el-form-item>
         <el-form-item label="Email">
@@ -186,7 +186,7 @@
         </el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="showContactDialog = false">Cancel</el-button>
+        <el-button @click="showContactDialog = false">{{ t('common.cancel') }}</el-button>
         <el-button type="primary" @click="addContact">Save</el-button>
       </template>
     </el-dialog>
@@ -221,6 +221,7 @@ import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { customerApi } from '../api'
 import { noteTypeColor, noteTypeLabel, scoreClass, scoreColor, stageLabel, stageTagType } from '../constants/status.js'
+import { t } from '../i18n/index.js'
 
 const route = useRoute()
 const loading = ref(false)

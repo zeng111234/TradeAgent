@@ -1,15 +1,15 @@
 <template>
   <div>
     <div class="page-header">
-      <h2>邮件模板</h2>
-      <p>Create and manage reusable email templates with variable support</p>
+      <h2>{{ t('templates.title') }}</h2>
+      <p>{{ t('templates.subtitle') }}</p>
     </div>
 
     <!-- Toolbar -->
     <el-card shadow="never" style="margin-bottom: 16px">
       <el-row :gutter="16" align="middle">
         <el-col :span="8">
-          <el-select v-model="filterCategory" placeholder="Filter by category" clearable>
+          <el-select v-model="filterCategory" :placeholder="t('templates.filterCategory')" clearable>
             <el-option label="Cold Outreach" value="cold_outreach" />
             <el-option label="Follow Up" value="follow_up" />
             <el-option label="Quotation" value="quotation" />
@@ -17,7 +17,7 @@
           </el-select>
         </el-col>
         <el-col :span="8">
-          <el-select v-model="filterLanguage" placeholder="Filter by language" clearable>
+          <el-select v-model="filterLanguage" :placeholder="t('templates.filterLanguage')" clearable>
             <el-option label="English" value="en" />
             <el-option label="Chinese" value="zh" />
             <el-option label="Spanish" value="es" />
@@ -25,7 +25,7 @@
         </el-col>
         <el-col :span="8" style="text-align: right">
           <el-button type="primary" @click="showDialog()">
-            <el-icon><Plus /></el-icon> New Template
+            <el-icon><Plus /></el-icon> {{ t('templates.newTemplate') }}
           </el-button>
         </el-col>
       </el-row>
@@ -45,27 +45,27 @@
             </div>
           </template>
           <p style="color: var(--text-3); font-size: 13px; margin-bottom: 8px">
-            <strong>Subject:</strong> {{ tmpl.subject }}
+            <strong>{{ t('templates.subjectLabel') }}:</strong>&nbsp;{{ tmpl.subject }}
           </p>
           <div style="color: var(--text-2); font-size: 13px; max-height: 80px; overflow: hidden" v-html="tmpl.body"></div>
           <div style="margin-top: 12px; display: flex; justify-content: space-between; align-items: center">
-            <span style="color: var(--text-disabled); font-size: 12px">Used {{ tmpl.use_count }} times</span>
+            <span style="color: var(--text-disabled); font-size: 12px">{{ t('templates.usedTimes', { n: tmpl.use_count }) }}</span>
             <div>
-              <el-button size="small" type="primary" link @click="showDialog(tmpl)">Edit</el-button>
-              <el-button size="small" type="danger" link @click="handleDelete(tmpl)">Delete</el-button>
+              <el-button size="small" type="primary" link @click="showDialog(tmpl)">{{ t('common.edit') }}</el-button>
+              <el-button size="small" type="danger" link @click="handleDelete(tmpl)">{{ t('common.delete') }}</el-button>
             </div>
           </div>
         </el-card>
       </el-col>
       <el-col :span="24" v-if="!templates.length">
-        <el-empty description="No templates yet. Create your first template!" />
+        <el-empty :description="t('templates.empty')" />
       </el-col>
     </el-row>
 
     <!-- Edit Dialog -->
-    <el-dialog v-model="dialogVisible" :title="editing ? 'Edit Template' : 'New Template'" width="700px">
+    <el-dialog v-model="dialogVisible" :title="editing ? t('templates.editTemplate') : t('templates.newTemplateTitle')" width="700px">
       <el-form :model="form" label-width="120px">
-        <el-form-item label="Name" required>
+        <el-form-item :label="t('common.name')" required>
           <el-input v-model="form.name" />
         </el-form-item>
         <el-form-item label="Category">
@@ -83,7 +83,7 @@
             <el-option label="Spanish" value="es" />
           </el-select>
         </el-form-item>
-        <el-form-item label="Subject" required>
+        <el-form-item :label="t('templates.subjectLabel')" required>
           <el-input v-model="form.subject" placeholder="Use {variable_name} for variables" />
         </el-form-item>
         <el-form-item label="Body" required>
@@ -110,6 +110,7 @@ import { ref, reactive, watch, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { emailApi } from '../api'
 import { templateCategoryLabel } from '../constants/status.js'
+import { t } from '../i18n/index.js'
 
 const templates = ref([])
 const dialogVisible = ref(false)

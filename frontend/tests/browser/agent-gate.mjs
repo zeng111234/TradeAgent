@@ -106,7 +106,7 @@ async function main() {
 
     // 2. Churn feed: one edge class per risk band, stage labels through the map.
     //    Element Plus keeps every tab pane mounted, so scope to the visible one.
-    await page.locator('.el-tabs__item', { hasText: 'Churn Alerts' }).click()
+    await page.locator('.el-tabs__item', { hasText: /Churn Alerts|流失预警/ }).click()
     await page.locator('button', { hasText: 'Scan for At-Risk' }).click()
     await page.waitForTimeout(500)
     const churnPane = page.locator('.el-tab-pane:visible')
@@ -124,7 +124,7 @@ async function main() {
       }
     }
     // stage goes through stageLabel, so "quoting" reads "Quoting"
-    const stageText = await churnPane.locator('.el-tag', { hasText: 'Quoting' }).count()
+    const stageText = await churnPane.locator('.el-tag', { hasText: /Quoting|报价中/ }).count()
     if (!stageText) throw new Error('stage label was not normalised through stageLabel()')
 
     // 3. The generated-mail panel appears under a card when a draft is opened.
@@ -137,7 +137,7 @@ async function main() {
 
     // 4. Lead feed: score band edges follow scoreBand (70/40), not the old 70/50.
     //    scanLeads refuses to run without keywords, so fill the form first.
-    await page.locator('.el-tabs__item', { hasText: 'Lead Scanner' }).click()
+    await page.locator('.el-tabs__item', { hasText: /Lead Scanner|线索扫描/ }).click()
     await page.locator('.el-tab-pane:visible input').first().fill('metallic yarn')
     await page.locator('button', { hasText: 'Scan for Leads' }).click()
     await page.waitForTimeout(500)

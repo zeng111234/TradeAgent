@@ -1,28 +1,28 @@
 <template>
   <div>
     <div class="page-header">
-      <h2>客户管理</h2>
-      <p>Manage your foreign trade customers and contacts</p>
+      <h2>{{ t('customers.title') }}</h2>
+      <p>{{ t('customers.subtitle') }}</p>
     </div>
 
     <!-- Toolbar: flex-wrap, so the filters stack instead of squeezing below
          1024. The old el-col spans broke at a fixed ratio whatever the width. -->
     <el-card shadow="never" class="mb-4">
       <div class="toolbar">
-        <el-input v-model="filters.search" placeholder="Search company, industry..." clearable class="filter-search" @keyup.enter="loadCustomers">
+        <el-input v-model="filters.search" :placeholder="t('customers.searchPlaceholder')" clearable class="filter-search" @keyup.enter="loadCustomers">
           <template #prefix><el-icon><Search /></el-icon></template>
         </el-input>
-        <el-select v-model="filters.stage" placeholder="Stage" clearable class="filter-select">
-          <el-option label="New" value="new" />
-          <el-option label="Contacted" value="contacted" />
-          <el-option label="Interested" value="interested" />
-          <el-option label="Quoting" value="quoting" />
-          <el-option label="Sample" value="sample" />
-          <el-option label="Ordering" value="ordering" />
-          <el-option label="Completed" value="completed" />
-          <el-option label="Lost" value="lost" />
+        <el-select v-model="filters.stage" :placeholder="t('customers.stageAll')" clearable class="filter-select">
+          <el-option :label="t('status.stage.new')" value="new" />
+          <el-option :label="t('status.stage.contacted')" value="contacted" />
+          <el-option :label="t('status.stage.interested')" value="interested" />
+          <el-option :label="t('status.stage.quoting')" value="quoting" />
+          <el-option :label="t('status.stage.sample')" value="sample" />
+          <el-option :label="t('status.stage.ordering')" value="ordering" />
+          <el-option :label="t('status.stage.completed')" value="completed" />
+          <el-option :label="t('status.stage.lost')" value="lost" />
         </el-select>
-        <el-select v-model="filters.source" placeholder="Source" clearable class="filter-select">
+        <el-select v-model="filters.source" :placeholder="t('customers.sourceAll')" clearable class="filter-select">
           <el-option label="Manual" value="manual" />
           <el-option label="Import" value="import" />
           <el-option label="Scraper" value="scraper" />
@@ -30,15 +30,15 @@
           <el-option label="Exhibition" value="exhibition" />
           <el-option label="Referral" value="referral" />
         </el-select>
-        <el-select v-model="filters.country" placeholder="Country" clearable filterable class="filter-select filter-select--wide">
+        <el-select v-model="filters.country" :placeholder="t('customers.countryAll')" clearable filterable class="filter-select filter-select--wide">
           <el-option v-for="c in countries" :key="c" :label="c" :value="c" />
         </el-select>
         <div class="toolbar__end">
           <el-button @click="loadCustomers">
-            <el-icon><Search /></el-icon> Search
+            <el-icon><Search /></el-icon> {{ t('common.search') }}
           </el-button>
           <el-button type="primary" @click="showAddDialog">
-            <el-icon><Plus /></el-icon> Add Customer
+            <el-icon><Plus /></el-icon> {{ t('customers.addCustomer') }}
           </el-button>
         </div>
       </div>
@@ -49,7 +49,7 @@
          every row to two lines. -->
     <el-card shadow="never">
       <el-table :data="customers" stripe v-loading="loading" @row-click="goToDetail">
-        <el-table-column prop="company_name" label="Company" min-width="220">
+        <el-table-column prop="company_name" :label="t('customers.colCompany')" min-width="220">
           <template #default="{ row }">
             <div class="cell-stack">
               <span class="cell-truncate" :title="row.company_name">{{ row.company_name }}</span>
@@ -57,31 +57,31 @@
             </div>
           </template>
         </el-table-column>
-        <el-table-column prop="industry" label="Industry" min-width="150" show-overflow-tooltip />
-        <el-table-column prop="stage" label="Stage" width="100">
+        <el-table-column prop="industry" :label="t('customers.colIndustry')" min-width="150" show-overflow-tooltip />
+        <el-table-column prop="stage" :label="t('customers.colStage')" width="100">
           <template #default="{ row }">
             <el-tag :type="stageTagType(row.stage)" size="small">{{ stageLabel(row.stage) }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="source" label="Source" width="100">
+        <el-table-column prop="source" :label="t('customers.colSource')" width="100">
           <template #default="{ row }">
             <span class="text-muted">{{ row.source }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="score" label="Score" width="70" align="center">
+        <el-table-column prop="score" :label="t('customers.colScore')" width="70" align="center">
           <template #default="{ row }">
             <span class="num" :class="scoreClass(row.score)">{{ row.score }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="Contacts" width="84" align="center">
+        <el-table-column :label="t('customers.colContacts')" width="84" align="center">
           <template #default="{ row }">
             {{ row.contacts ? row.contacts.length : 0 }}
           </template>
         </el-table-column>
-        <el-table-column label="Actions" width="130" fixed="right">
+        <el-table-column :label="t('customers.colActions')" width="130" fixed="right">
           <template #default="{ row }">
-            <el-button size="small" type="primary" link @click.stop="showEditDialog(row)">Edit</el-button>
-            <el-button size="small" type="danger" link @click.stop="handleDelete(row)">Delete</el-button>
+            <el-button size="small" type="primary" link @click.stop="showEditDialog(row)">{{ t('common.edit') }}</el-button>
+            <el-button size="small" type="danger" link @click.stop="handleDelete(row)">{{ t('common.delete') }}</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -99,36 +99,36 @@
     </el-card>
 
     <!-- Add/Edit Dialog -->
-    <el-dialog v-model="dialogVisible" :title="editingCustomer ? 'Edit Customer' : 'Add Customer'" width="600px">
+    <el-dialog v-model="dialogVisible" :title="editingCustomer ? t('customers.editCustomer') : t('customers.addCustomerTitle')" width="600px">
       <el-form :model="form" label-width="120px">
-        <el-form-item label="Company Name" required>
+        <el-form-item :label="t('customers.colCompany') + ' *'" required>
           <el-input v-model="form.company_name" />
         </el-form-item>
-        <el-form-item label="Country">
+        <el-form-item :label="t('common.country')">
           <el-input v-model="form.country" />
         </el-form-item>
         <el-form-item label="City">
           <el-input v-model="form.city" />
         </el-form-item>
-        <el-form-item label="Website">
+        <el-form-item :label="t('dashboard.colWebsite')">
           <el-input v-model="form.website" placeholder="https://" />
         </el-form-item>
-        <el-form-item label="Industry">
+        <el-form-item :label="t('common.industry')">
           <el-input v-model="form.industry" />
         </el-form-item>
         <el-form-item label="Products">
           <el-input v-model="form.products" type="textarea" :rows="2" placeholder="Comma separated keywords" />
         </el-form-item>
-        <el-form-item label="Stage">
+        <el-form-item :label="t('common.stage')">
           <el-select v-model="form.stage" class="form-fill">
-            <el-option label="New" value="new" />
-            <el-option label="Contacted" value="contacted" />
-            <el-option label="Interested" value="interested" />
-            <el-option label="Quoting" value="quoting" />
-            <el-option label="Sample" value="sample" />
-            <el-option label="Ordering" value="ordering" />
-            <el-option label="Completed" value="completed" />
-            <el-option label="Lost" value="lost" />
+            <el-option :label="t('status.stage.new')" value="new" />
+            <el-option :label="t('status.stage.contacted')" value="contacted" />
+            <el-option :label="t('status.stage.interested')" value="interested" />
+            <el-option :label="t('status.stage.quoting')" value="quoting" />
+            <el-option :label="t('status.stage.sample')" value="sample" />
+            <el-option :label="t('status.stage.ordering')" value="ordering" />
+            <el-option :label="t('status.stage.completed')" value="completed" />
+            <el-option :label="t('status.stage.lost')" value="lost" />
           </el-select>
         </el-form-item>
         <el-form-item label="Tags">
@@ -136,8 +136,8 @@
         </el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="dialogVisible = false">Cancel</el-button>
-        <el-button type="primary" @click="handleSave" :loading="saving">Save</el-button>
+        <el-button @click="dialogVisible = false">{{ t('common.cancel') }}</el-button>
+        <el-button type="primary" @click="handleSave" :loading="saving">{{ t('common.save') }}</el-button>
       </template>
     </el-dialog>
   </div>
@@ -149,6 +149,7 @@ import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { customerApi } from '../api'
 import { scoreClass, stageLabel, stageTagType } from '../constants/status.js'
+import { t } from '../i18n/index.js'
 
 const router = useRouter()
 const loading = ref(false)

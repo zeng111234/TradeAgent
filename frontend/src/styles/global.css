@@ -174,10 +174,30 @@ code, pre, kbd, samp {
 .main-content {
   flex: 1 1 auto;
   min-width: 0;
+  /* `width: 100%` is load-bearing: this is a flex item in a column container,
+   * and `margin: 0 auto` on the cross axis cancels the default stretch. Without
+   * it the content shrink-to-fits (a table page measured 936px on a 1920px
+   * screen) instead of filling the max-width. */
+  width: 100%;
   max-width: calc(var(--content-max) + 2 * var(--space-8));
   margin: 0 auto;
   padding: var(--space-6) var(--space-8) var(--space-8);
-  min-height: 100vh;
+  /* The topbar is sticky and 52px tall; without subtracting it every page
+   * would reserve a viewport that no longer starts at y=0. */
+  min-height: calc(100vh - 52px);
+}
+
+/* Sidebar nav groups: the agent section sits above the business data. */
+.sidebar .el-menu-item-group__title {
+  padding: var(--space-3) var(--space-3) var(--space-1) !important;
+  line-height: 1;
+}
+
+.nav-group {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  color: rgba(255, 255, 255, 0.32);
 }
 
 /* ================================================== 3. page primitives === */

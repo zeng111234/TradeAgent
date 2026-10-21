@@ -2,21 +2,21 @@
   <div>
     <div class="page-header card-header-row">
       <div>
-        <h2>数据看板</h2>
-        <p>Overview of your foreign trade business</p>
+        <h2>{{ t('dashboard.title') }}</h2>
+        <p>{{ t('dashboard.subtitle') }}</p>
       </div>
       <!-- Page-level actions. They used to live in the Daily Auto Report card
            header, which made the busiest card carry the page's whole command
            surface. -->
       <div class="page-header__actions">
         <el-button @click="runSearchNewLeads" :loading="scanAndSendLoading">
-          <el-icon><Search /></el-icon> 搜索新客户
+          <el-icon><Search /></el-icon> {{ t('dashboard.findLeads') }}
         </el-button>
         <el-button @click="runDailyReport" :loading="dailyLoading">
-          <el-icon><DataAnalysis /></el-icon> Quick Report
+          <el-icon><DataAnalysis /></el-icon> {{ t('dashboard.quickReport') }}
         </el-button>
         <el-button type="primary" @click="runFullScan" :loading="fullScanLoading">
-          <el-icon><MagicStick /></el-icon> Full Scan + Report
+          <el-icon><MagicStick /></el-icon> {{ t('dashboard.fullScan') }}
         </el-button>
       </div>
     </div>
@@ -27,40 +27,40 @@
     <div class="stat-grid mb-4">
       <div class="stat-card">
         <div class="stat-value">{{ stats.total_customers }}</div>
-        <div class="stat-label">客户总数</div>
+        <div class="stat-label">{{ t('dashboard.kpiCustomers') }}</div>
       </div>
       <div class="stat-card">
         <div class="stat-value">{{ stats.total_emails_sent }}</div>
-        <div class="stat-label">邮件发送总量</div>
+        <div class="stat-label">{{ t('dashboard.kpiEmails') }}</div>
       </div>
       <div class="stat-card">
         <div class="stat-value">{{ stats.open_rate }}%</div>
-        <div class="stat-label">邮件打开率</div>
+        <div class="stat-label">{{ t('dashboard.kpiOpenRate') }}</div>
       </div>
       <div class="stat-card">
         <div class="stat-value">{{ stats.reply_rate }}%</div>
-        <div class="stat-label">邮件回复率</div>
+        <div class="stat-label">{{ t('dashboard.kpiReplyRate') }}</div>
       </div>
     </div>
 
     <div class="kpi-strip mb-6">
       <div class="kpi-strip__item">
         <div class="kpi-strip__value">{{ stats.new_customers_this_month }}</div>
-        <div class="kpi-strip__label">本月新增客户</div>
+        <div class="kpi-strip__label">{{ t('dashboard.kpiNew') }}</div>
       </div>
       <div class="kpi-strip__item">
         <div class="kpi-strip__value">{{ stats.emails_sent_this_month }}</div>
-        <div class="kpi-strip__label">本月发送邮件</div>
+        <div class="kpi-strip__label">{{ t('dashboard.kpiEmailsMonth') }}</div>
       </div>
       <div class="kpi-strip__item">
         <div class="kpi-strip__value">{{ stats.pending_tasks }}</div>
-        <div class="kpi-strip__label">待办任务</div>
+        <div class="kpi-strip__label">{{ t('dashboard.kpiPending') }}</div>
       </div>
       <div class="kpi-strip__item">
         <div class="kpi-strip__value" :class="{ 'kpi-strip__value--alert': stats.overdue_tasks > 0 }">
           {{ stats.overdue_tasks }}
         </div>
-        <div class="kpi-strip__label">逾期任务</div>
+        <div class="kpi-strip__label">{{ t('dashboard.kpiOverdue') }}</div>
       </div>
     </div>
 
@@ -69,7 +69,7 @@
       <el-col :span="12">
         <el-card shadow="never">
           <template #header>
-            <span class="card-title">销售漏斗</span>
+            <span class="card-title">{{ t('dashboard.funnel') }}</span>
           </template>
           <div ref="funnelChartRef" class="chart-box"></div>
         </el-card>
@@ -77,7 +77,7 @@
       <el-col :span="12">
         <el-card shadow="never">
           <template #header>
-            <span class="card-title">月度趋势</span>
+            <span class="card-title">{{ t('dashboard.trend') }}</span>
           </template>
           <div ref="trendChartRef" class="chart-box"></div>
         </el-card>
@@ -88,7 +88,7 @@
       <el-col :span="12">
         <el-card shadow="never">
           <template #header>
-            <span class="card-title">客户来源分布</span>
+            <span class="card-title">{{ t('dashboard.sources') }}</span>
           </template>
           <div ref="sourceChartRef" class="chart-box"></div>
         </el-card>
@@ -96,7 +96,7 @@
       <el-col :span="12">
         <el-card shadow="never">
           <template #header>
-            <span class="card-title">国家/地区分布</span>
+            <span class="card-title">{{ t('dashboard.countries') }}</span>
           </template>
           <div ref="countryChartRef" class="chart-box"></div>
         </el-card>
@@ -108,27 +108,27 @@
       <el-col :span="16">
         <el-card shadow="never">
           <template #header>
-            <span class="card-title">Daily Auto Report</span>
+            <span class="card-title">{{ t('dashboard.dailyReport') }}</span>
           </template>
           <div v-if="dailyLoading || fullScanLoading || scanAndSendLoading" class="report-loading">
             <el-icon class="is-loading" :size="24"><Loading /></el-icon>
-            <p class="mt-2">{{ scanAndSendLoading ? 'Searching web + generating AI emails + sending... This may take 2-3 minutes.' : fullScanLoading ? 'Scanning web + generating AI drafts... This may take 1-2 minutes.' : 'Analyzing your CRM data...' }}</p>
+            <p class="mt-2">{{ scanAndSendLoading ? t('dashboard.loadingScanSend') : fullScanLoading ? t('dashboard.loadingScan') : t('dashboard.loadingDaily') }}</p>
           </div>
           <div v-else-if="dailyReport" class="report-body">{{ dailyReport }}</div>
-          <el-empty v-else description="Click 'Quick Report' for CRM analysis or 'Full Scan' to search for new leads" />
+          <el-empty v-else :description="t('dashboard.emptyDaily')" />
         </el-card>
       </el-col>
       <el-col :span="8">
         <el-card shadow="never">
           <template #header>
-            <span class="card-title">Scheduled Jobs</span>
+            <span class="card-title">{{ t('dashboard.scheduledJobs') }}</span>
           </template>
           <div v-for="job in schedulerJobs" :key="job.id" class="job-row">
             <div class="job-name">{{ job.name }}</div>
             <div class="hint">{{ humanTrigger(job.trigger) }}</div>
             <div class="hint text-positive">Next: {{ humanNextRun(job.next_run) }}</div>
           </div>
-          <el-empty v-if="!schedulerJobs.length" description="No scheduled jobs" />
+          <el-empty v-if="!schedulerJobs.length" :description="t('common.empty')" />
         </el-card>
       </el-col>
     </el-row>
@@ -140,15 +140,15 @@
           <template #header>
             <div class="card-header-row">
               <div>
-                <span class="card-title">New Leads Found</span>
-                <span class="section-note ml-2">Review AI-generated emails and select which to send</span>
+                <span class="card-title">{{ t('dashboard.newLeads') }}</span>
+                <span class="section-note ml-2">{{ t('dashboard.newLeadsHint') }}</span>
               </div>
               <div>
                 <el-button @click="toggleSelectAllLeads" size="default">
-                  {{ selectedLeadIndices.size > 0 ? 'Deselect All' : 'Select All' }}
+                  {{ selectedLeadIndices.size > 0 ? t('dashboard.deselectAll') : t('dashboard.selectAll') }}
                 </el-button>
                 <el-button @click="sendSelectedDrafts" :loading="sendDraftsLoading" size="large">
-                  <el-icon><Promotion /></el-icon> Send Selected ({{ selectedLeadsCount }})
+                  <el-icon><Promotion /></el-icon> {{ t('dashboard.sendSelected', { n: selectedLeadsCount }) }}
                 </el-button>
               </div>
             </div>
@@ -174,7 +174,7 @@
                widths overflowed the 1138px available at 1440 and put a
                horizontal scrollbar inside the card. -->
           <el-table :data="searchedLeads" stripe size="small" max-height="500">
-            <el-table-column label="Send" width="48" align="center">
+            <el-table-column :label="t('dashboard.colSend')" width="48" align="center">
               <template #default="{ row, $index }">
                 <el-checkbox
                   :model-value="selectedLeadIndices.has($index)"
@@ -183,31 +183,31 @@
                 />
               </template>
             </el-table-column>
-            <el-table-column prop="company_name" label="Company" min-width="170" show-overflow-tooltip />
-            <el-table-column prop="country" label="Country" width="88" show-overflow-tooltip />
-            <el-table-column label="Score" width="64" align="center">
+            <el-table-column prop="company_name" :label="t('dashboard.colCompany')" min-width="170" show-overflow-tooltip />
+            <el-table-column prop="country" :label="t('dashboard.colCountry')" width="88" show-overflow-tooltip />
+            <el-table-column :label="t('dashboard.colScore')" width="64" align="center">
               <template #default="{ row }">
                 <el-tag :type="scoreTagType(row.relevance_score)" size="small">
                   {{ row.relevance_score }}
                 </el-tag>
               </template>
             </el-table-column>
-            <el-table-column label="Email" min-width="160">
+            <el-table-column :label="t('dashboard.colEmail')" min-width="160">
               <template #default="{ row }">
                 <el-tooltip v-if="row.email" :content="row.email" placement="top">
                   <span class="cell-truncate">{{ row.email }}</span>
                 </el-tooltip>
-                <span v-else class="text-muted">No email</span>
+                <span v-else class="text-muted">{{ t('dashboard.noEmail') }}</span>
               </template>
             </el-table-column>
-            <el-table-column label="Status" width="88" align="center">
+            <el-table-column :label="t('dashboard.colStatus')" width="88" align="center">
               <template #default="{ row }">
-                <el-tag v-if="row.already_exists" type="warning" size="small">Exists</el-tag>
-                <el-tag v-else-if="!row.email" type="info" size="small">No email</el-tag>
-                <el-tag v-else type="success" size="small">Ready</el-tag>
+                <el-tag v-if="row.already_exists" type="warning" size="small">{{ t('dashboard.exists') }}</el-tag>
+                <el-tag v-else-if="!row.email" type="info" size="small">{{ t('dashboard.noEmail') }}</el-tag>
+                <el-tag v-else type="success" size="small">{{ t('dashboard.ready') }}</el-tag>
               </template>
             </el-table-column>
-            <el-table-column label="AI Draft Email" min-width="220">
+            <el-table-column :label="t('dashboard.colDraft')" min-width="220">
               <template #default="{ row }">
                 <el-popover trigger="hover" width="450" placement="left">
                   <template #reference>
@@ -220,9 +220,9 @@
                 </el-popover>
               </template>
             </el-table-column>
-            <el-table-column label="Website" width="52" align="center">
+            <el-table-column :label="t('dashboard.colWebsite')" width="52" align="center">
               <template #default="{ row }">
-                <a v-if="row.website" :href="row.website" target="_blank" class="cell-link">Visit</a>
+                <a v-if="row.website" :href="row.website" target="_blank" class="cell-link">{{ t('dashboard.colWebsite') }}</a>
               </template>
             </el-table-column>
           </el-table>
@@ -237,15 +237,15 @@
           <template #header>
             <div class="card-header-row">
               <div>
-                <span class="card-title">Import Daily Scan Leads</span>
-                <span class="section-note ml-2">Import leads from daily_scan.py into CRM + draft emails</span>
+                <span class="card-title">{{ t('dashboard.importLeads') }}</span>
+                <span class="section-note ml-2">{{ t('dashboard.importLeadsHint') }}</span>
               </div>
               <div>
                 <el-button @click="previewLeads" :loading="previewLoading" size="default">
-                  <el-icon><View /></el-icon> Preview
+                  <el-icon><View /></el-icon> {{ t('dashboard.preview') }}
                 </el-button>
                 <el-button @click="importLeads" :loading="importLoading" size="default">
-                  <el-icon><Download /></el-icon> Import All
+                  <el-icon><Download /></el-icon> {{ t('dashboard.importAll') }}
                 </el-button>
               </div>
             </div>
@@ -268,16 +268,16 @@
                   </div>
                 </template>
               </el-table-column>
-              <el-table-column prop="country" label="Country" width="88" show-overflow-tooltip />
-              <el-table-column prop="keyword" label="Keyword" width="120" show-overflow-tooltip />
-              <el-table-column label="Score" width="64" align="center">
+              <el-table-column prop="country" :label="t('dashboard.colCountry')" width="88" show-overflow-tooltip />
+              <el-table-column prop="keyword" :label="t('dashboard.colKeyword')" width="120" show-overflow-tooltip />
+              <el-table-column :label="t('dashboard.colScore')" width="64" align="center">
                 <template #default="{ row }">
                   <el-tag :type="scoreTagType(row.relevance_score)" size="small">
                     {{ row.relevance_score }}
                   </el-tag>
                 </template>
               </el-table-column>
-              <el-table-column label="Emails" min-width="160">
+              <el-table-column :label="t('dashboard.colEmails')" min-width="160">
                 <template #default="{ row }">
                   <span v-if="row.emails && row.emails.length" class="cell-truncate" :title="row.emails.join(', ')">
                     {{ row.emails.join(', ') }}
@@ -285,7 +285,7 @@
                   <span v-else class="text-muted">No email found</span>
                 </template>
               </el-table-column>
-              <el-table-column label="Draft" min-width="162">
+              <el-table-column :label="t('dashboard.colDraftState')" min-width="162">
                 <template #default="{ row }">
                   <el-popover v-if="row.draft_email" trigger="hover" width="400" placement="left">
                     <template #reference>
@@ -305,7 +305,7 @@
             </div>
           </div>
 
-          <el-empty v-else-if="!previewLoading" description="No scan results found. Run daily_scan.py first to generate leads." />
+          <el-empty v-else-if="!previewLoading" :description="t('common.empty')" />
         </el-card>
       </el-col>
     </el-row>
@@ -313,10 +313,11 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import * as echarts from 'echarts'
 import { analyticsApi, schedulerApi, agentApi } from '../api'
+import { locale, t } from '../i18n/index.js'
 import { scoreTagType } from '../constants/status.js'
 import { accent, accentSeries, trendSeries, accentSoft, white } from '../constants/theme.js'
 
@@ -386,15 +387,15 @@ const initCharts = async () => {
       const trends = await analyticsApi.trends(6)
       trendChart.setOption({
         tooltip: { trigger: 'axis' },
-        legend: { data: ['新增客户', '发送邮件', '邮件打开', '邮件回复'], bottom: 0 },
+        legend: { data: [t('dashboard.trendCustomers'), t('dashboard.trendSent'), t('dashboard.trendOpened'), t('dashboard.trendReplied')], bottom: 0 },
         grid: { left: '3%', right: '4%', bottom: '12%', top: '5%', containLabel: true },
         xAxis: { type: 'category', data: trends.map(t => t.month) },
         yAxis: { type: 'value' },
         series: [
-          { name: '新增客户', type: 'line', smooth: true, data: trends.map(t => t.customers_added), areaStyle: { opacity: 0.1 }, itemStyle: { color: trendSeries[0] } },
-          { name: '发送邮件', type: 'line', smooth: true, data: trends.map(t => t.emails_sent), areaStyle: { opacity: 0.1 }, itemStyle: { color: trendSeries[1] } },
-          { name: '邮件打开', type: 'line', smooth: true, data: trends.map(t => t.emails_opened), itemStyle: { color: trendSeries[2] } },
-          { name: '邮件回复', type: 'line', smooth: true, data: trends.map(t => t.emails_replied), itemStyle: { color: trendSeries[3] } },
+          { name: t('dashboard.trendCustomers'), type: 'line', smooth: true, data: trends.map(row => row.customers_added), areaStyle: { opacity: 0.1 }, itemStyle: { color: trendSeries[0] } },
+          { name: t('dashboard.trendSent'), type: 'line', smooth: true, data: trends.map(row => row.emails_sent), areaStyle: { opacity: 0.1 }, itemStyle: { color: trendSeries[1] } },
+          { name: t('dashboard.trendOpened'), type: 'line', smooth: true, data: trends.map(row => row.emails_opened), itemStyle: { color: trendSeries[2] } },
+          { name: t('dashboard.trendReplied'), type: 'line', smooth: true, data: trends.map(row => row.emails_replied), itemStyle: { color: trendSeries[3] } },
         ],
       })
     } catch (e) {
@@ -774,6 +775,14 @@ onMounted(async () => {
   } catch (e) { /* ignore */ }
   await initCharts()
   window.addEventListener('resize', handleResize)
+})
+
+// Chart labels are baked into the option at init; a language switch has to
+// rebuild them or the legend keeps the previous language.
+watch(locale, async () => {
+  charts.forEach((c) => c.dispose())
+  charts.length = 0
+  await initCharts()
 })
 
 onUnmounted(() => {

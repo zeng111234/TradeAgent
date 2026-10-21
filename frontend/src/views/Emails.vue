@@ -1,8 +1,8 @@
 <template>
   <div>
     <div class="page-header">
-      <h2>邮件营销</h2>
-      <p>Send emails, track opens, and manage your email campaigns</p>
+      <h2>{{ t('emails.title') }}</h2>
+      <p>{{ t('emails.subtitle') }}</p>
     </div>
 
     <el-row :gutter="20" style="margin-bottom: 24px">
@@ -10,19 +10,19 @@
       <el-col :span="6">
         <div class="stat-card">
           <div class="stat-value">{{ emailStats.total_sent }}</div>
-          <div class="stat-label">Total Sent</div>
+          <div class="stat-label">{{ t('emails.totalSent') }}</div>
         </div>
       </el-col>
       <el-col :span="6">
         <div class="stat-card">
           <div class="stat-value" style="color: var(--positive)">{{ emailStats.open_rate }}%</div>
-          <div class="stat-label">Open Rate</div>
+          <div class="stat-label">{{ t('emails.openRate') }}</div>
         </div>
       </el-col>
       <el-col :span="6">
         <div class="stat-card">
           <div class="stat-value" style="color: var(--accent)">{{ emailStats.reply_rate }}%</div>
-          <div class="stat-label">Reply Rate</div>
+          <div class="stat-label">{{ t('emails.replyRate') }}</div>
         </div>
       </el-col>
       <el-col :span="6">
@@ -30,7 +30,7 @@
           <!-- Zero failures is good news: only go red when there is something to
                look at (same rule as Dashboard's overdue count). -->
           <div class="stat-value" :class="{ 'text-negative': emailStats.total_failed > 0 }">{{ emailStats.total_failed }}</div>
-          <div class="stat-label">Failed</div>
+          <div class="stat-label">{{ t('emails.failed') }}</div>
         </div>
       </el-col>
     </el-row>
@@ -40,22 +40,22 @@
       <template #header>
         <div style="display: flex; justify-content: space-between; align-items: center">
           <div>
-            <span style="font-weight: 600">Pending Draft Review</span>
-            <el-tag v-if="pendingEmails.length" type="warning" size="small" style="margin-left: 8px">{{ pendingEmails.length }} {{ pendingEmails.length === 1 ? 'draft' : 'drafts' }}</el-tag>
+            <span style="font-weight: 600">{{ t('emails.pendingDrafts') }}</span>
+            <el-tag v-if="pendingEmails.length" type="warning" size="small" style="margin-left: 8px">{{ t('emails.draft', { n: pendingEmails.length }) }}</el-tag>
           </div>
           <div>
             <el-button size="small" @click="loadData" :loading="false">
-              <el-icon><Refresh /></el-icon> Refresh
+              <el-icon><Refresh /></el-icon> {{ t('common.refresh') }}
             </el-button>
             <span v-if="batchProgress" style="margin-right: 8px; font-size: 12px; color: var(--text-3)">{{ batchProgress }}</span>
           <el-button size="small" @click="sendAllPending" :loading="sendingAll" :disabled="!pendingEmails.length">
-              <el-icon><Promotion /></el-icon> Send All ({{ pendingEmails.length }})
+              <el-icon><Promotion /></el-icon> {{ t('emails.sendAll', { n: pendingEmails.length }) }}
             </el-button>
           </div>
         </div>
       </template>
 
-      <el-empty v-if="!pendingEmails.length" description="No pending drafts. Import leads from Dashboard first." />
+      <el-empty v-if="!pendingEmails.length" :description="t('emails.emptyDrafts')" />
 
       <div v-for="email in pendingEmails" :key="email.id" style="border: 1px solid var(--border-subtle); border-radius: 8px; padding: 16px; margin-bottom: 12px; background: var(--bg-subtle)">
         <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px">
@@ -82,23 +82,23 @@
         <div style="display: flex; gap: 8px">
           <template v-if="editingId !== email.id">
             <el-button type="primary" size="small" @click="handleSendPending(email)" :loading="sendingId === email.id">
-              <el-icon><Promotion /></el-icon> Send
+              <el-icon><Promotion /></el-icon> {{ t('common.send') }}
             </el-button>
             <el-button size="small" @click="startEdit(email)">
-              <el-icon><Edit /></el-icon> Edit
+              <el-icon><Edit /></el-icon> {{ t('common.edit') }}
             </el-button>
             <el-button size="small" @click="handleRejectPending(email)" plain>
-              <el-icon><CircleClose /></el-icon> Reject
+              <el-icon><CircleClose /></el-icon> {{ t('emails.reject') }}
             </el-button>
             <el-button type="danger" size="small" @click="handleDeletePending(email)" plain>
-              <el-icon><Delete /></el-icon> Delete
+              <el-icon><Delete /></el-icon> {{ t('common.delete') }}
             </el-button>
           </template>
           <template v-else>
             <el-button type="primary" size="small" @click="saveEdit(email)">
               <el-icon><Check /></el-icon> Save
             </el-button>
-            <el-button size="small" @click="cancelEdit">Cancel</el-button>
+            <el-button size="small" @click="cancelEdit">{{ t('common.cancel') }}</el-button>
           </template>
         </div>
       </div>
@@ -109,29 +109,29 @@
       <el-col :span="10">
         <el-card shadow="never">
           <template #header>
-            <span style="font-weight: 600">Send Email</span>
+            <span style="font-weight: 600">{{ t('emails.sendEmail') }}</span>
           </template>
           <el-form :model="sendForm" label-width="100px">
-            <el-form-item label="To Email" required>
+            <el-form-item :label="t('emails.toEmail')" required>
               <el-input v-model="sendForm.to_email" placeholder="recipient@example.com" />
             </el-form-item>
-            <el-form-item label="To Name">
+            <el-form-item :label="t('emails.toName')">
               <el-input v-model="sendForm.to_name" placeholder="Recipient name" />
             </el-form-item>
-            <el-form-item label="Template">
+            <el-form-item :label="t('emails.template')">
               <el-select v-model="sendForm.template_id" style="width: 100%" clearable @change="onTemplateSelect">
                 <el-option v-for="t in templates" :key="t.id" :label="t.name" :value="t.id" />
               </el-select>
             </el-form-item>
-            <el-form-item label="Subject" required>
+            <el-form-item :label="t('emails.subject')" required>
               <el-input v-model="sendForm.subject" :disabled="!!sendForm.template_id" />
             </el-form-item>
-            <el-form-item label="Body" required>
+            <el-form-item :label="t('emails.body')" required>
               <el-input v-model="sendForm.body" type="textarea" :rows="6" :disabled="!!sendForm.template_id" />
             </el-form-item>
             <el-form-item>
               <el-button type="primary" @click="handleSend" :loading="sending">
-                <el-icon><Promotion /></el-icon> Send Email
+                <el-icon><Promotion /></el-icon> {{ t('emails.sendEmail') }}
               </el-button>
               <el-button @click="handleGenerateAI">
                 <el-icon><MagicStick /></el-icon> AI Generate
@@ -145,34 +145,34 @@
       <el-col :span="14">
         <el-card shadow="never" style="margin-bottom: 16px">
           <template #header>
-            <span style="font-weight: 600">AI Email Generator</span>
+            <span style="font-weight: 600">{{ t('emails.aiGenerator') }}</span>
           </template>
           <el-form :model="aiForm" label-width="120px">
             <el-row :gutter="12">
               <el-col :span="12">
-                <el-form-item label="Product Name" required>
+                <el-form-item :label="t('emails.productName')" required>
                   <el-input v-model="aiForm.product_name" placeholder="e.g. LED Panel Lights" />
                 </el-form-item>
               </el-col>
               <el-col :span="12">
-                <el-form-item label="Your Company">
+                <el-form-item :label="t('emails.yourCompany')">
                   <el-input v-model="aiForm.company_name" />
                 </el-form-item>
               </el-col>
             </el-row>
             <el-row :gutter="12">
               <el-col :span="12">
-                <el-form-item label="Target Industry">
+                <el-form-item :label="t('emails.targetIndustry')">
                   <el-input v-model="aiForm.target_industry" />
                 </el-form-item>
               </el-col>
               <el-col :span="12">
-                <el-form-item label="Target Country">
+                <el-form-item :label="t('emails.targetCountry')">
                   <el-input v-model="aiForm.target_country" />
                 </el-form-item>
               </el-col>
             </el-row>
-            <el-form-item label="Selling Points">
+            <el-form-item :label="t('emails.sellingPoints')">
               <el-input v-model="aiForm.selling_points" type="textarea" :rows="2" />
             </el-form-item>
             <el-form-item>
@@ -200,7 +200,7 @@
             <p><strong>Subject:</strong> {{ aiResult.subject }}</p>
             <div v-html="aiResult.body" style="margin: 8px 0; color: var(--text-2)"></div>
             <el-button size="small" @click="useAiResult">
-              Use This Email
+              {{ t('emails.useDraft') }}
             </el-button>
           </div>
         </el-card>
@@ -208,12 +208,12 @@
         <!-- Email Logs -->
         <el-card shadow="never">
           <template #header>
-            <span style="font-weight: 600">Recent Email Logs</span>
+            <span style="font-weight: 600">{{ t('emails.recentLogs') }}</span>
           </template>
           <el-table :data="emailLogs" stripe>
-            <el-table-column prop="to_email" label="To" min-width="150" show-overflow-tooltip />
-            <el-table-column prop="subject" label="Subject" min-width="200" show-overflow-tooltip />
-            <el-table-column prop="status" label="Status" width="120">
+            <el-table-column prop="to_email" :label="t('emails.colTo')" min-width="150" show-overflow-tooltip />
+            <el-table-column prop="subject" :label="t('emails.colSubject')" min-width="200" show-overflow-tooltip />
+            <el-table-column prop="status" :label="t('emails.colStatus')" width="120">
               <template #default="{ row }">
                 <!-- A simulated send is status "sent" in the data (the flows
                      that follow a send treat it like any other), but showing it
@@ -232,7 +232,7 @@
             <!-- The reason, not just the verdict. A row tagged "failed" with no
                  error reads as "it broke"; the API has carried error_message
                  all along and this table simply never showed it. -->
-            <el-table-column label="Error" min-width="160">
+            <el-table-column :label="t('emails.colError')" min-width="160">
               <template #default="{ row }">
                 <el-tooltip v-if="row.error_message" :content="row.error_message" placement="top">
                   <span style="color: var(--negative); font-size: 12px">{{ row.error_message }}</span>
@@ -240,8 +240,8 @@
                 <span v-else style="color: var(--text-disabled)">-</span>
               </template>
             </el-table-column>
-            <el-table-column prop="open_count" label="Opens" width="70" align="center" />
-            <el-table-column label="Time" width="160">
+            <el-table-column prop="open_count" :label="t('emails.colOpens')" width="70" align="center" />
+            <el-table-column :label="t('emails.colTime')" width="160">
               <template #default="{ row }">{{ formatDate(row.created_at) }}</template>
             </el-table-column>
             <el-table-column label="Reply" width="130">
@@ -270,6 +270,7 @@ import { ref, reactive, onMounted } from 'vue'
 import { ElMessage, ElMessageBox, ElNotification } from 'element-plus'
 import { emailApi } from '../api'
 import { emailStatusLabel, emailStatusType as statusType } from '../constants/status.js'
+import { t } from '../i18n/index.js'
 import { failureDetail, removeRow } from '../utils/optimistic'
 
 const sending = ref(false)

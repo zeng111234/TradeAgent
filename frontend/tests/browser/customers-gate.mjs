@@ -88,15 +88,15 @@ async function main() {
     await page.goBack()
     await page.waitForTimeout(600)
 
-    await firstRow.locator('button', { hasText: 'Edit' }).click()
+    await firstRow.locator('button', { hasText: /Edit|编辑/ }).click()
     await page.waitForTimeout(300)
     const dialog = await page.locator('.el-dialog:visible').count()
     if (!dialog) throw new Error('Edit dialog did not open')
-    await page.locator('.el-dialog:visible button', { hasText: 'Cancel' }).click()
+    await page.locator('.el-dialog:visible button', { hasText: /Cancel|取消/ }).click()
     await page.waitForTimeout(200)
 
     page.once('dialog', (d) => d.dismiss().catch(() => {}))
-    await firstRow.locator('button', { hasText: 'Delete' }).click()
+    await firstRow.locator('button', { hasText: /Delete|删除/ }).click()
     await page.waitForTimeout(400)
     const confirmBox = await page.locator('.el-message-box:visible').count()
     if (!confirmBox) throw new Error('Delete did not ask for confirmation')
