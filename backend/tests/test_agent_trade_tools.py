@@ -765,6 +765,39 @@ async def test_list_email_templates_returns_the_seeded_templates(db):
         assert isinstance(tpl["placeholders_used"], list)
 
 
+async def test_the_shipped_templates_do_not_sign_with_the_customers_name(db):
+    """These two are copy a salesperson can send as-is.
+
+    {company_name} resolves to the customer's record, which is right in a
+    greeting and wrong in a subject or a closing -- the original wording had it
+    in both, so our letter went out signed with the buyer's name.
+    """
+    from sqlalchemy import select
+
+    from app.models.email_template import EmailTemplate
+
+    seeded = (
+        await db.execute(
+            select(EmailTemplate).where(
+                EmailTemplate.name.in_(
+                    ["Cold Outreach - General", "Follow-up Template"]
+                )
+            )
+        )
+    ).scalars().all()
+
+    assert len(seeded) == 2, "the demo seed ships two templates"
+    for tpl in seeded:
+        assert "{company_name}" not in (tpl.subject or ""), tpl.name
+        closing = (tpl.body or "").split("Best regards")[-1]
+        assert "{company_name}" not in closing, (
+            f"{tpl.name} signs our letter with the customer's own name"
+        )
+        assert "{sender_company}" in closing, (
+            f"{tpl.name} does not say who the letter is from"
+        )
+
+
 async def test_list_email_templates_filters_by_category(db):
     result = await list_email_templates(category="follow_up")
     assert result["count"] >= 1
@@ -801,13 +834,20 @@ async def test_render_template_fills_the_variables_from_the_customer_record(db):
 
     assert "error" not in result
     assert result["subject"], "a rendered subject must not come back empty"
-    # The company name came from the CRM, not from the caller.
+    # The subject and the closing speak for us, so they must not carry the
+    # buyer's name. This is the line the shipped template used to get wrong.
     from app.models.customer import Customer
 
     customer = (
         await db.execute(select(Customer).where(Customer.id == customer_id))
     ).scalar_one()
-    assert customer.company_name in result["subject"]
+    assert customer.company_name not in result["subject"]
+    assert customer.company_name not in result["body"].split("Best regards")[-1], (
+        "the letter is signed with the customer's own company name"
+    )
+    # Both sides of that split are filled: ours from settings, theirs only
+    # where the template actually addresses them.
+    assert "sender_company" not in (result["unresolved_placeholders"] or [])
     assert "company_name" not in (result["unresolved_placeholders"] or [])
     assert "create_email_draft" in result["next_step"]
 
@@ -824,7 +864,7 @@ async def test_render_template_leaves_an_unknown_placeholder_standing(db):
         )
     ).scalar_one()
 
-    result = await render_email_template(template_id=row.id, company_name="Acme Textiles")
+    result = await render_email_template(template_id=row.id, sender_company="Acme Textiles")
 
     assert "Acme Textiles" in result["subject"]
     # contact_name was never supplied, so it is reported rather than blanked.

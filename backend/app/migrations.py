@@ -267,6 +267,77 @@ async def _cross_session_memory_settled(conn: AsyncConnection) -> bool:
     return await _table_exists(conn, "agent_memories")
 
 
+async def _seed_template_wording_settled(conn: AsyncConnection) -> bool:
+    """True when no shipped template still signs with the customer's name.
+
+    Matched on the exact subject *and* body that shipped, so a template
+    somebody edited is left alone even if it kept the old sign-off: at that
+    point the wording is theirs, not ours to rewrite.
+    """
+    if not await _table_exists(conn, "email_templates"):
+        return True
+    for old_subject, old_body, _new_subject, _new_body in _SEED_TEMPLATE_FIXES:
+        row = (
+            await conn.execute(
+                text(
+                    "SELECT 1 FROM email_templates WHERE subject = :subject "
+                    "AND body = :body LIMIT 1"
+                ),
+                {"subject": old_subject, "body": old_body},
+            )
+        ).first()
+        if row is not None:
+            return False
+    return True
+
+
+def _sql_literal(value: str) -> str:
+    """Quote a value for the statement list, which is plain text by design."""
+    return "'" + value.replace("'", "''") + "'"
+
+
+#: (old subject, old body, new subject, new body) for the templates that
+#: shipped before ``{company_name}`` was pinned to the customer. The old text
+#: signed our own letter with the buyer's name three times over: subject,
+#: opening ("We are ..."), and closing.
+_SEED_TEMPLATE_FIXES = (
+    (
+        "Quality {product_name} from {company_name}",
+        "<p>Dear {contact_name},</p><p>We are {company_name}, a leading "
+        "manufacturer of {product_name} based in Ningbo, China.</p><p>We would "
+        "love to discuss how we can support your business with high-quality "
+        "products at competitive prices.</p><p>Best regards,<br/>{company_name}"
+        "</p>",
+        "Quality {product_name} from {sender_company}",
+        "<p>Dear {contact_name},</p><p>We are {sender_company}, a leading "
+        "manufacturer of {product_name} based in {sender_address}.</p><p>We "
+        "would love to discuss how we can support your business with "
+        "high-quality products at competitive prices.</p><p>Best regards,"
+        "<br/>{sender_company}<br/>{sender_address}</p>",
+    ),
+    (
+        "Following up - {product_name} inquiry",
+        "<p>Dear {contact_name},</p><p>I hope this message finds you well. I "
+        "wanted to follow up on our previous correspondence regarding "
+        "{product_name}.</p><p>Would you have time for a quick call this week?"
+        "</p><p>Best regards,<br/>{company_name}</p>",
+        "Following up - {product_name} inquiry",
+        "<p>Dear {contact_name},</p><p>I hope this message finds you well. I "
+        "wanted to follow up on our previous correspondence regarding "
+        "{product_name}.</p><p>Would you have time for a quick call this week?"
+        "</p><p>Best regards,<br/>{sender_company}</p>",
+    ),
+)
+
+_SEED_TEMPLATE_FIX_STATEMENTS = [
+    "UPDATE email_templates SET "
+    f"subject = {_sql_literal(new_subject)}, body = {_sql_literal(new_body)} "
+    f"WHERE subject = {_sql_literal(old_subject)} "
+    f"AND body = {_sql_literal(old_body)}"
+    for old_subject, old_body, new_subject, new_body in _SEED_TEMPLATE_FIXES
+]
+
+
 MIGRATIONS: list[Migration] = [
     Migration(
         id="0001_agent_runs_customer_id",
@@ -550,6 +621,19 @@ MIGRATIONS: list[Migration] = [
             'ON agent_memories ("key")',
         ],
         guard=_cross_session_memory_settled,
+    ),
+    Migration(
+        id="0015_seed_template_sender",
+        description=(
+            "rewrite the two shipped templates that signed our letter with the "
+            "buyer's name. {company_name} resolves to the customer record, which "
+            "is right in a greeting and wrong in a sign-off or a subject line, so "
+            "the placeholder split into {company_name} (them) and {sender_company} "
+            "/ {sender_address} (us). Only the exact shipped text is matched: a "
+            "template a person edited is theirs and is left as it stands"
+        ),
+        statements=_SEED_TEMPLATE_FIX_STATEMENTS,
+        guard=_seed_template_wording_settled,
     ),
 ]
 

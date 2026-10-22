@@ -902,3 +902,136 @@ def test_legacy_mail_stays_unattributed_after_the_provenance_migration(scratch):
     assert "ix_email_logs_suggestion_kind" in names, (
         "without the index, 'reply rate by kind' is a scan of the whole table"
     )
+
+
+# --------------------------------------------------------------------------
+# 0015: the shipped templates signed our letter with the buyer's name
+# --------------------------------------------------------------------------
+
+#: The text that shipped. Kept verbatim in the test rather than imported from
+#: the migration: the point is that *this* wording, already sitting in a live
+#: database, gets replaced, and a test that reads the pair off the same constant
+#: would pass even if both halves were wrong in the same way.
+OLD_COLD_OUTREACH = (
+    "Quality {product_name} from {company_name}",
+    "<p>Dear {contact_name},</p><p>We are {company_name}, a leading manufacturer "
+    "of {product_name} based in Ningbo, China.</p><p>We would love to discuss how "
+    "we can support your business with high-quality products at competitive "
+    "prices.</p><p>Best regards,<br/>{company_name}</p>",
+)
+
+#: The same template after somebody added a line of their own. It still ends
+#: with the old sign-off, and it must stay exactly as it is.
+EDITED_COLD_OUTREACH = (
+    OLD_COLD_OUTREACH[0],
+    OLD_COLD_OUTREACH[1].replace(
+        "We would love", "Our Canton Fair samples are on their way. We would love"
+    ),
+)
+
+
+def as_database_with_shipped_templates(scratch):
+    # A database with templates in it is also a database with runs in it: the
+    # earlier migrations are written for that shape and would fail on a file
+    # that had only ever held templates.
+    as_legacy_database(scratch)
+
+    import asyncio
+
+    async def build(conn):
+        await conn.execute(text(
+            "CREATE TABLE email_templates ("
+            "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            "  name VARCHAR(200) NOT NULL,"
+            "  subject VARCHAR(500) NOT NULL,"
+            "  body TEXT NOT NULL,"
+            "  language VARCHAR(20),"
+            "  category VARCHAR(100),"
+            "  is_ai_generated INTEGER DEFAULT 0,"
+            "  use_count INTEGER DEFAULT 0,"
+            "  created_at DATETIME,"
+            "  updated_at DATETIME"
+            ")"
+        ))
+        for name, (subject, body) in (
+            ("Cold Outreach - General", OLD_COLD_OUTREACH),
+            ("Cold Outreach - mine", EDITED_COLD_OUTREACH),
+            ("Follow-up Template", (
+                "Following up - {product_name} inquiry",
+                "<p>Dear {contact_name},</p><p>I hope this message finds you well. "
+                "I wanted to follow up on our previous correspondence regarding "
+                "{product_name}.</p><p>Would you have time for a quick call this "
+                "week?</p><p>Best regards,<br/>{company_name}</p>",
+            )),
+        ):
+            await conn.execute(
+                text(
+                    "INSERT INTO email_templates (name, subject, body, language) "
+                    "VALUES (:name, :subject, :body, 'en')"
+                ),
+                {"name": name, "subject": subject, "body": body},
+            )
+
+    asyncio.run(scratch.run(build))
+
+
+def templates_by_name(scratch):
+    import asyncio
+
+    async def read(conn):
+        rows = await conn.execute(text(
+            "SELECT name, subject, body FROM email_templates ORDER BY name"
+        ))
+        return {name: (subject, body) for name, subject, body in rows.fetchall()}
+
+    return asyncio.run(scratch.run(read))
+
+
+def test_shipped_templates_stop_signing_with_the_customers_name(scratch):
+    as_database_with_shipped_templates(scratch)
+
+    import asyncio
+
+    report = asyncio.run(scratch.run(apply_migrations))
+    assert "0015_seed_template_sender" in report["applied"], report
+
+    after = templates_by_name(scratch)
+
+    subject, body = after["Cold Outreach - General"]
+    assert subject == "Quality {product_name} from {sender_company}"
+    assert body.endswith("<br/>{sender_company}<br/>{sender_address}</p>"), body
+    assert "{company_name}" not in body, (
+        "a shipped template still signs with the buyer's own company name"
+    )
+
+    _, follow_up = after["Follow-up Template"]
+    assert follow_up.endswith("<br/>{sender_company}</p>"), follow_up
+
+
+def test_a_template_somebody_edited_is_left_alone(scratch):
+    """The migration repairs what we shipped, not what a person wrote."""
+    as_database_with_shipped_templates(scratch)
+
+    import asyncio
+
+    asyncio.run(scratch.run(apply_migrations))
+
+    assert templates_by_name(scratch)["Cold Outreach - mine"] == EDITED_COLD_OUTREACH, (
+        "a template with an operator's own line was rewritten anyway"
+    )
+
+
+def test_the_template_repair_runs_once(scratch):
+    as_database_with_shipped_templates(scratch)
+
+    import asyncio
+
+    asyncio.run(scratch.run(apply_migrations))
+    once = templates_by_name(scratch)
+    second = asyncio.run(scratch.run(apply_migrations))
+
+    assert second["applied"] == [], second
+    assert second["pending"] == [], second
+    assert templates_by_name(scratch) == once, (
+        "a second start rewrote the templates again"
+    )

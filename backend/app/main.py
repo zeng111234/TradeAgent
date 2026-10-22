@@ -473,15 +473,18 @@ async def _insert_demo_data():
         templates = [
             EmailTemplate(
                 name="Cold Outreach - General",
-                subject="Quality {product_name} from {company_name}",
-                body="<p>Dear {contact_name},</p><p>We are {company_name}, a leading manufacturer of {product_name} based in Ningbo, China.</p><p>We would love to discuss how we can support your business with high-quality products at competitive prices.</p><p>Best regards,<br/>{company_name}</p>",
+                # {company_name} is the CUSTOMER, so it belongs in the greeting,
+                # not in the subject or the sign-off. Both of those speak for
+                # us, which is what {sender_company} / {sender_address} are for.
+                subject="Quality {product_name} from {sender_company}",
+                body="<p>Dear {contact_name},</p><p>We are {sender_company}, a leading manufacturer of {product_name} based in {sender_address}.</p><p>We would love to discuss how we can support your business with high-quality products at competitive prices.</p><p>Best regards,<br/>{sender_company}<br/>{sender_address}</p>",
                 language="en",
                 category="cold_outreach",
             ),
             EmailTemplate(
                 name="Follow-up Template",
                 subject="Following up - {product_name} inquiry",
-                body="<p>Dear {contact_name},</p><p>I hope this message finds you well. I wanted to follow up on our previous correspondence regarding {product_name}.</p><p>Would you have time for a quick call this week?</p><p>Best regards,<br/>{company_name}</p>",
+                body="<p>Dear {contact_name},</p><p>I hope this message finds you well. I wanted to follow up on our previous correspondence regarding {product_name}.</p><p>Would you have time for a quick call this week?</p><p>Best regards,<br/>{sender_company}</p>",
                 language="en",
                 category="follow_up",
             ),
