@@ -280,6 +280,37 @@ async function qualityPageNeverInventsAZero(page) {
   }
 }
 
+async function tasksEmptySaysItOnce(page) {
+  await page.route('**/api/v1/**', (route) => {
+    const path = new URL(route.request().url()).pathname
+    const json = (body) =>
+      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) })
+    if (path === '/api/v1/tasks') return json([])
+    if (path === '/api/v1/tasks/overdue/list') return json([])
+    return json({})
+  })
+
+  await page.goto(`${APP_URL}/tasks`, { waitUntil: 'networkidle' })
+
+  await until(page, async () => (await page.getByText(/还没有任务|No tasks yet/).count()) > 0, {
+    what: 'the empty-tasks message',
+  })
+
+  // The old page said "No Data" (Element Plus, always English) and then a
+  // second hardcoded `el-empty` underneath said "No tasks" -- one fact, twice,
+  // in a language the rest of the page does not use.
+  if (await page.getByText('No tasks', { exact: true }).count()) {
+    throw new Error('the old hardcoded "No tasks" layer is still on the page')
+  }
+
+  const action = page.locator('.el-table__empty-block button')
+  if (!(await action.count())) throw new Error('the empty state offers no way to create a task')
+  await action.first().click()
+  await until(page, async () => (await page.locator('.el-dialog:visible').count()) > 0, {
+    what: 'the new-task dialog opened from the empty state',
+  })
+}
+
 async function streamResumesFromCursor(page) {
   const seen = []
   await page.route('**/api/v1/**', async (route) => {
@@ -354,6 +385,7 @@ async function main() {
     await scenario('stream-failure-falls-back-to-polling', streamFallsBackToPolling, browser)
     await scenario('stream-resumes-from-the-last-round', streamResumesFromCursor, browser)
     await scenario('quality-page-never-invents-a-zero', qualityPageNeverInventsAZero, browser)
+    await scenario('tasks-empty-state-says-it-once', tasksEmptySaysItOnce, browser)
   } finally {
     await browser.close()
     stopVite(vite)

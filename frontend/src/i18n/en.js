@@ -39,6 +39,8 @@ export default {
     preview: 'Preview',
     send: 'Send',
     close: 'Close',
+    noResults: 'No matching results',
+    clearFilters: 'Clear filters',
     actions: 'Actions',
     status: 'Status',
     priority: 'Priority',
@@ -149,6 +151,7 @@ export default {
     greeting: 'What should the agent do today?',
     intro: 'Describe the goal in plain language. The agent picks its own tools, reads your data and answers — the tool calls unfold live below.',
     placeholder: 'e.g. Which of my customers need a follow-up today, and why?',
+    placeholderEmpty: 'e.g. Find 20 home-textile buyers in Germany',
     send: 'Send',
     sending: 'Running…',
     stop: 'Stop',
@@ -196,6 +199,9 @@ export default {
     suggestion1: 'Which of my customers need a follow-up today, and why?',
     suggestion2: 'Which customers are at risk of churn, and what should I do?',
     suggestion3: 'Draft an outreach email for the leads I scanned recently',
+    suggestionEmpty1: 'Find 20 home-textile buyers in Germany and collect their contact details',
+    suggestionEmpty2: 'Write me an export outreach template in English for embroidery thread',
+    suggestionEmpty3: 'What can you do for me? Walk me through the export workflow',
     history: 'Recent runs',
     historyTitle: 'Conversations',
     conversationEmpty: 'No conversations yet',
@@ -224,6 +230,11 @@ export default {
   },
 
   dashboard: {
+    startTitle: 'Start here',
+    startHint: 'This deployment has no data yet. Get the agent to find a few customers first — then this page has something to show.',
+    start1: 'Ask the agent for leads: in the console, say “find 20 home-textile buyers in Germany”',
+    start2: 'Get them into the CRM: add a customer, or import a scan lower on this page',
+    start3: 'Set a follow-up: create your first task',
     title: 'Dashboard',
     subtitle: 'The foreign-trade business at a glance',
     kpiCustomers: 'Customers',
@@ -405,6 +416,7 @@ export default {
     colActions: 'Actions',
     complete: 'Complete',
     empty: 'No tasks yet',
+    emptyOverdue: 'Nothing overdue',
   },
 
   runs: {

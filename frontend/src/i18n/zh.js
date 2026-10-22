@@ -43,6 +43,8 @@ export default {
     preview: '预览',
     send: '发送',
     close: '关闭',
+    noResults: '没有符合条件的结果',
+    clearFilters: '清除筛选',
     actions: '操作',
     status: '状态',
     priority: '优先级',
@@ -153,6 +155,7 @@ export default {
     greeting: '今天想让 agent 做什么？',
     intro: '用自然语言说目标就行。它会自己选工具、查数据、给出结论——工具调用过程在下面实时展开。',
     placeholder: '例如：看看我现有客户里哪些需要今天跟进，给我理由',
+    placeholderEmpty: '例如：帮我找 20 个德国的家纺买家',
     send: '发送',
     sending: '运行中…',
     stop: '停止',
@@ -200,6 +203,9 @@ export default {
     suggestion1: '看看我现有客户里哪些需要今天跟进，给我理由',
     suggestion2: '哪些客户有流失风险？该做什么',
     suggestion3: '给最近扫描到的新客户起草一封开发信',
+    suggestionEmpty1: '帮我找 20 个德国的家纺买家，并整理联系方式',
+    suggestionEmpty2: '给我一份刺绣线的外贸开发信模板，英文的',
+    suggestionEmpty3: '你能帮我做什么？按外贸流程说一遍',
     history: '最近的运行',
     historyTitle: '对话',
     conversationEmpty: '还没有对话',
@@ -228,6 +234,11 @@ export default {
   },
 
   dashboard: {
+    startTitle: '从这三步开始',
+    startHint: '这个部署还没有数据。先让 agent 找一批客户，看板才有东西可看。',
+    start1: '让 agent 找客户：在控制台说「帮我找 20 个德国的家纺买家」',
+    start2: '存进 CRM：新增一个客户，或在页面下方导入扫描结果',
+    start3: '设一个跟进：在待办事项里建第一个任务',
     title: '数据看板',
     subtitle: '外贸业务全景概览',
     kpiCustomers: '客户总数',
@@ -409,6 +420,7 @@ export default {
     colActions: '操作',
     complete: '完成',
     empty: '还没有任务',
+    emptyOverdue: '没有逾期任务',
   },
 
   runs: {

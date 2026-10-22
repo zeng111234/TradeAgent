@@ -77,8 +77,18 @@
             <el-button size="small" type="danger" link @click="handleDelete(row)">{{ t('common.delete') }}</el-button>
           </template>
         </el-table-column>
+
+        <!-- The table used to say "No Data" (in English, from Element Plus)
+             and then a second `el-empty` underneath said "No tasks" -- the same
+             fact twice, in the wrong language, with no way forward. -->
+        <template #empty>
+          <el-empty v-if="loaded && !loading" :description="emptyText">
+            <el-button v-if="overdueOnly" @click="toggleOverdue">{{ t('tasks.showAll') }}</el-button>
+            <el-button v-else-if="filtersActive" @click="clearFilters">{{ t('common.clearFilters') }}</el-button>
+            <el-button v-else type="primary" @click="showDialog()">{{ t('tasks.newTask') }}</el-button>
+          </el-empty>
+        </template>
       </el-table>
-      <el-empty v-if="!visibleTasks.length && !loading" description="No tasks" />
     </el-card>
 
     <!-- Add/Edit Dialog -->
@@ -138,6 +148,9 @@ import { failureDetail, patchRow, reconcile, removeRow } from '../utils/optimist
 
 const tasks = ref([])
 const loading = ref(false)
+// Set on a successful read only: a failed one leaves us not knowing whether the
+// list is empty, and the table must not answer that question with a guess.
+const loaded = ref(false)
 const saving = ref(false)
 const dialogVisible = ref(false)
 const editing = ref(null)
@@ -154,6 +167,22 @@ const overdueTasks = ref([])
 const visibleTasks = computed(() =>
   overdueOnly.value ? overdueTasks.value : tasks.value
 )
+
+const filtersActive = computed(() => Boolean(filterStatus.value || filterPriority.value))
+
+// Three different reasons the table can be empty, three different ways out:
+// overdue is a filtered view, a status filter is the user's own doing, and the
+// rest is a genuinely empty list.
+const emptyText = computed(() => {
+  if (overdueOnly.value) return t('tasks.emptyOverdue')
+  if (filtersActive.value) return t('common.noResults')
+  return t('tasks.empty')
+})
+
+const clearFilters = () => {
+  filterStatus.value = ''
+  filterPriority.value = ''
+}
 
 const form = reactive({
   title: '',
@@ -178,6 +207,7 @@ const loadTasks = async () => {
       status: filterStatus.value || undefined,
       priority: filterPriority.value || undefined,
     })
+    loaded.value = true
   } catch (e) {
     ElMessage.error('Failed to load tasks')
   } finally {
@@ -195,6 +225,7 @@ const toggleOverdue = async () => {
     overdueTasks.value = await taskApi.getOverdue()
     overdueCount.value = overdueTasks.value.length
     overdueOnly.value = true
+    loaded.value = true
     ElMessage.info(`${overdueTasks.value.length} overdue task(s)`)
   } catch (e) {
     ElMessage.error(failureDetail(e, 'Failed to load overdue tasks'))

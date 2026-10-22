@@ -98,7 +98,68 @@ async def test_armed_the_docs_are_not_public(client, armed):
 async def test_armed_the_login_page_is_reachable(client, armed):
     response = client.get("/login")
     assert response.status_code == 200
-    assert "password" in response.text.lower()
+    # The assertion here used to be `"password" in response.text.lower()`,
+    # which matched the input's own name attribute -- it would have passed
+    # whatever the page said. These check the form actually posts somewhere and
+    # that the page speaks the product's own language by default.
+    assert 'method="post"' in response.text
+    assert 'action="/login"' in response.text
+    assert 'name="password"' in response.text
+    assert "访问密码" in response.text
+    assert 'lang="zh-CN"' in response.text
+
+
+@pytest.mark.asyncio
+async def test_the_login_page_follows_the_browser_language(client, armed):
+    """No cookie, no storage, no JS: the only signal a first-time visitor
+    gives off is the header their browser already sends."""
+    english = client.get("/login", headers={"accept-language": "en-US,en;q=0.9"})
+    assert "private deployment" in english.text
+    assert 'lang="en"' in english.text
+
+    chinese = client.get("/login", headers={"accept-language": "zh-CN,zh;q=0.9"})
+    assert "私有部署" in chinese.text
+    assert 'lang="zh-CN"' in chinese.text
+
+
+@pytest.mark.asyncio
+async def test_the_language_can_be_chosen_explicitly(client, armed):
+    """A share link can pin the language, which beats guessing from headers."""
+    forced = client.get("/login", params={"lang": "en"}, headers={"accept-language": "zh-CN"})
+    assert "Access password" in forced.text
+
+    # An unknown value falls back to the product default rather than 422: this
+    # is a page a person arrives at, not an API a client calls.
+    unknown = client.get("/login", params={"lang": "de"}, headers={"accept-language": "zh-CN"})
+    assert unknown.status_code == 200
+    assert "访问密码" in unknown.text
+
+
+@pytest.mark.asyncio
+async def test_the_login_page_says_what_it_is_and_where_the_password_comes_from(client, armed):
+    """A stranger handed the link used to get a password box and nothing else:
+    no product name, no audience, no hint that the password lives with whoever
+    sent them the link."""
+    zh = client.get("/login", headers={"accept-language": "zh-CN"}).text
+    assert "外贸" in zh and "这条链接" in zh
+
+    en = client.get("/login", headers={"accept-language": "en"}).text
+    assert "export sales" in en and "shared this link" in en
+
+
+@pytest.mark.asyncio
+async def test_a_wrong_password_is_reported_in_the_page_language(client, armed):
+    english = client.post(
+        "/login", data={"password": "nope", "next": "/", "lang": "en"}, follow_redirects=False
+    )
+    assert english.status_code == 401
+    assert "Wrong password" in english.text
+
+    chinese = client.post(
+        "/login", data={"password": "nope", "next": "/", "lang": "zh"}, follow_redirects=False
+    )
+    assert chinese.status_code == 401
+    assert "密码不正确" in chinese.text
 
 
 @pytest.mark.asyncio

@@ -70,6 +70,15 @@ async function main() {
     const strip = await page.locator('.kpi-strip .kpi-strip__item').count()
     if (cards !== 4 || strip !== 4) throw new Error(`KPI shape wrong: ${cards} cards / ${strip} strip cells`)
 
+    // 2b. This gate's stubs answer every analytics call with `{}`, which is
+    // exactly the empty-deployment case. The zeros stay (they are true), the
+    // start card explains them, and the four canvases are withheld rather than
+    // painted blank.
+    const start = await page.locator('.start-card').count()
+    if (start !== 1) throw new Error(`expected the start-here card on an empty DB, got ${start}`)
+    const canvases = await page.locator('.chart-box:visible').count()
+    if (canvases !== 0) throw new Error(`an empty DB should not paint charts, got ${canvases} visible`)
+
     // 3. scan -> table rows render, checkbox selects and drives the count
     await page.getByRole('button', { name: /搜索新客户/ }).click()
     await page.waitForTimeout(1000)

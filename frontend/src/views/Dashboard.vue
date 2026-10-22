@@ -21,6 +21,22 @@
       </div>
     </div>
 
+    <!-- An empty deployment used to be eight zeros and four blank canvases:
+         accurate, and no help at all to somebody who just logged in for the
+         first time. This sits above the numbers rather than replacing them --
+         the zeros are still the truth, they just are not the whole answer. -->
+    <el-card v-if="isEmptyDb" shadow="never" class="start-card mb-4">
+      <template #header>
+        <span class="card-title">{{ t('dashboard.startTitle') }}</span>
+      </template>
+      <p class="section-note">{{ t('dashboard.startHint') }}</p>
+      <ol class="start-steps">
+        <li><router-link to="/console">{{ t('dashboard.start1') }}</router-link></li>
+        <li><router-link to="/customers">{{ t('dashboard.start2') }}</router-link></li>
+        <li><router-link to="/tasks">{{ t('dashboard.start3') }}</router-link></li>
+      </ol>
+    </el-card>
+
     <!-- Four headline numbers, then the four that explain them. Eight cards at
          one weight was the page's loudest clutter; the month/task counts are
          context, not headlines. -->
@@ -64,8 +80,9 @@
       </div>
     </div>
 
-    <!-- Charts -->
-    <el-row :gutter="20" class="mb-6">
+    <!-- Charts. Withheld while the database is empty: four canvases drawing
+         nothing are worse than absent, and the start card above says why. -->
+    <el-row v-if="!isEmptyDb" :gutter="20" class="mb-6">
       <el-col :span="12">
         <el-card shadow="never">
           <template #header>
@@ -84,7 +101,7 @@
       </el-col>
     </el-row>
 
-    <el-row :gutter="20">
+    <el-row v-if="!isEmptyDb" :gutter="20">
       <el-col :span="12">
         <el-card shadow="never">
           <template #header>
@@ -331,6 +348,16 @@ const stats = reactive({
   pending_tasks: 0,
   overdue_tasks: 0,
 })
+
+// `stats` starts at zero, so "all zero" alone cannot tell an empty database
+// from a request that has not landed yet -- showing the start card before the
+// answer arrives would flash it on every load. Only a finished, successful
+// request is allowed to declare the database empty; a failed one says nothing.
+const statsLoaded = ref(false)
+const isEmptyDb = computed(() =>
+  statsLoaded.value
+  && !stats.total_customers && !stats.total_emails_sent
+  && !stats.pending_tasks && !stats.overdue_tasks)
 
 const funnelChartRef = ref(null)
 const trendChartRef = ref(null)
@@ -765,6 +792,9 @@ onMounted(async () => {
   try {
     const data = await analyticsApi.dashboard()
     Object.assign(stats, data)
+    // Only here: the numbers are known now, so "all zero" means empty rather
+    // than "still loading". The catch below deliberately leaves it false.
+    statsLoaded.value = true
   } catch (e) {
     console.error('Dashboard stats error:', e)
   }
@@ -790,3 +820,27 @@ onUnmounted(() => {
   charts.forEach(c => c.dispose())
 })
 </script>
+<style scoped>
+/* The one card on this page that is guidance rather than data: tinted edge so
+   it reads as "start here" and not as another metric. */
+.start-card {
+  border-left: 3px solid var(--el-color-primary);
+}
+
+.start-steps {
+  margin: 10px 0 0;
+  padding-left: 20px;
+  color: var(--text-2);
+  font-size: var(--fs-body);
+  line-height: 1.9;
+}
+
+.start-steps a {
+  color: var(--el-color-primary);
+  text-decoration: none;
+}
+
+.start-steps a:hover {
+  text-decoration: underline;
+}
+</style>

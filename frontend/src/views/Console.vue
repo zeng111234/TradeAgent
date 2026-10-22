@@ -220,7 +220,7 @@
           type="textarea"
           resize="none"
           :autosize="{ minRows: 1, maxRows: 5 }"
-          :placeholder="t('console.placeholder')"
+          :placeholder="customerCount === 0 ? t('console.placeholderEmpty') : t('console.placeholder')"
           :disabled="running"
           @keydown.enter.exact.prevent="send()"
         />
@@ -255,7 +255,7 @@
  */
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { runApi } from '../api'
+import { runApi, customerApi } from '../api'
 import { runStatusType as statusType } from '../constants/status.js'
 import { renderMarkdown } from '../utils/markdown'
 import { formatCost, formatTokens, isTerminal, mergeSteps, normaliseRun, runOutcome } from '../utils/runProgress'
@@ -296,11 +296,28 @@ const currentTitle = computed(() => {
   return found?.title || t('console.title')
 })
 
-const suggestions = computed(() => [
-  t('console.suggestion1'),
-  t('console.suggestion2'),
-  t('console.suggestion3'),
-])
+// The three starter goals all assume the CRM has rows in it ("which of my
+// customers needs a follow-up today"). On a brand-new deployment that is a
+// question the agent can only answer with "you have none", which reads like the
+// product is broken. `null` means "we have not found out", and unknown keeps the
+// original goals -- guessing "empty" from a failed call would silently change
+// what a working deployment suggests.
+const customerCount = ref(null)
+
+const suggestions = computed(() => (
+  customerCount.value === 0
+    ? [t('console.suggestionEmpty1'), t('console.suggestionEmpty2'), t('console.suggestionEmpty3')]
+    : [t('console.suggestion1'), t('console.suggestion2'), t('console.suggestion3')]
+))
+
+async function loadCrmSize() {
+  try {
+    const data = await customerApi.list({ page: 1, page_size: 1 })
+    if (typeof data?.total === 'number') customerCount.value = data.total
+  } catch {
+    /* unknown: the default goals are still worth suggesting */
+  }
+}
 
 // `cancelling` is still running: the stop is a request, and the stream keeps
 // delivering the rounds that were already in flight until the terminal frame.
@@ -847,6 +864,9 @@ function maybeRunFromQuery() {
 }
 
 onMounted(async () => {
+  // Not awaited: the goals are a nicety, and the composer must not wait for a
+  // count it does not need.
+  loadCrmSize()
   await loadMeta()
   await loadConversations()
   // Restore before a topbar command: a goal typed into the shell should join

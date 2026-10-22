@@ -84,6 +84,17 @@
             <el-button size="small" type="danger" link @click.stop="handleDelete(row)">{{ t('common.delete') }}</el-button>
           </template>
         </el-table-column>
+
+        <!-- Element Plus's own empty block says "No Data" in whatever locale it
+             was installed with. This one says why the table is empty and what
+             to do about it -- and `customers.empty` had been sitting unused in
+             the dictionary since it was written. -->
+        <template #empty>
+          <el-empty v-if="loaded && !loading" :description="filtersActive ? t('common.noResults') : t('customers.empty')">
+            <el-button v-if="filtersActive" @click="clearFilters">{{ t('common.clearFilters') }}</el-button>
+            <el-button v-else type="primary" @click="showAddDialog">{{ t('customers.addCustomer') }}</el-button>
+          </el-empty>
+        </template>
       </el-table>
 
       <!-- Pagination -->
@@ -144,7 +155,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { customerApi } from '../api'
@@ -153,6 +164,11 @@ import { t } from '../i18n/index.js'
 
 const router = useRouter()
 const loading = ref(false)
+// Only a *successful* read earns this. A failed request means we do not know
+// whether the list is empty, so saying "no customers yet" would be inventing an
+// answer -- the table stays with Element Plus's neutral default instead. It also
+// keeps the empty state off the first frame, before any request has started.
+const loaded = ref(false)
 const saving = ref(false)
 const dialogVisible = ref(false)
 const editingCustomer = ref(null)
@@ -168,6 +184,17 @@ const filters = reactive({
   source: '',
   country: '',
 })
+
+// "Nothing here" and "nothing matched" are different sentences with different
+// ways out, so the empty state has to know which one it is looking at.
+const filtersActive = computed(() =>
+  Boolean(filters.search || filters.stage || filters.source || filters.country))
+
+const clearFilters = () => {
+  Object.assign(filters, { search: '', stage: '', source: '', country: '' })
+  page.value = 1
+  loadCustomers()
+}
 
 const form = reactive({
   company_name: '',
@@ -190,6 +217,7 @@ const loadCustomers = async () => {
     })
     customers.value = data.items
     total.value = data.total
+    loaded.value = true
   } catch (e) {
     ElMessage.error('Failed to load customers')
   } finally {

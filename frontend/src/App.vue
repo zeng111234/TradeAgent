@@ -1,4 +1,9 @@
 <template>
+  <!-- Element Plus is installed once with a fixed locale, so its own strings
+       (a table's "暂无数据"/"No Data", pagination, the date picker) would
+       freeze at whatever that was. A provider follows the language switcher
+       instead. It renders no DOM of its own, so the layout is untouched. -->
+  <el-config-provider :locale="epLocale">
   <div class="layout">
     <!-- Sidebar: the agent is the product, so it comes first; business data
          is context underneath. -->
@@ -113,12 +118,21 @@
       </main>
     </div>
   </div>
+  </el-config-provider>
 </template>
 
 <script setup>
 import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import zhCn from 'element-plus/es/locale/lang/zh-cn'
+import enLocale from 'element-plus/es/locale/lang/en'
 import { locale, setLocale, t } from './i18n/index.js'
+
+// What Element Plus says for itself (table "No Data", pagination, date picker).
+// Its imperative services -- ElMessageBox, ElMessage -- are created outside the
+// provider tree and keep the locale they were installed with, so their buttons
+// stay English. That is the existing behaviour, not something this changes.
+const epLocale = computed(() => (locale.value === 'zh' ? zhCn : enLocale))
 
 const route = useRoute()
 const router = useRouter()

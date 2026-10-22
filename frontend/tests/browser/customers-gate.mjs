@@ -127,6 +127,51 @@ async function main() {
     await page.waitForTimeout(500)
     const page2 = await page.locator('.el-table__body tr.el-table__row').count()
     if (page2 !== 5) throw new Error(`page 2 should have 5 rows, got ${page2}`)
+
+    // 5. Empty database. The table must explain itself and offer a way out.
+    const emptyPage = await browser.newPage({ viewport: { width: 1440, height: 900 } })
+    const emptyErrors = []
+    emptyPage.on('pageerror', (e) => emptyErrors.push(`pageerror: ${e.message}`))
+    await emptyPage.route('**/api/v1/**', async (route) => {
+      const path = new URL(route.request().url()).pathname
+      if (path === '/api/v1/customers' && route.request().method() === 'GET') {
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ items: [], total: 0, page: 1, page_size: PAGE_SIZE }),
+        })
+      }
+      return route.fulfill({ status: 200, contentType: 'application/json', body: '{}' })
+    })
+    await emptyPage.goto(`${APP_URL}/customers`, { waitUntil: 'domcontentloaded', timeout: 60_000 })
+    await emptyPage.waitForTimeout(700)
+    if (!(await emptyPage.getByText(/还没有客户|No customers yet/).count())) {
+      throw new Error('an empty table did not explain itself')
+    }
+    const emptyAction = await emptyPage.locator('.el-table__empty-block button').count()
+    if (!emptyAction) throw new Error('the empty state offers no way to add the first customer')
+    if (emptyErrors.length) throw new Error(`empty-state pageerrors: ${JSON.stringify(emptyErrors)}`)
+    await emptyPage.close()
+
+    // 6. A *failed* read must not claim the list is empty. We do not know, and
+    // "no customers yet -- add the first one" is a confident wrong answer. This
+    // is what separates `loaded` from `!loading`: the empty state is earned by a
+    // successful answer, not by the mere absence of a spinner.
+    const failPage = await browser.newPage({ viewport: { width: 1440, height: 900 } })
+    await failPage.route('**/api/v1/**', (route) => {
+      const path = new URL(route.request().url()).pathname
+      if (path === '/api/v1/customers' && route.request().method() === 'GET') {
+        return route.fulfill({ status: 500, contentType: 'application/json', body: '{"detail":"boom"}' })
+      }
+      return route.fulfill({ status: 200, contentType: 'application/json', body: '{}' })
+    })
+    await failPage.goto(`${APP_URL}/customers`, { waitUntil: 'domcontentloaded', timeout: 60_000 })
+    await failPage.waitForTimeout(900)
+    if (await failPage.getByText(/还没有客户|No customers yet/).count()) {
+      throw new Error('a failed read claimed the list was empty')
+    }
+    await failPage.close()
+
     if (errors.length) throw new Error(`console errors: ${JSON.stringify(errors.slice(0, 3))}`)
     console.log(`PASS customers-gate: uniform rows ${unique[0]}px, country folded, dialogs ok, paging ok`)
   } catch (err) {
