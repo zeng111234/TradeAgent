@@ -75,12 +75,32 @@ def scratch(tmp_path):
     asyncio.run(handle.dispose())
 
 
+LEGACY_AGENT_CONVERSATIONS = """
+CREATE TABLE agent_conversations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    conversation_id VARCHAR(64) NOT NULL UNIQUE,
+    title VARCHAR(120) NOT NULL DEFAULT '',
+    customer_id INTEGER,
+    created_at DATETIME,
+    updated_at DATETIME
+)
+"""
+
+
 def as_legacy_database(scratch):
-    """Build the ``agent_runs`` table the way it looked before the migration."""
+    """Build the tables the way they looked before the migrations ran.
+
+    ``agent_conversations`` is included even though most migrations here only
+    touch ``agent_runs``: a real database of that age has it, because
+    ``create_all`` had been adding it on every start. A fixture that omits it
+    would test a shape the product never produces, and would fail the first
+    migration that alters the other table.
+    """
     import asyncio
 
     async def build(conn):
         await conn.execute(text(LEGACY_AGENT_RUNS))
+        await conn.execute(text(LEGACY_AGENT_CONVERSATIONS))
         await conn.execute(
             text(
                 "INSERT INTO agent_runs (run_id, goal, status, created_at) "
@@ -91,6 +111,18 @@ def as_legacy_database(scratch):
         )
 
     asyncio.run(scratch.run(build))
+
+
+def tables(scratch):
+    import asyncio
+
+    async def read(conn):
+        rows = await conn.execute(
+            text("SELECT name FROM sqlite_master WHERE type = 'table'")
+        )
+        return [row[0] for row in rows.fetchall()]
+
+    return asyncio.run(scratch.run(read))
 
 
 def columns(scratch, table):
@@ -203,6 +235,79 @@ def test_a_legacy_database_learns_which_model_ran(scratch):
 
     assert "0012_agent_runs_model" in report["applied"], report
     assert "model" in columns(scratch, "agent_runs")
+
+
+def test_a_legacy_database_learns_what_a_thread_concluded(scratch):
+    """A thread used to die with its last message; the digest is what survives it."""
+    import asyncio
+
+    as_legacy_database(scratch)
+    assert "summary" not in columns(scratch, "agent_conversations")
+    assert "agent_memories" not in tables(scratch)
+
+    report = asyncio.run(scratch.run(apply_migrations))
+
+    assert "0014_cross_session_memory" in report["applied"], report
+    assert {"summary", "summary_turns", "summarized_at"} <= set(
+        columns(scratch, "agent_conversations")
+    )
+    assert "agent_memories" in tables(scratch)
+    assert "ix_agent_memories_key" in indexes(scratch, "agent_memories"), (
+        "the unique index is what makes a repeated key an update, not a duplicate"
+    )
+
+
+def test_a_legacy_thread_starts_with_nothing_summarised(scratch):
+    """DEFAULT 0, not NULL: "nothing summarised yet" has to compare as a number."""
+    import asyncio
+
+    as_legacy_database(scratch)
+
+    async def seed(conn):
+        await conn.execute(
+            text(
+                "INSERT INTO agent_conversations "
+                "(conversation_id, title, created_at, updated_at) "
+                "VALUES ('legacy-thread', 'old thread', :now, :now)"
+            ),
+            {"now": datetime.utcnow()},
+        )
+
+    asyncio.run(scratch.run(seed))
+    asyncio.run(scratch.run(apply_migrations))
+
+    async def read(conn):
+        return (
+            await conn.execute(
+                text(
+                    "SELECT summary, summary_turns FROM agent_conversations "
+                    "WHERE conversation_id = 'legacy-thread'"
+                )
+            )
+        ).fetchone()
+
+    summary, turns = asyncio.run(scratch.run(read))
+    assert summary is None, "a legacy thread has no note to invent"
+    assert turns == 0, "and must not look as if it had already been summarised"
+
+
+def test_the_same_note_key_cannot_be_stored_twice(scratch):
+    """The key is the identity. Without the unique index, "remember" would
+    silently accumulate two rows that disagree and the next thread would be told
+    both."""
+    import asyncio
+
+    as_legacy_database(scratch)
+    asyncio.run(scratch.run(apply_migrations))
+
+    async def double_insert(conn):
+        for _ in range(2):
+            await conn.execute(
+                text("INSERT INTO agent_memories (key, value) VALUES ('k', 'v')")
+            )
+
+    with pytest.raises(Exception):
+        asyncio.run(scratch.run(double_insert))
 
 
 def test_legacy_stop_reasons_are_backfilled_with_a_code(scratch):

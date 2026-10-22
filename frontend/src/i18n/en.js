@@ -208,6 +208,14 @@ export default {
     turnCount: '{n} turns',
     allRuns: 'All runs',
     emptyHistory: 'No runs yet',
+    memory: {
+      title: 'What it remembers',
+      intro: 'Preferences and rules kept across conversations. Each thread also writes itself a handover note, and a new thread opens with the most recent ones. Delete anything it got wrong.',
+      loading: 'Reading…',
+      empty: 'Nothing yet. It writes here when it decides something in a conversation is worth keeping beyond it.',
+      forget: 'Delete',
+      forgetFailed: 'Could not delete — the note is still there',
+    },
   },
 
   trace: {

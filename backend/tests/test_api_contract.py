@@ -64,6 +64,13 @@ EXPECTED_ROUTES: dict[str, set[str]] = {
     "/api/v1/agent/runs/{run_id}/trace.html": {"get"},
     "/api/v1/agent/conversations": {"get"},
     "/api/v1/agent/conversations/{conversation_id}": {"get"},
+    # --- cross-session memory (2) ---
+    # Read and remove the notes the agent keeps across threads. Deliberately not
+    # a POST: the agent writes them through a tool, but a person must be able to
+    # see every one and delete a wrong one by hand -- a memory nobody can inspect
+    # is a rumour. Nothing here reaches the customer book.
+    "/api/v1/agent/memories": {"get"},
+    "/api/v1/agent/memories/{key}": {"delete"},
     # --- analytics router (6) ---
     "/api/v1/analytics/countries": {"get"},
     "/api/v1/analytics/dashboard": {"get"},

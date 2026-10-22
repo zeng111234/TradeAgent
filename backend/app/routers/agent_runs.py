@@ -316,6 +316,22 @@ async def api_agent_capabilities():
             for entry in registry.schemas()
         ],
         "write_capable": sorted(t.name for t in registry.tagged("write")),
+        "memory": {
+            "across_threads": (
+                "Every thread writes a handover note for the next one. A new "
+                "thread is shown the three most recent notes, plus the standing "
+                "notes the model chose to keep."
+            ),
+            "notes_are_visible": (
+                "Every standing note is readable at GET /api/v1/agent/memories "
+                "and deletable by hand — a memory nobody can inspect is a rumour."
+            ),
+            "not_a_vector_store": (
+                "The digest is bounded prose, not an embedding index: the book is "
+                "a handful of structured rows where an exact lookup beats a "
+                "similarity one."
+            ),
+        },
         "cannot": [
             "send email to a customer",
             "delete a customer, or rewrite the details a person saved — its "
@@ -330,6 +346,9 @@ async def api_agent_capabilities():
             "edit what a task says: one can be created, closed (completed "
             "or cancelled), and moved to a new due date, but its title and "
             "description are not rewritten",
+            "delete anything a person saved. The one deletion it has is "
+            "forget(), and that reaches only its own standing notes — never a "
+            "customer, a draft, an email or a template",
             # Absent capabilities, not policies. "We refuse to quote" would be
             # a promise the code does not keep -- the model can still write a
             # price into a draft. What is true is that there is nothing to read
@@ -473,6 +492,7 @@ async def api_agent_run(
     # later and the console never uses this path.
     conversation_id, new_conversation = await _resolve_conversation(data, create=False)
     history = await _history_for(conversation_id)
+    memory = await _memory_for(conversation_id)
 
     # A keyed synchronous run reserves its key before the model call, or two
     # concurrent retries both start and the caller pays twice. The row *is* the
@@ -511,6 +531,7 @@ async def api_agent_run(
             data.goal, context=data.context, budget=budget,
             customer_id=data.customer_id, run_id=wait_run_id,
             history=history, conversation_id=conversation_id,
+            memory=memory,
         )
     except AgentUnavailable as exc:            # pragma: no cover - guarded above
         if wait_run_id:
@@ -534,6 +555,14 @@ async def api_agent_run(
     payload["mermaid_sequence"] = result.mermaid_sequence
     payload["mermaid_flowchart"] = result.mermaid_flowchart
     payload["conversation_id"] = conversation_id
+
+    # Off the response path: the caller is waiting for an answer it already has,
+    # and a digest is bookkeeping. Scheduled rather than awaited so a slow model
+    # call cannot delay a finished run.
+    if conversation_id:
+        task = asyncio.create_task(_refresh_digest(conversation_id))
+        _background_tasks.add(task)
+        task.add_done_callback(_background_tasks.discard)
     return payload
 
 
@@ -582,6 +611,41 @@ async def _history_for(
     async with async_session() as db:
         turns = await recent_turns(db, conversation_id, max_turns=HISTORY_TURNS)
     return turns or None
+
+
+async def _memory_for(conversation_id: Optional[str]) -> str:
+    """What earlier threads concluded, plus the standing notes.
+
+    Best-effort in the strong sense: a failure here returns ``""`` and the run
+    starts with no memory block. Memory is an improvement to the answer, and an
+    improvement that can stop the run from happening is a regression.
+    """
+    try:
+        from app.agent.memory import cross_session_block
+
+        return await cross_session_block(conversation_id) or ""
+    except Exception:  # noqa: BLE001 - never block a run on its bookkeeping
+        logger.warning("could not read cross-session memory", exc_info=True)
+        return ""
+
+
+async def _refresh_digest(conversation_id: Optional[str]) -> None:
+    """Rebuild a thread's handover note after a run concluded. Never raises.
+
+    Called once per finished run. ``summarise_conversation`` decides whether
+    there is anything new to fold in, so a run that added nothing costs a query
+    rather than a model call.
+    """
+    if not conversation_id:
+        return
+    try:
+        from app.agent.memory import summarise_conversation
+
+        await summarise_conversation(conversation_id)
+    except Exception:  # noqa: BLE001 - the run already succeeded
+        logger.warning(
+            "could not refresh the digest for %s", conversation_id, exc_info=True
+        )
 
 
 async def _start_in_background(
@@ -641,6 +705,7 @@ async def _start_in_background(
                 conversation_id=conversation_id,
             )
     history = await _history_for(conversation_id)
+    memory = await _memory_for(conversation_id)
 
     _in_flight.add(run_id)
 
@@ -674,9 +739,14 @@ async def _start_in_background(
                 customer_id=data.customer_id,
                 on_delta=on_delta, on_round=on_round, cancel=cancel,
                 history=history, conversation_id=conversation_id,
+                memory=memory,
             )
             async with async_session() as db:
                 await save_run(db, result.run)
+            # After the row is saved, never before: the digest reads concluded
+            # runs back from the table, so a note written first would miss the
+            # run that just finished.
+            await _refresh_digest(conversation_id)
         except Exception as exc:  # noqa: BLE001 - a background failure must be visible
             logger.exception("background agent run %s failed", run_id)
             try:
@@ -951,8 +1021,40 @@ async def api_agent_conversations(
             "last_status": entry.get("last_status"),
             "last_goal": entry.get("last_goal", ""),
             "total_tokens": entry.get("total_tokens", 0),
+            # The thread's own handover note, so a person can see what the next
+            # thread will be told instead of guessing. Truncated for the list;
+            # the full text is on the conversation itself.
+            "summary": (row.summary or "").strip() or None,
+            "summarized_at": row.summarized_at.isoformat() if row.summarized_at else None,
         })
     return {"count": len(conversations), "conversations": conversations}
+
+
+@router.get("/memories")
+async def api_list_memories():
+    """The standing notes, newest first.
+
+    Readable on purpose: a memory the model wrote and nobody can inspect is a
+    rumour. This is what the console shows under "它记住了什么".
+    """
+    from app.agent.memory import list_memories
+
+    rows = await list_memories()
+    return {"count": len(rows), "memories": rows}
+
+
+@router.delete("/memories/{key}", status_code=204)
+async def api_forget_memory(key: str):
+    """Delete one note. A wrong note steers every later thread, so removal is real."""
+    from app.agent.memory import forget
+
+    result = await forget(key)
+    if result.get("status") == "not_found":
+        raise ApiError(
+            status_code=404,
+            code=ErrorCode.NOT_FOUND,
+            detail=f"no note with key {key!r}",
+        )
 
 
 @router.get("/conversations/{conversation_id}")

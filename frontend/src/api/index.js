@@ -236,6 +236,12 @@ export const runApi = {
     `/api/v1/agent/runs/${encodeURIComponent(runId)}/events?after=${after}`,
   // Standalone HTML page, openable in a new tab without this frontend.
   traceUrl: (runId) => `/api/v1/agent/runs/${runId}/trace.html`,
+  // What the agent keeps across threads. Read and delete only: it writes these
+  // through a tool, and the console's job is to let a person see every one and
+  // remove a wrong one. A memory nobody can inspect is a rumour.
+  memories: () => api.get('/agent/memories'),
+  forgetMemory: (key) =>
+    api.delete(`/agent/memories/${encodeURIComponent(key)}`),
 }
 
 export default api

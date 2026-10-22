@@ -245,6 +245,28 @@ async def _smtp_accounts_settled(conn: AsyncConnection) -> bool:
     return await _has_index(conn, "ux_smtp_accounts_single_active")
 
 
+async def _cross_session_memory_settled(conn: AsyncConnection) -> bool:
+    """True when the digest columns and the memory table are all in place.
+
+    All four, not any: a half-applied state is exactly what this guard exists
+    to notice. A fresh database gets every one of them from ``create_all``, so
+    this returns True and the migration records itself as already present.
+
+    A database with **no** ``agent_conversations`` table is also settled, and
+    that is not laziness. ``ALTER TABLE`` on a missing table is not a no-op, it
+    aborts the whole migration sequence -- and the only way to reach that state
+    is a database ``create_all`` has never touched, which will get the table
+    *and* these columns from the model on the very next start. Failing there
+    would turn "this is not my table yet" into "the application cannot boot".
+    """
+    if not await _table_exists(conn, "agent_conversations"):
+        return True
+    for column in ("summary", "summary_turns", "summarized_at"):
+        if not await _has_column(conn, "agent_conversations", column):
+            return False
+    return await _table_exists(conn, "agent_memories")
+
+
 MIGRATIONS: list[Migration] = [
     Migration(
         id="0001_agent_runs_customer_id",
@@ -489,6 +511,45 @@ MIGRATIONS: list[Migration] = [
             "ON smtp_accounts (is_active) WHERE is_active = 1",
         ],
         guard=_smtp_accounts_settled,
+    ),
+    Migration(
+        id="0014_cross_session_memory",
+        description=(
+            "let a new thread know what an earlier one concluded. A thread used "
+            "to die with its last message: the three turns kept for a follow-up "
+            "are scoped to one conversation_id, so 'that customer we discussed "
+            "yesterday' had no answer anywhere in the system. Two pieces, "
+            "deliberately different -- a rolling digest each thread writes for "
+            "itself (summary / summary_turns / summarized_at), and a table of "
+            "statements the model chose to keep (agent_memories). Deliberately "
+            "not an embedding index: the book is a handful of structured rows, "
+            "where an exact lookup beats a similarity one, and a memory a person "
+            "cannot read is a rumour"
+        ),
+        statements=[
+            "ALTER TABLE agent_conversations ADD COLUMN summary TEXT",
+            # DEFAULT 0 so conversations that predate the column are 'nothing
+            # summarised yet' rather than NULL, which every comparison would
+            # have to special-case.
+            "ALTER TABLE agent_conversations ADD COLUMN summary_turns "
+            "INTEGER DEFAULT 0",
+            "ALTER TABLE agent_conversations ADD COLUMN summarized_at DATETIME",
+            "CREATE TABLE IF NOT EXISTS agent_memories ("
+            "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            # Quoted: KEY is a reserved word in several dialects, and this SQL is
+            # written by hand rather than by the ORM.
+            '  "key" VARCHAR(80) NOT NULL,'
+            "  value VARCHAR(500) NOT NULL,"
+            "  source_conversation_id VARCHAR(64),"
+            "  created_at DATETIME,"
+            "  updated_at DATETIME"
+            ")",
+            # Matches the unique index create_all builds from the model, so a
+            # migrated database and a fresh one end up with the same schema.
+            "CREATE UNIQUE INDEX IF NOT EXISTS ix_agent_memories_key "
+            'ON agent_memories ("key")',
+        ],
+        guard=_cross_session_memory_settled,
     ),
 ]
 

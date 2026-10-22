@@ -142,6 +142,7 @@ async def execute(
     cancel=None,
     history: Optional[list[tuple[str, str]]] = None,
     conversation_id: Optional[str] = None,
+    memory: str = "",
 ) -> AgentResult:
     """Run the agent and return a displayable result.
 
@@ -192,6 +193,7 @@ async def execute(
         cancel=cancel,
         history=history,
         conversation_id=conversation_id,
+        memory=memory,
     )
 
     if persist:

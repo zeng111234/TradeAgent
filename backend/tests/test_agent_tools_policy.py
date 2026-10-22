@@ -20,6 +20,11 @@ EXPECTED_TOOLS = [
     "create_email_draft",
     "create_email_template",
     "create_task",
+    # Memory tools. They touch ``agent_memories`` -- the agent's own notebook --
+    # and never the book. ``forget`` is the one delete in the tree, and it is
+    # allowed precisely because nothing here is a person's data: a wrong note
+    # about a working preference would silently steer every later thread.
+    "forget",
     "get_communication_history",
     "get_customer",
     "get_customer_assessment",
@@ -33,8 +38,10 @@ EXPECTED_TOOLS = [
     "list_customers",
     "list_email_logs",
     "list_email_templates",
+    "list_memories",
     "list_tasks",
     "reject_email_draft",
+    "remember",
     "render_email_template",
     "reschedule_task",
     "search_prospects",
@@ -66,6 +73,9 @@ def test_the_only_write_tools_are_additive_and_never_dispatch(registry):
     """Every write tool appends something, or moves one status or date.
 
     None of them send, and none of them rewrite what somebody else wrote.
+    ``remember`` and ``forget`` are the exception that proves it: they rewrite
+    and delete, but only inside the agent's own notebook. Nothing a person saved
+    is reachable through them.
     """
     writers = sorted(t.name for t in registry.tagged("write"))
     assert writers == [
@@ -75,7 +85,9 @@ def test_the_only_write_tools_are_additive_and_never_dispatch(registry):
         "create_email_draft",
         "create_email_template",
         "create_task",
+        "forget",
         "reject_email_draft",
+        "remember",
         "reschedule_task",
         "update_customer_stage",
         "upsert_customer",

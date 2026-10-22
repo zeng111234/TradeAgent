@@ -287,6 +287,11 @@ class AgentRun:
     #: How many previous turns were injected from the conversation. Recorded so
     #: a surprising answer can be traced to the context it was given.
     history_turns: int = 0
+    #: Characters of cross-thread context (earlier threads' digests and the
+    #: standing notes) that opened this run. Recorded for the same reason as
+    #: ``history_turns``: "where did it learn that?" must have an answer, and
+    #: "nowhere" is not one when a block was injected.
+    memory_chars: int = 0
     prompt_tokens: int = 0
     completion_tokens: int = 0
     #: Cache-hit share of ``prompt_tokens``, summed over rounds. Recorded because
@@ -346,6 +351,7 @@ class AgentRun:
             "completion_tokens": self.completion_tokens,
             "usage_complete": self.usage_complete,
             "history_turns": self.history_turns,
+            "memory_chars": self.memory_chars,
             "elapsed": round(self.elapsed, 3),
             "steps": [s.as_dict() for s in self.steps],
             "compactions": list(self.compactions),
@@ -376,10 +382,15 @@ class AgentLoop:
         on_delta: Optional[Callable[[str, str], None]] = None,
         on_round: Optional[Callable[[int], None]] = None,
         cancel: Optional[CancelToken] = None,
+        memory: str = "",
     ) -> None:
         self.llm = llm
         self.budget = budget or AgentBudget()
         self.system_prompt = system_prompt
+        #: What earlier threads concluded, plus the standing notes. Empty means
+        #: this deployment has nothing to remember -- then no message is added at
+        #: all, rather than an empty one the model would have to interpret.
+        self.memory = memory
         # Computed once, from the text that will actually be sent. A version
         # constant would be a second source of truth that can be forgotten; this
         # cannot disagree with the prompt it names.
@@ -449,6 +460,12 @@ class AgentLoop:
         run.messages = [Message.system(self.system_prompt)]
         if context:
             run.messages.append(Message.system(context))
+        if self.memory:
+            # Its own system message, and before the turns: what earlier threads
+            # concluded is background for this goal, not part of it. Folding it
+            # into the instructions would make it look like standing policy.
+            run.messages.append(Message.system(self.memory))
+            run.memory_chars = len(self.memory)
         # Previous question/answer pairs from the same conversation, oldest
         # first, as real messages rather than a system-prompt blob: the model
         # then sees a conversation, which is what a follow-up assumes.
@@ -1025,6 +1042,7 @@ async def run_agent(
     cancel: Optional[CancelToken] = None,
     history: Optional[list[tuple[str, str]]] = None,
     conversation_id: Optional[str] = None,
+    memory: str = "",
 ) -> AgentRun:
     """Convenience wrapper. ``AgentError`` is converted into a failed run.
 
@@ -1039,7 +1057,8 @@ async def run_agent(
     """
     loop = AgentLoop(llm, registry, budget=budget, system_prompt=system_prompt,
                      spill_dir=spill_dir, on_step=on_step,
-                     on_delta=on_delta, on_round=on_round, cancel=cancel)
+                     on_delta=on_delta, on_round=on_round, cancel=cancel,
+                     memory=memory)
     try:
         return await loop.run(goal, context=context, run_id=run_id,
                               customer_id=customer_id, history=history,

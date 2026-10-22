@@ -21,6 +21,7 @@
           type="button"
           class="rail-item"
           :class="{ active: item.conversation_id === conversationId }"
+          :title="item.summary || item.title"
           @click="openConversation(item.conversation_id)"
         >
           <span class="rail-item__title">{{ item.title }}</span>
@@ -30,6 +31,14 @@
           </span>
         </button>
       </div>
+
+      <!-- What the agent keeps across threads. Visible from every screen in the
+           console, because a note it wrote and nobody can read is a rumour. -->
+      <button type="button" class="rail-memory" @click="openMemories">
+        <el-icon><Notebook /></el-icon>
+        <span class="rail-memory__label">{{ t('console.memory.title') }}</span>
+        <span v-if="memories.length" class="rail-memory__count">{{ memories.length }}</span>
+      </button>
     </aside>
 
     <div v-if="railOpen" class="rail-backdrop" @click="railOpen = false"></div>
@@ -241,6 +250,34 @@
       <p class="composer-hint">Enter ↵ · Shift+Enter</p>
     </div>
     </div>
+
+    <!-- Cross-thread notes. Read-and-delete only: the agent writes them through
+         a tool, and the point of showing them is that a person can catch a wrong
+         one before it steers every later thread. -->
+    <el-drawer
+      v-model="memoryOpen"
+      :title="t('console.memory.title')"
+      size="440px"
+      direction="rtl"
+    >
+      <p class="memory-intro">{{ t('console.memory.intro') }}</p>
+      <p v-if="memoryLoading" class="memory-hint">{{ t('console.memory.loading') }}</p>
+      <p v-else-if="!memories.length" class="memory-hint">{{ t('console.memory.empty') }}</p>
+      <ul v-else class="memory-list">
+        <li v-for="note in memories" :key="note.key" class="memory-item">
+          <div class="memory-item__head">
+            <span class="memory-item__key">{{ note.key }}</span>
+            <button
+              type="button"
+              class="memory-item__drop"
+              :title="t('console.memory.forget')"
+              @click="removeMemory(note.key)"
+            >{{ t('console.memory.forget') }}</button>
+          </div>
+          <p class="memory-item__value">{{ note.value }}</p>
+        </li>
+      </ul>
+    </el-drawer>
   </div>
 </template>
 
@@ -263,6 +300,7 @@ import { applyDelta, applyLive, resetLive } from '../utils/liveStream'
 import { readEventStream, reconnectDelay } from '../utils/sse'
 import TraceTimeline from '../components/TraceTimeline.vue'
 import { t } from '../i18n/index.js'
+import { ElMessage } from 'element-plus'
 
 const MAX_STREAM_ATTEMPTS = 3
 const POLL_INTERVAL_MS = 1200
@@ -278,6 +316,12 @@ const goal = ref('')
 const conversations = ref([])
 const conversationId = ref('')
 const railOpen = ref(false)
+// The notes the agent keeps across threads. Fetched on mount behind everything
+// else, so the rail badge is honest without delaying the composer, and again
+// when the drawer opens because another tab may have written one.
+const memories = ref([])
+const memoryOpen = ref(false)
+const memoryLoading = ref(false)
 const scroller = ref(null)
 const followTail = ref(true)
 
@@ -763,6 +807,46 @@ async function loadConversations() {
 }
 
 /**
+ * The standing notes, read back.
+ *
+ * A failure here leaves the previous list alone instead of emptying it: "we
+ * could not read the notebook" is not "the notebook is empty", and showing an
+ * empty list would tell the reader the agent remembers nothing when it does.
+ */
+async function loadMemories() {
+  memoryLoading.value = true
+  try {
+    const data = await runApi.memories()
+    memories.value = data.memories || []
+  } catch {
+    /* keep what is on screen; the badge is not worth an error banner */
+  } finally {
+    memoryLoading.value = false
+  }
+}
+
+function openMemories() {
+  memoryOpen.value = true
+  loadMemories()
+}
+
+/**
+ * Delete one note. Removed from the list first and restored if the server
+ * refuses, so the drawer answers immediately; a wrong note steering every later
+ * thread is worse than a brief inconsistency here.
+ */
+async function removeMemory(key) {
+  const before = memories.value
+  memories.value = before.filter((note) => note.key !== key)
+  try {
+    await runApi.forgetMemory(key)
+  } catch {
+    memories.value = before
+    ElMessage.error(t('console.memory.forgetFailed'))
+  }
+}
+
+/**
  * Rebuild a thread from the server.
  *
  * A turn still `running` keeps its stream: a refresh must not turn a live run
@@ -869,6 +953,9 @@ onMounted(async () => {
   loadCrmSize()
   await loadMeta()
   await loadConversations()
+  // Not awaited: the badge can arrive a moment late, and nothing on the page
+  // depends on it.
+  loadMemories()
   // Restore before a topbar command: a goal typed into the shell should join
   // the thread the reader was in, not silently open a new one.
   await restoreConversation()
@@ -1446,4 +1533,87 @@ onUnmounted(stopTimers)
   text-align: left;
 }
 .md :deep(th) { background: var(--bg-subtle); }
+
+/* ---- what it remembers ------------------------------------------------- */
+.rail-memory {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0 8px 12px;
+  padding: 9px 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 0.86rem;
+  cursor: pointer;
+}
+.rail-memory:hover {
+  background: var(--bg-subtle);
+}
+.rail-memory__label {
+  flex: 1 1 auto;
+  text-align: left;
+}
+.rail-memory__count {
+  min-width: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--bg-subtle);
+  font-size: 0.72rem;
+  line-height: 18px;
+  text-align: center;
+}
+.memory-intro {
+  margin: 0 0 var(--space-4);
+  color: var(--text-secondary);
+  font-size: 0.86rem;
+  line-height: 1.65;
+}
+.memory-hint {
+  margin: 0;
+  color: var(--text-tertiary, var(--text-secondary));
+  font-size: 0.86rem;
+  line-height: 1.65;
+}
+.memory-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-3);
+}
+.memory-item {
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  padding: var(--space-3);
+}
+.memory-item__head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+.memory-item__key {
+  flex: 1 1 auto;
+  font-weight: 500;
+  font-size: 0.88rem;
+  word-break: break-word;
+}
+.memory-item__drop {
+  flex: 0 0 auto;
+  border: 0;
+  background: none;
+  padding: 0;
+  color: var(--color-danger, #d33);
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+.memory-item__value {
+  margin: var(--space-1) 0 0;
+  color: var(--text-secondary);
+  font-size: 0.86rem;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
 </style>

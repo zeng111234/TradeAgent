@@ -2294,6 +2294,65 @@ async def reject_email_draft(
         }
 
 
+# ------------------------------------------------------- notes, across threads ---
+# Three tools that make the memory real: write a note, drop one, read them back.
+# They touch ``agent_memories`` only -- a table the agent owns, not the book.
+#
+# That is why ``forget`` is allowed to delete here while nothing in the business
+# schema ever is. The boundary this codebase draws is about *a person's* data: a
+# saved note, a sent email, a customer row. A working preference the model wrote
+# down is the model's own bookkeeping, and a wrong one is worse than none -- it
+# would silently steer every later thread. Deleting it has nothing to audit
+# against, which is precisely why it is allowed.
+
+@tool(
+    description=(
+        "Keep one durable note across conversations: a standing preference, a "
+        "rule the operator stated, how they want work done. The note survives "
+        "this thread and is shown to you in later ones. Use the same key to "
+        "change it — writing 'preferred quote currency' twice replaces the first "
+        "value instead of adding a second note. NOT for business facts: a "
+        "customer's buyer, address or stage belongs in add_customer_note or "
+        "update_customer_stage, where it sits on the customer and is visible on "
+        "that customer's page."
+    ),
+    tags={"write", "memory"},
+)
+async def remember(key: str, value: str) -> dict:
+    from app.agent.memory import remember as _remember
+
+    return await _remember(key, value)
+
+
+@tool(
+    description=(
+        "Drop one note that has stopped being true. There is no archive — the "
+        "note is gone, and the operator can always state the preference again. "
+        "Use list_memories first to get the exact key."
+    ),
+    tags={"write", "memory"},
+)
+async def forget(key: str) -> dict:
+    from app.agent.memory import forget as _forget
+
+    return await _forget(key)
+
+
+@tool(
+    description=(
+        "Read back the notes kept across conversations. Check here before "
+        "telling the operator you do not know how they want something done — it "
+        "may already be written down. Read-only."
+    ),
+    tags={"read", "memory"},
+)
+async def list_memories() -> dict:
+    from app.agent.memory import list_memories as _list_memories
+
+    rows = await _list_memories()
+    return {"count": len(rows), "memories": rows}
+
+
 # Tools the agent must never have. Kept as an explicit list so the boundary is
 # testable rather than merely absent: tests/test_agent_tools_policy.py asserts
 # no registered tool name matches these.
@@ -2336,6 +2395,9 @@ def build_trade_registry() -> ToolRegistry:
         reject_email_draft,
         create_email_draft,
         create_email_template,
+        remember,
+        forget,
+        list_memories,
     ):
         registry.register(entry)
     return registry

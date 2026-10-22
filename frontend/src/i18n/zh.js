@@ -212,6 +212,14 @@ export default {
     turnCount: '{n} 轮',
     allRuns: '查看全部运行',
     emptyHistory: '还没有运行记录',
+    memory: {
+      title: '它记住了什么',
+      intro: '跨对话保留的约定和偏好。每轮对话还会自己写一份交接摘要，新对话开场时会带上最近几轮。说错的可以在这里删掉。',
+      loading: '正在读取…',
+      empty: '暂时还没有。它在对话里认定某件事值得长期记住时，会自己写进来。',
+      forget: '删除',
+      forgetFailed: '删除失败，这条还在',
+    },
   },
 
   trace: {

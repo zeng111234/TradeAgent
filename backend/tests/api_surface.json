@@ -1,4 +1,20 @@
 {
+  "DELETE /api/v1/agent/memories/{key}": {
+    "parameters": [
+      {
+        "in": "path",
+        "name": "key",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      }
+    ],
+    "responses": {
+      "204": "untyped",
+      "422": "validation_error"
+    }
+  },
   "DELETE /api/v1/customers/{customer_id}": {
     "parameters": [
       {
@@ -159,6 +175,11 @@
     }
   },
   "GET /api/v1/agent/import-leads/preview": {
+    "responses": {
+      "200": "untyped"
+    }
+  },
+  "GET /api/v1/agent/memories": {
     "responses": {
       "200": "untyped"
     }
