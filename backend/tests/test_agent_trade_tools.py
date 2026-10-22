@@ -62,6 +62,27 @@ async def test_list_customers_returns_the_seeded_pipeline(db):
     assert scores == sorted(scores, reverse=True)
 
 
+async def test_list_customers_reports_total_not_just_the_page(db):
+    """A one-row page must not read like a one-customer book.
+
+    ``limit=1`` used to answer ``count: 1`` and nothing else, which reads as
+    "this CRM holds one customer". A live run did read it that way and only
+    produced the right number because it had also called get_pipeline_stats;
+    a model that made just this call would have understated the book.
+    """
+    page = await list_customers(limit=1, include_closed=True)
+    whole = await list_customers(limit=100, include_closed=True)
+
+    assert page["returned"] == 1
+    assert len(page["customers"]) == 1
+    assert page["count"] == 1, "count keeps its old meaning: rows on this page"
+    assert page["total"] == whole["total"], "total counts the book, not the page"
+    assert page["total"] > page["returned"], "the seed has more than one customer"
+    assert "note" in page, "a truncated page must say that it is truncated"
+
+    assert "note" not in whole, "a page holding everything needs no warning"
+
+
 async def test_list_customers_excludes_closed_stages_by_default(db):
     default = await list_customers()
     assert all(c["stage"] not in ("completed", "lost") for c in default["customers"])
@@ -536,6 +557,37 @@ async def test_create_task_refuses_an_unparseable_date(db):
     result = await create_task(title="Pytest date", due_date="next tuesday")
     assert "error" in result
     assert "2026-10-27" in result["error"] or "ISO" in result["error"]
+
+
+async def test_list_tasks_refuses_a_status_it_does_not_store(db):
+    """An unknown status must not read like an empty book.
+
+    ``list_tasks(status="open")`` used to filter on a value the column never
+    holds and answer ``count: 0`` -- indistinguishable from a true "nothing to
+    do". A live run did exactly that and only recovered because it had called
+    get_pipeline_stats first and saw three pending tasks; a model that made
+    just this one call would have told the operator the book was clear.
+    """
+    created = await create_task(title=f"Pytest Open Status {uuid.uuid4().hex[:8]}")
+    assert created["status"] == "created"
+    try:
+        refused = await list_tasks(status="open")
+        assert "error" in refused, "an unknown status must be refused, not answered empty"
+        assert "count" not in refused, "a refusal must not carry a count that reads as zero"
+        assert "pending" in refused["error"], "the message must name the value to use instead"
+        assert set(refused["valid_statuses"]) == {
+            "pending",
+            "in_progress",
+            "completed",
+            "cancelled",
+        }
+
+        # The same call with a real status still works, so the guard is a filter
+        # on the argument and not on the query.
+        listed = await list_tasks(status="pending")
+        assert created["task_id"] in [t["task_id"] for t in listed["tasks"]]
+    finally:
+        await _purge_tasks(db, created["task_id"])
 
 
 async def test_create_task_validates_its_enums(db):

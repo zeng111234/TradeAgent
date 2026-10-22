@@ -39,7 +39,7 @@ from app.config import settings
 from app.models.customer import Customer, CustomerContact, CustomerNote
 from app.models.email_log import EmailLog
 from app.models.email_template import EmailTemplate
-from app.models.task import Task
+from app.models.task import Task, TaskStatus
 from app.models.email_log import EmailStatus
 from app.models.customer import CustomerSource, CustomerStage
 
@@ -270,7 +270,11 @@ def _status(value: Any) -> str:
 @tool(
     description=(
         "List customers in the CRM with optional filters. Returns factual rows "
-        "(stage, score, country, last contact). Use this to see the pipeline."
+        "(stage, score, country, last contact). Use this to see the pipeline. "
+        "Read `total` for how many customers match the filter: `count` is only "
+        "how many rows this page returned, so a small limit makes it small. "
+        "Also note the default excludes closed stages — set include_closed=true "
+        "to count the whole book."
     ),
     tags={"read", "crm"},
 )
@@ -311,10 +315,23 @@ async def list_customers(
 
     stmt = stmt.order_by(Customer.score.desc(), Customer.id.asc()).limit(limit)
 
+    # The size of the book, counted apart from the page that was asked for.
+    # ``count`` used to be both, which made ``limit=1`` answer ``count: 1``
+    # about a five-customer CRM; a live run read that as "1 customer" and only
+    # got the right number because it had also called get_pipeline_stats.
+    count_stmt = select(func.count()).select_from(Customer)
+    if filters:
+        count_stmt = count_stmt.where(*filters)
+
     async with _session_factory()() as db:
+        total = (await db.execute(count_stmt)).scalar_one()
         rows = (await db.execute(stmt)).scalars().all()
 
-    return {
+    result = {
+        "total": int(total or 0),
+        "returned": len(rows),
+        # Kept because it was already in the contract; ``total`` is the field
+        # to trust. They differ exactly when the page was truncated.
         "count": len(rows),
         "filters": {
             "stage": stage or ("(open only)" if not include_closed else "(all)"),
@@ -338,6 +355,14 @@ async def list_customers(
             for c in rows
         ],
     }
+    if len(rows) < result["total"]:
+        # Said out loud, because a truncated page that reports only what it
+        # returned is how "5 customers" becomes "1 customer".
+        result["note"] = (
+            f"this page holds {len(rows)} of {result['total']} matching customers; "
+            "raise limit to see the rest"
+        )
+    return result
 
 
 @tool(
@@ -1629,11 +1654,22 @@ async def complete_task(
         }
 
 
+#: The only values ``Task.status`` takes. Named here so the filter can say
+#: "that is not a status" instead of quietly answering "none": asked for
+#: ``status="open"`` -- the natural English word for a task nobody has closed
+#: -- the query matched nothing and returned ``count: 0``, which reads exactly
+#: like a true empty list. A model that only made that one call would report
+#: "there are no open tasks" about a book with three of them.
+TASK_STATUSES = tuple(s.value for s in TaskStatus)
+
+
 @tool(
     description=(
-        "List tasks from the 待办事项 (Tasks) page — what is open, what is due, "
-        "what was already closed. Read-only. Filter by customer_id, or set "
-        "due_only=true for what is due now."
+        "List tasks from the 待办事项 (Tasks) page — what is still pending, what "
+        "is due, what was already closed. Read-only. Filter by customer_id, by "
+        "status (exactly one of: pending, in_progress, completed, cancelled — "
+        "an unfinished task is 'pending'), or set due_only=true for what is due "
+        "now. An unrecognised status is refused rather than answered empty."
     ),
     tags={"read", "tasks"},
 )
@@ -1650,6 +1686,17 @@ async def list_tasks(
     """
     limit = max(1, min(int(limit), MAX_ROWS))
     status = (status or "").strip().lower()
+
+    if status and status not in TASK_STATUSES:
+        return {
+            "error": (
+                f"unknown status {status!r}, so nothing was filtered. The Tasks "
+                f"page stores exactly these: {', '.join(TASK_STATUSES)}. A task "
+                "nobody has closed is 'pending', not 'open' — call again with "
+                "one of the values above."
+            ),
+            "valid_statuses": list(TASK_STATUSES),
+        }
 
     conditions = []
     if customer_id:
