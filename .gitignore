@@ -77,5 +77,7 @@ Thumbs.db
 # Schema-migration backups: a copy of the database taken before a migration ran.
 *.backup-*
 
-# Screenshots from the one-off live check (npm run live:check writes them here).
+# Screenshots from the one-off checks: the live site (npm run live:check) and
+# the visual passes over the login page / empty states. Evidence, not artefacts.
 frontend/live-*.png
+frontend/shot-*.png
