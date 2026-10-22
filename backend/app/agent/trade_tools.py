@@ -999,6 +999,26 @@ async def create_email_draft(
         if customer is None:
             return {"error": f"no customer with id {customer_id}"}
 
+        # The last gate before a person reads it. A draft signed with the
+        # customer's own company reads as normal prose, so it survives a
+        # skimming reviewer and reaches the customer; this is the only point in
+        # the flow that holds both the body and the customer's name, so it is
+        # where the mistake has to stop.
+        misdirected = _signature_warning(
+            body,
+            customer.company_name or "",
+            (settings.COMPANY_NAME or "").strip(),
+        )
+        if misdirected:
+            return {
+                "error": misdirected,
+                "hint": (
+                    "rewrite the closing with our own company name "
+                    "(settings.COMPANY_NAME, or {sender_company} in a template) "
+                    "and call again. Nothing was stored."
+                ),
+            }
+
         recipient = (to_email or "").strip()
         if not recipient:
             contact = (
@@ -1078,14 +1098,76 @@ async def create_email_draft(
 #: template is a reusable artefact a person will send from, so a placeholder
 #: outside this set is a typo that would otherwise travel all the way to a
 #: customer's inbox as literal text.
+#: Every placeholder a template may use.
+#:
+#: ``company_name`` is the **customer's** -- that is what personalises a mail.
+#: ``sender_company`` / ``sender_address`` are ours, and they exist because the
+#: two used to be one word: a template that signed off with ``{company_name}``
+#: rendered "Best regards, EuroTextil GmbH", our letter carrying the buyer's
+#: name. It looked entirely plausible in the preview, which is the worst kind of
+#: wrong -- nobody catches it until the reply arrives addressed oddly.
 TEMPLATE_VARIABLES = (
     "company_name",
+    "sender_company",
+    "sender_address",
     "contact_name",
     "contact_title",
     "product_name",
     "country",
     "industry",
 )
+
+#: What ``COMPANY_NAME`` says when the deployment never set it. Recognised so a
+#: rendered mail can say "this is still a placeholder" instead of shipping
+#: "Best regards, Your Company Name".
+_PLACEHOLDER_SENDER = "Your Company Name"
+
+#: Where a letter stops being body text and starts being signed. Matched
+#: case-insensitively against the last occurrence in the rendered body.
+_SIGNATURE_MARKERS = (
+    "best regards",
+    "kind regards",
+    "warm regards",
+    "sincerely",
+    "yours faithfully",
+    "regards",
+    "此致",
+    "顺祝商祺",
+    "祝好",
+)
+
+
+def _signature_warning(body: str, customer_name: str, sender_name: str) -> str | None:
+    """Say so when a letter is signed with the customer's own name.
+
+    Only fires when the customer's name appears *after* the closing line and our
+    name does not: the body mentioning the customer is correct and expected, the
+    signature doing it is a mistake that reads as normal text.
+    """
+    customer = (customer_name or "").strip().lower()
+    sender = (sender_name or "").strip().lower()
+    if not customer or not body:
+        return None
+
+    lowered = body.lower()
+    start = -1
+    for marker in _SIGNATURE_MARKERS:
+        found = lowered.rfind(marker)
+        if found > start:
+            start = found
+    if start == -1:
+        return None
+
+    tail = lowered[start:]
+    if customer not in tail:
+        return None
+    if sender and sender in tail:
+        return None
+    return (
+        "the signature carries the customer's company name, not ours. "
+        "{company_name} resolves to the customer's record; the closing should "
+        "use {sender_company}. Do not send this draft as it stands."
+    )
 
 #: The Templates page filters on exactly these, and its cards are tagged from
 #: them. Free text would still save, but the template would then be invisible
@@ -1134,8 +1216,12 @@ def _unresolved(text: str) -> list[str]:
         "page alongside the existing ones, ready for a person to send from. "
         "Use {company_name}, {contact_name}, {contact_title}, {product_name}, "
         "{country}, {industry} as placeholders — they are filled per recipient "
-        "when the mail goes out. This does not send anything and does not "
-        "create a draft; it only stores the template."
+        "when the mail goes out. The signature is the exception: {company_name} "
+        "is the CUSTOMER's company, so a closing line that signs our own letter "
+        "must use {sender_company} and {sender_address} instead. Getting that "
+        "wrong produces a perfectly readable mail signed with the buyer's name. "
+        "This does not send anything and does not create a draft; it only stores "
+        "the template."
     ),
     tags={"write", "email"},
 )
@@ -1842,7 +1928,9 @@ async def list_email_templates(
         "product and the primary contact's name and title from the CRM, or set "
         "any of them by hand. A placeholder with no value is left standing and "
         "listed in unresolved_placeholders, so a typo stays visible instead of "
-        "reaching a customer."
+        "reaching a customer. Check signature_warning before drafting anything: "
+        "it is set when the closing line carries the customer's company name "
+        "instead of ours."
     ),
     tags={"read", "email"},
 )
@@ -1855,6 +1943,8 @@ async def render_email_template(
     product_name: str = "",
     country: str = "",
     industry: str = "",
+    sender_company: str = "",
+    sender_address: str = "",
 ) -> dict:
     """Preview what a template would actually say.
 
@@ -1901,6 +1991,11 @@ async def render_email_template(
         "product_name": (customer.products if customer else "") or "",
         "contact_name": (contact.name if contact else "") or "",
         "contact_title": (contact.title if contact else "") or "",
+        # Ours, from the deployment rather than from the customer. The override
+        # argument exists for a preview of a different signatory, not to make
+        # the agent guess: guessing is what put the buyer's name at the bottom.
+        "sender_company": (sender_company or settings.COMPANY_NAME or "").strip(),
+        "sender_address": (sender_address or settings.COMPANY_ADDRESS or "").strip(),
     }
     for key, value in (
         ("company_name", company_name),
@@ -1923,6 +2018,13 @@ async def render_email_template(
     body = render_template(template.body, filled)
     unresolved = _unresolved(f"{subject}\n{body}")
 
+    sender = (filled.get("sender_company") or "").strip()
+    warning = _signature_warning(
+        body,
+        (customer.company_name if customer else company_name) or "",
+        sender,
+    )
+
     return {
         "template_id": template.id,
         "template_name": template.name,
@@ -1931,6 +2033,11 @@ async def render_email_template(
         "subject": subject,
         "body": body,
         "unresolved_placeholders": unresolved or None,
+        # Both are reported rather than raised: the preview is still useful, and
+        # a caller that only wants to look at the text should not be blocked.
+        # Creating a draft from it is where these have to become a stop.
+        "signature_warning": warning,
+        "sender_company_configured": bool(sender) and sender != _PLACEHOLDER_SENDER,
         "next_step": (
             "pass subject and body to create_email_draft — it stores the draft "
             "for human review and sends nothing"

@@ -313,6 +313,93 @@ async def test_create_draft_records_a_pending_row_and_sends_nothing(db):
         await _delete_customer(db, customer_id)
 
 
+# --- signatures ------------------------------------------------------------
+
+def test_the_signature_check_reads_the_closing_not_the_body():
+    """A buyer's name in the body is what personalisation means; in the closing
+    it is a broken letter. The check has to tell those apart, not grep for the
+    name -- which is why it looks for the closing line first.
+    """
+    from app.agent.trade_tools import _signature_warning
+
+    ours, buyer = "Ningbo Thread Co.", "EuroTextil GmbH"
+
+    assert _signature_warning(
+        "<p>Dear Hans,</p><p>Quote attached.</p>"
+        "<p>Best regards,<br/>EuroTextil GmbH<br/>Ningbo, China</p>",
+        buyer, ours,
+    ), "a letter signed by the buyer must be caught"
+
+    assert _signature_warning(
+        "<p>Dear Hans,</p><p>Quote attached.</p>"
+        "<p>Best regards,<br/>Ningbo Thread Co.<br/>Ningbo, China</p>",
+        buyer, ours,
+    ) is None
+
+    assert _signature_warning(
+        "<p>Dear Hans,</p><p>EuroTextil GmbH has bought from us since 2019.</p>"
+        "<p>Best regards,<br/>Ningbo Thread Co.</p>",
+        buyer, ours,
+    ) is None, "naming the customer in the body is the point of the mail"
+
+
+async def test_a_draft_signed_with_the_buyers_name_is_refused(db, monkeypatch):
+    """The defect a live run found on its own.
+
+    ``{company_name}`` resolves to the *customer's* record, so a closing line
+    built from it renders "Best regards, EuroTextil GmbH" -- our letter, their
+    name at the bottom. It reads as perfectly normal text in the preview, which
+    is why the refusal has to happen before a person can dispatch it.
+    """
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "COMPANY_NAME", "Ningbo Thread Co.")
+
+    unique = f"Pytest Signer Co {uuid.uuid4().hex[:8]}"
+    created = await upsert_customer(company_name=unique)
+    customer_id = created["customer_id"]
+    try:
+        result = await create_email_draft(
+            customer_id=customer_id,
+            to_email="buyer@example.com",
+            subject="Quotation",
+            body=(
+                "<p>Dear buyer,</p><p>Quote attached.</p>"
+                f"<p>Best regards,<br/>{unique}<br/>Ningbo, China</p>"
+            ),
+        )
+        assert "error" in result, "a draft a person could send must not carry this"
+        assert result.get("hint"), "the refusal has to say how to fix it"
+    finally:
+        await _purge_emails(db, customer_id)
+        await _delete_customer(db, customer_id)
+
+
+async def test_a_draft_signed_with_our_own_name_is_still_accepted(db, monkeypatch):
+    """The guard must not block ordinary drafts -- only the misdirected one."""
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "COMPANY_NAME", "Ningbo Thread Co.")
+
+    unique = f"Pytest Signer Ok {uuid.uuid4().hex[:8]}"
+    created = await upsert_customer(company_name=unique)
+    customer_id = created["customer_id"]
+    try:
+        result = await create_email_draft(
+            customer_id=customer_id,
+            to_email="buyer@example.com",
+            subject="Quotation",
+            body=(
+                "<p>Dear buyer,</p><p>Quote attached.</p>"
+                "<p>Best regards,<br/>Ningbo Thread Co.<br/>Ningbo, China</p>"
+            ),
+        )
+        assert result.get("status") == "draft_created", result
+    finally:
+        await _purge_emails(db, customer_id)
+        await _delete_customer(db, customer_id)
+
+
 async def test_create_draft_refuses_to_invent_a_recipient(db):
     unique = f"Pytest NoEmail {uuid.uuid4().hex[:8]}"
     created = await upsert_customer(company_name=unique)

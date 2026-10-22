@@ -39,10 +39,19 @@ logger = logging.getLogger(__name__)
 # Default ceilings for a user-triggered run. Deliberately modest: a runaway
 # agent that burns a month of tokens overnight is worse than one that stops
 # early and says so.
+#
+# The token ceiling is sized against the round ceiling, not on its own. Every
+# round re-sends the whole tool catalogue -- 28 tools is roughly 4-5k tokens
+# before the goal is even read -- so twelve rounds cannot fit in 60k. The two
+# limits used to disagree, and the token one always won: a live run that was
+# doing useful work (eight rounds, nine calls, 58k in) stopped at
+# `token_budget` with an incomplete conclusion, having paid for all of it. A
+# run that stops early with an answer is cheap; one that stops with half an
+# answer is the expensive failure. 90k leaves room for the full twelve.
 DEFAULT_BUDGET = AgentBudget(
     max_rounds=12,
     max_tool_calls=25,
-    max_tokens=60_000,
+    max_tokens=90_000,
     max_seconds=180.0,
 )
 

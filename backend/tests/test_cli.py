@@ -53,9 +53,16 @@ def test_tools_command_lists_the_registry_and_the_boundary(capsys):
 def test_tools_command_shows_no_sending_tool(capsys):
     main(["tools"])
     out = capsys.readouterr().out
-    listed = [line.strip() for line in out.splitlines() if line.startswith("  ") and ":" in line]
-    # No tool name in the listing may imply dispatch.
-    names = [line.split(":")[0].strip().lstrip("* ") for line in listed]
+    # Tool names are printed at two spaces with no colon; parameters hang below
+    # them at six with a "name: type" shape. Taking every indented line with a
+    # colon collected parameters too, so a parameter legitimately called
+    # `sender_company` was reported as "a send tool is exposed".
+    names = [
+        line.strip()
+        for line in out.splitlines()
+        if line.startswith("  ") and not line.startswith("      ") and ":" not in line
+    ]
+    assert names, "the listing parsed to nothing -- the format changed, not the boundary"
     for name in names:
         for forbidden in ("send", "dispatch", "delete", "remove"):
             assert forbidden not in name, f"a {forbidden} tool is exposed: {name}"
