@@ -58,7 +58,7 @@
       <div ref="scroller" class="console-scroll" @scroll.passive="onScroll">
       <!-- Empty state: the product introduces itself as an agent, not a form. -->
       <section v-if="!turns.length" class="console-empty">
-        <span class="agent-mark"><el-icon><MagicStick /></el-icon></span>
+        <span class="agent-mark"><el-icon><ChatDotRound /></el-icon></span>
         <h1>{{ t('console.greeting') }}</h1>
         <p class="console-intro">{{ t('console.intro') }}</p>
 
@@ -112,7 +112,7 @@
 
           <div class="msg-agent">
             <div class="agent-head">
-              <span class="agent-mark agent-mark--sm"><el-icon><MagicStick /></el-icon></span>
+              <span class="agent-mark agent-mark--sm"><el-icon><ChatDotRound /></el-icon></span>
               <el-tag :type="statusType(turn.status)" size="small" effect="plain">
                 {{ runLabel(turn.status) }}
               </el-tag>

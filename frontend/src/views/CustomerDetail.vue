@@ -117,7 +117,7 @@
             <div style="display: flex; justify-content: space-between; align-items: center">
               <span style="font-weight: 600">{{ t('customerDetail.aiAdvice') }}</span>
               <el-button size="small" type="primary" @click="getFollowUpAdvice" :loading="followUpLoading">
-                <el-icon><MagicStick /></el-icon>
+                <el-icon><Aim /></el-icon>
               </el-button>
             </div>
           </template>
@@ -151,7 +151,7 @@
             <el-icon><Calendar /></el-icon> {{ t('customerDetail.createTask') }}
           </el-button>
           <el-button style="width: 100%; margin-bottom: 8px" @click="$router.push('/agent')">
-            <el-icon><MagicStick /></el-icon> {{ t('customerDetail.aiAgent') }}
+            <el-icon><Tools /></el-icon> {{ t('customerDetail.aiAgent') }}
           </el-button>
         </el-card>
 

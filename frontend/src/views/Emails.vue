@@ -134,7 +134,7 @@
                 <el-icon><Promotion /></el-icon> {{ t('emails.sendEmail') }}
               </el-button>
               <el-button @click="handleGenerateAI">
-                <el-icon><MagicStick /></el-icon> AI Generate
+                <el-icon><EditPen /></el-icon> {{ t('emails.generateBody') }}
               </el-button>
             </el-form-item>
           </el-form>
@@ -177,7 +177,7 @@
             </el-form-item>
             <el-form-item>
               <el-button type="primary" @click="generateEmail" :loading="generating">
-                <el-icon><MagicStick /></el-icon> Generate Email
+                <el-icon><Message /></el-icon> {{ t('emails.generateEmail') }}
               </el-button>
             </el-form-item>
           </el-form>

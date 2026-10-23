@@ -16,7 +16,7 @@
           <el-icon><DataAnalysis /></el-icon> {{ t('dashboard.quickReport') }}
         </el-button>
         <el-button type="primary" @click="runFullScan" :loading="fullScanLoading">
-          <el-icon><MagicStick /></el-icon> {{ t('dashboard.fullScan') }}
+          <el-icon><Search /></el-icon> {{ t('dashboard.fullScan') }}
         </el-button>
       </div>
     </div>
