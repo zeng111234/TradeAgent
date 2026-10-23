@@ -7,6 +7,7 @@ from hashlib import sha256
 
 from app.config import settings
 from app.llm import (
+    WRITING_MAX_TOKENS,
     LLMBadResponse,
     LLMCircuitOpen,
     LLMRateLimited,
@@ -784,7 +785,7 @@ Return ONLY the email body (HTML)."""
                     prompt,
                     system="You are a professional foreign trade email writer. Write concise, warm emails.",
                     temperature=0.7,
-                    max_tokens=300,
+                    max_tokens=WRITING_MAX_TOKENS,
                     scope="email_draft",
                 )
                 action["draft_subject"] = f"{subject_prefix} - {action['company_name']}"
@@ -866,7 +867,7 @@ Return JSON: {{"subject": "email subject", "body": "email body in HTML"}}"""
                 prompt,
                 system="Write B2B cold outreach emails. Return valid JSON only.",
                 temperature=0.7,
-                max_tokens=400,
+                max_tokens=WRITING_MAX_TOKENS,
                 scope="email_draft",
             )
 
@@ -1161,7 +1162,7 @@ Write a warm, non-pushy email that re-engages the customer. Offer value (new pro
                 prompt,
                 system="You are a professional foreign trade email writer. Write concise re-engagement emails.",
                 temperature=0.7,
-                max_tokens=300,
+                max_tokens=WRITING_MAX_TOKENS,
                 scope="email_draft",
             )
             alert["rescue_subject"] = f"Something new for {alert['company_name']} - Let's reconnect"
@@ -1398,7 +1399,7 @@ Return JSON: {{"subject": "email subject", "body": "email body in HTML"}}"""
                     prompt,
                     system="Write professional B2B holiday greeting emails. Return valid JSON only.",
                     temperature=0.7,
-                    max_tokens=400,
+                    max_tokens=WRITING_MAX_TOKENS,
                     scope="email_draft",
                 )
 

@@ -59,6 +59,20 @@ from app.timeouts import LLM_TOTAL_SECONDS
 
 logger = logging.getLogger(__name__)
 
+#: Completion budget for a call whose *answer* is a paragraph or two.
+#:
+#: The configured model is a reasoning one: it spends completion tokens
+#: thinking before it writes a word, and the visible answer is the last thing it
+#: produces. A cap sized for the answer (300, 400, 500 -- what these calls used
+#: to pass) is therefore reached during the thinking, ``finish_reason`` comes
+#: back ``length``, and :func:`complete_text` raises :class:`LLMTruncated`. The
+#: draft fails after we have already paid for the tokens spent on it, and the
+#: follow-up plan reports ``draft_error`` for every customer.
+#:
+#: Two thousand is a ceiling, not a target: a short email still costs what a
+#: short email costs. It is the room the model needs to think and then answer.
+WRITING_MAX_TOKENS = 2000
+
 #: The SDK default is 600s; a ten-minute hang is indistinguishable from a hung
 #: server and the browser has given up long before.
 DEFAULT_TIMEOUT_SECONDS = 60.0

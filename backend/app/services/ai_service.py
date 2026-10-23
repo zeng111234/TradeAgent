@@ -2,6 +2,7 @@
 import logging
 
 from app.llm import (
+    WRITING_MAX_TOKENS,
     LLMBadResponse,
     LLMCircuitOpen,
     LLMRateLimited,
@@ -80,7 +81,7 @@ BODY: [email body in HTML format]"""
             prompt,
             system="You are a professional foreign trade email copywriter.",
             temperature=0.7,
-            max_tokens=500,
+            max_tokens=WRITING_MAX_TOKENS,
             scope="cold_email",
         )
     except LLMUnavailable:
