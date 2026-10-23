@@ -16,7 +16,7 @@
                 <div class="card-header-row">
                   <span class="card-title">AI Daily Intelligence - Who to Follow Up Today</span>
                   <el-button type="primary" @click="runDailyIntelligence" :loading="dailyLoading" size="large">
-                    <el-icon><MagicStick /></el-icon> Run Daily Scan
+                    <el-icon><Search /></el-icon> Run Daily Scan
                   </el-button>
                 </div>
               </template>
@@ -141,7 +141,7 @@
                 </el-form-item>
                 <el-form-item>
                   <el-button type="primary" @click="analyzeInquiry" :loading="inquiryLoading" size="large">
-                    <el-icon><MagicStick /></el-icon> Parse Inquiry
+                    <el-icon><Document /></el-icon> Parse Inquiry
                   </el-button>
                 </el-form-item>
               </el-form>
@@ -319,7 +319,7 @@
                 </el-form-item>
                 <el-form-item>
                   <el-button type="primary" @click="generateHolidayEmails" :loading="holidayLoading" size="large">
-                    <el-icon><MagicStick /></el-icon> Generate Holiday Emails
+                    <el-icon><Message /></el-icon> Generate Holiday Emails
                   </el-button>
                 </el-form-item>
               </el-form>
@@ -367,7 +367,7 @@
                 </el-form-item>
                 <el-form-item>
                   <el-button type="primary" @click="analyzeWebsite" :loading="webLoading" size="large">
-                    <el-icon><MagicStick /></el-icon> Analyze
+                    <el-icon><DataAnalysis /></el-icon> Analyze
                   </el-button>
                 </el-form-item>
               </el-form>
@@ -440,7 +440,7 @@
                 </el-form-item>
                 <el-form-item>
                   <el-button type="primary" @click="analyzeEmail" :loading="emailLoading" size="large">
-                    <el-icon><MagicStick /></el-icon> Analyze
+                    <el-icon><DataAnalysis /></el-icon> Analyze
                   </el-button>
                 </el-form-item>
               </el-form>
@@ -522,7 +522,7 @@
                 </el-form-item>
                 <el-form-item>
                   <el-button type="primary" @click="generateBatchEmails" :loading="batchLoading" size="large">
-                    <el-icon><MagicStick /></el-icon> Generate for All Customers
+                    <el-icon><Message /></el-icon> Generate for All Customers
                   </el-button>
                 </el-form-item>
               </el-form>
@@ -575,7 +575,7 @@
                 </el-form-item>
                 <el-form-item>
                   <el-button type="primary" @click="getAdvice" :loading="negoLoading" size="large">
-                    <el-icon><MagicStick /></el-icon> Get Strategies
+                    <el-icon><Compass /></el-icon> Get Strategies
                   </el-button>
                 </el-form-item>
               </el-form>

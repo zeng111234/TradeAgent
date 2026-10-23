@@ -9,7 +9,7 @@
  */
 export default {
   shell: {
-    tagline: 'AI外贸智能获客助手',
+    tagline: '外贸客户跟进工作台',
     commandPlaceholder: '让 agent 去做点什么…（回车）',
     commandAria: '向 agent 下达指令',
     language: '语言',

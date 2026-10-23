@@ -180,7 +180,7 @@ _LOGIN_COPY = {
     "zh": {
         "html_lang": "zh-CN",
         "title": "TradeAgent — 访问密码",
-        "tagline": "外贸业务员的 AI 助手：找客户、写开发信、跟进订单。",
+        "tagline": "外贸业务员的工作台：找客户、写开发信、跟进订单。",
         "gate": "这是一个私有部署，需要访问密码。",
         "ask": "密码在把这条链接发给你的人手里。",
         "placeholder": "访问密码",
@@ -189,7 +189,7 @@ _LOGIN_COPY = {
     "en": {
         "html_lang": "en",
         "title": "TradeAgent — Access password",
-        "tagline": "The AI assistant for export sales: find buyers, draft outreach, track follow-ups.",
+        "tagline": "A working desk for export sales: find buyers, draft outreach, track follow-ups.",
         "gate": "This is a private deployment, so it asks for a password.",
         "ask": "The password comes from whoever shared this link with you.",
         "placeholder": "Access password",
@@ -254,39 +254,35 @@ def login_page(next_path: str = "/", error: str = "", lang: str = "zh") -> str:
 <meta name="robots" content="noindex, nofollow">
 <title>{copy['title']}</title>
 <style>
-  :root {{ color-scheme: dark; }}
+  :root {{ color-scheme: light; }}
   body {{ margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center;
     padding:24px; box-sizing:border-box;
-    background:#141414; color:#e5eaf3;
+    background:#f8f9fa; color:#171a1f;
     font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif; }}
-  .card {{ width:100%; max-width:380px; padding:28px; border-radius:12px;
-    background:#1d1e1f; border:1px solid #303133; box-shadow:0 8px 28px rgba(0,0,0,.45); }}
-  .brand {{ display:flex; align-items:center; justify-content:space-between; margin-bottom:16px; }}
-  .mark {{ display:inline-flex; width:26px; height:26px; align-items:center; justify-content:center;
-    border-radius:7px; background:linear-gradient(135deg,#409eff,#7a5cff); color:#fff; }}
-  .langs {{ font-size:12px; color:#4c4d4f; }}
-  .langs a {{ color:#8d9095; text-decoration:none; padding:2px 5px; }}
-  .langs a.active {{ color:#409eff; }}
-  h1 {{ margin:0 0 6px; font-size:19px; font-weight:600; letter-spacing:.3px; }}
-  .sub {{ margin:0 0 16px; color:#c8ccd4; font-size:13px; }}
-  .gate {{ margin:0 0 12px; color:#8d9095; font-size:12px; }}
-  .ask {{ margin:16px 0 0; color:#8d9095; font-size:12px; }}
-  input {{ width:100%; box-sizing:border-box; padding:10px 12px; margin-bottom:14px;
-    border-radius:6px; border:1px solid #4c4d4f; background:#262727; color:#e5eaf3; font-size:14px; }}
-  input:focus {{ outline:none; border-color:#409eff; }}
+  /* No shadow and no gradient: the app itself separates a card with a 1px
+     border, and a glowing login card reads as a different product. */
+  .card {{ width:100%; max-width:360px; padding:28px; border-radius:8px;
+    background:#fff; border:1px solid #e3e5e9; }}
+  .langs {{ text-align:right; font-size:12px; color:#9aa1ab; margin-bottom:14px; }}
+  .langs a {{ color:#6f7681; text-decoration:none; padding:2px 5px; }}
+  .langs a.active {{ color:#171a1f; }}
+  h1 {{ margin:0 0 4px; font-size:19px; font-weight:600; }}
+  .sub {{ margin:0 0 18px; color:#545b66; font-size:13px; }}
+  .gate {{ margin:0 0 14px; color:#6f7681; font-size:12px; }}
+  .ask {{ margin:14px 0 0; color:#6f7681; font-size:12px; }}
+  input {{ width:100%; box-sizing:border-box; padding:9px 11px; margin-bottom:12px;
+    border-radius:6px; border:1px solid #d8dbe0; background:#fff; color:#171a1f; font-size:14px; }}
+  input:focus {{ outline:none; border-color:#3e63dd; box-shadow:0 0 0 3px #eceffc; }}
   input[type=hidden] {{ display:none; }}
-  button {{ width:100%; padding:10px; border:0; border-radius:6px; background:#409eff;
-    color:#fff; font-size:14px; font-weight:600; cursor:pointer; }}
-  button:hover {{ background:#66b1ff; }}
-  .err {{ color:#f56c6c; font-size:12px; margin:10px 0 0; }}
+  button {{ width:100%; padding:10px; border:0; border-radius:6px; background:#3e63dd;
+    color:#fff; font-size:14px; font-weight:500; cursor:pointer; }}
+  button:hover {{ background:#324fb1; }}
+  .err {{ color:#b42318; font-size:12px; margin:10px 0 0; }}
 </style></head>
 <body><form class="card" method="post" action="/login">
-  <div class="brand">
-    <span class="mark" aria-hidden="true"><svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l1.9 5.6 5.6 1.9-5.6 1.9L12 17l-1.9-5.6L4.5 9.5l5.6-1.9L12 2zm6 12l.9 2.6 2.6.9-2.6.9-.9 2.6-.9-2.6-2.6-.9 2.6-.9.9-2.6z"/></svg></span>
-    <span class="langs">
-      <a href="/login?lang=zh&amp;next={quote(target)}" class="{'active' if lang == 'zh' else ''}">中文</a>·
-      <a href="/login?lang=en&amp;next={quote(target)}" class="{'active' if lang == 'en' else ''}">EN</a>
-    </span>
+  <div class="langs">
+    <a href="/login?lang=zh&amp;next={quote(target)}" class="{'active' if lang == 'zh' else ''}">中文</a>·
+    <a href="/login?lang=en&amp;next={quote(target)}" class="{'active' if lang == 'en' else ''}">EN</a>
   </div>
   <h1>TradeAgent</h1>
   <p class="sub">{copy['tagline']}</p>

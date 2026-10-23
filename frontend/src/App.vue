@@ -27,7 +27,7 @@
             <span>{{ t('nav.console') }}</span>
           </el-menu-item>
           <el-menu-item index="/agent">
-            <el-icon><MagicStick /></el-icon>
+            <el-icon><Tools /></el-icon>
             <span>{{ t('nav.agent') }}</span>
           </el-menu-item>
           <el-menu-item index="/runs">

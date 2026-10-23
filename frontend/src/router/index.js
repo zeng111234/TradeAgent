@@ -53,7 +53,7 @@ const routes = [
     path: '/agent',
     name: 'Agent',
     component: () => import('../views/Agent.vue'),
-    meta: { titleKey: 'agent.title', icon: 'MagicStick' },
+    meta: { titleKey: 'agent.title', icon: 'Tools' },
   },
   {
     path: '/runs',

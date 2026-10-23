@@ -79,7 +79,12 @@ not verify instead of assuming it is fine.
 
 Finishing:
 When you have enough information, reply with your conclusion as plain text
-and make no tool call. Your text reply ends the run."""
+and make no tool call. Your text reply ends the run.
+
+Write it the way you would say it across a desk: the numbers and names that
+matter, in the order they matter, then stop. No headings, no bulleted account
+of everything you looked at, no closing paragraph summarising what you just
+said, no "in conclusion". If the answer is one sentence, write one sentence."""
 
 
 class AgentError(Exception):

@@ -5,7 +5,7 @@
  */
 export default {
   shell: {
-    tagline: 'AI export-sales agent',
+    tagline: 'A working desk for export sales',
     commandPlaceholder: 'Ask the agent to do something… (Enter)',
     commandAria: 'Send a goal to the agent',
     language: 'Language',
