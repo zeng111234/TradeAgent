@@ -53,10 +53,18 @@ logger = logging.getLogger(__name__)
 # A child gets a smaller allowance than its parent by default: it is answering a
 # narrower question, and a child that runs as long as the parent defeats the
 # point of delegating.
+#
+# Sized per round, not per question. At 6 rounds / 30k tokens a real delegated
+# question -- "which customer has the strongest evidence of an outstanding
+# request, cite the note" -- ran out mid-investigation: 11 tool calls, 29.4k
+# tokens, and an empty answer. A truncated child is the worst possible outcome,
+# because it spends its whole allowance and returns nothing the parent can use.
+# Roughly 5.6k tokens a round still undercuts the parent's 7.5k, so delegating
+# remains the cheap way to read a lot.
 CHILD_BUDGET = AgentBudget(
-    max_rounds=6,
-    max_tool_calls=12,
-    max_tokens=30_000,
+    max_rounds=8,
+    max_tool_calls=16,
+    max_tokens=45_000,
     max_seconds=90.0,
     max_calls_per_round=3,
     context_budget_tokens=12_000,
