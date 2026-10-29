@@ -62,12 +62,28 @@ def _config_default(field: str) -> str:
     return match.group(1)
 
 
-def test_the_smoke_job_defaults_to_the_model_the_app_ships():
+def _workflows_with_a_provider_default():
+    """Every workflow that names a provider, not just the one that broke.
+
+    The first version of this test hardcoded real-smoke.yml, and the other two
+    scheduled jobs kept the stale xiaomimimo default for another week. A test
+    that enumerates one filename is a test that the other files cannot fail.
+    """
+    found = []
+    for path in sorted(WORKFLOWS.glob("*.yml")):
+        text = path.read_text(encoding="utf-8")
+        if "OPENAI_BASE_URL" in text or "OPENAI_MODEL" in text:
+            found.append((path.name, text))
+    assert found, "no workflow sets a provider; the invariant would be vacuous"
+    return found
+
+
+def test_every_workflow_defaults_to_the_provider_the_app_ships():
     """A default that disagrees with the app tests a provider the app never uses."""
-    text = _workflow("real-smoke.yml")
-    for field in ("OPENAI_BASE_URL", "OPENAI_MODEL"):
-        expected = _config_default(field)
-        assert expected in text, (
-            f"real-smoke.yml does not default {field} to {expected!r}, the value "
-            "app/config.py ships; the job would smoke-test a different provider"
-        )
+    for name, text in _workflows_with_a_provider_default():
+        for field in ("OPENAI_BASE_URL", "OPENAI_MODEL"):
+            expected = _config_default(field)
+            assert f"{field}: ${{{{ secrets.{field} || '{expected}' }}}}" in text, (
+                f"{name} does not default {field} to {expected!r}, the value "
+                "app/config.py ships; the job would exercise a different provider"
+            )

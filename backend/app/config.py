@@ -41,10 +41,14 @@ class Settings(BaseSettings):
     #: convenience for making a fetch succeed.
     WEBSITE_TLS_VERIFY: bool = True
 
-    # LLM (OpenAI-compatible API: MiMo, DeepSeek, OpenAI, etc.)
+    # LLM (OpenAI-compatible API: DeepSeek, OpenAI, etc.)
+    # The default is the provider this project actually runs. It used to say
+    # xiaomimimo/mimo-v2.5, which nothing ever used -- .env always overrode it --
+    # and that stale default is how the weekly smoke job came to test a provider
+    # the app never talks to. A default nobody runs is worse than no default.
     OPENAI_API_KEY: str = ""
-    OPENAI_BASE_URL: str = "https://api.xiaomimimo.com/v1"
-    OPENAI_MODEL: str = "mimo-v2.5"
+    OPENAI_BASE_URL: str = "https://api.deepseek.com"
+    OPENAI_MODEL: str = "deepseek-reasoner"
     # One completion's request timeout. The SDK default is 600s, which lets a
     # hung provider hold an HTTP request for ten minutes.
     OPENAI_TIMEOUT_SECONDS: float = 120.0

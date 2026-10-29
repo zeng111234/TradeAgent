@@ -260,8 +260,8 @@ cd backend && sh start.sh     # 绑定 $PORT、固定 SQLite 路径、启动 uvi
 | 变量 | 必填 | 说明 |
 |---|---|---|
 | `OPENAI_API_KEY` | agent 功能必填 | 没有它 agent 直接拒绝运行，不会伪造结果 |
-| `OPENAI_BASE_URL` | 可选 | 默认 `https://api.xiaomimimo.com/v1`，兼容 DeepSeek / OpenAI |
-| `OPENAI_MODEL` | 可选 | 默认 `mimo-v2.5` |
+| `OPENAI_BASE_URL` | 可选 | 默认 `https://api.deepseek.com`，兼容任何 OpenAI 协议的服务 |
+| `OPENAI_MODEL` | 可选 | 默认 `deepseek-reasoner` |
 | `SMTP_*` / `REPORT_EMAIL` | 可选 | 每日报告邮件；不配置则打印到 stdout。客户邮件优先用「发件邮箱」页里生效的账户，未启用任何账户时才回退到这里的 `SMTP_USER` |
 | `SCAN_KEYWORDS` / `SCAN_COUNTRIES` | 可选 | 每日扫描的关键词与市场 |
 | `SCAN_DRY_RUN` | 可选 | `1` = 不写文件、不发邮件 |
