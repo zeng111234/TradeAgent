@@ -89,15 +89,20 @@ def test_a_rejected_key_is_reported_like_a_missing_one():
 
 
 @pytest.mark.parametrize("status", [400, 404, 422])
-def test_a_client_error_that_is_not_auth_is_still_not_swallowed(status):
-    """A 4xx we caused is transient as far as this seam is concerned, but visible.
+def test_a_rejected_request_is_not_called_transient(status):
+    """A 4xx we caused is a configuration change, not a retry.
 
-    It is reported rather than dropped on the floor: the message carries the
-    status, so the log says 400 rather than "the model call failed".
+    This test used to assert the opposite -- that a 400 was "transient as far as
+    this seam is concerned". A real incident falsified it: a workflow asked for
+    a model its provider did not serve, got a 400, and the log read "the model
+    call failed and did not recover", which points at the network rather than at
+    the two-character mistake in the model name.
     """
     translated = translate_provider_error(fake_openai_error("BadRequestError", status))
-    assert isinstance(translated, LLMTransient)
-    assert str(status) in str(translated) or "BadRequest" in str(translated)
+    assert isinstance(translated, LLMBadResponse)
+    assert not isinstance(translated, LLMTransient)
+    assert "rejected the request" in str(translated)
+    assert "Not retryable" in str(translated)
 
 
 # --------------------------------------------------------------------------

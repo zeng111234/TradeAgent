@@ -35,8 +35,14 @@ jobs:
       - name: Run the four real-provider checks
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL || 'https://api.deepseek.com' }}
-          OPENAI_MODEL: ${{ secrets.OPENAI_MODEL || 'deepseek-chat' }}
+          # These defaults have to be the same pair backend/app/config.py ships,
+          # not a second opinion: they were https://api.deepseek.com plus
+          # deepseek-chat, so a key issued for the config default's provider
+          # answered "Unsupported model deepseek-chat" every Monday. A smoke job
+          # that tests a provider/model pair the app never uses is measuring the
+          # wrong thing even when it goes green.
+          OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL || 'https://api.xiaomimimo.com/v1' }}
+          OPENAI_MODEL: ${{ secrets.OPENAI_MODEL || 'mimo-v2.5' }}
         run: |
           if [ -z "$OPENAI_API_KEY" ]; then
             echo "::warning::Real-model smoke skipped: OPENAI_API_KEY is not configured."

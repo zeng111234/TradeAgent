@@ -131,7 +131,19 @@ class LLMTruncated(LLMError):
 
 
 class LLMBadResponse(LLMError):
-    """The provider returned no choices, no content, or unparseable JSON."""
+    """The provider would not give us a usable answer.
+
+    Three shapes, one meaning "asking again unchanged is pointless": no choices
+    or no content came back, the JSON was unparseable, or the request itself was
+    refused (400/404/422 -- a model name, a parameter, or a base URL this
+    provider does not serve).
+
+    The refusal belongs here rather than with the transient failures, and the
+    distinction is not academic: a wrong model name was classified as
+    ``LLMTransient`` for a while, so the log said "the model call failed and did
+    not recover" -- which reads as a provider wobble and sends the reader to the
+    network. The fix was two characters in a workflow file.
+    """
 
 
 class LLMCircuitOpen(LLMError):
@@ -184,6 +196,17 @@ def translate_provider_error(exc: BaseException) -> LLMError:
         )
     if status is not None and 500 <= int(status) < 600:
         return LLMTransient(f"the provider returned HTTP {status} ({name})")
+    if status in (400, 404, 422) or name in (
+        "BadRequestError", "NotFoundError", "UnprocessableEntityError",
+    ):
+        # Ours to fix, not theirs to recover from. Retrying a 400 spends the
+        # budget to be told the same thing again.
+        return LLMBadResponse(
+            "the provider rejected the request"
+            + (f" (HTTP {status})" if status else "")
+            + f": {exc}. Not retryable -- check the model name, the parameters, "
+            "and the base URL."
+        )
     return LLMTransient(f"{name}: {exc}")
 
 
